@@ -242,6 +242,19 @@ const ok = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
     await Promise.race([closed, sleep(8000).then(() => { throw new Error('did not close'); })]);
   });
 
+  await check('right-click shows the browser-style menu on text boxes, and none on the 3D view', async () => {
+    const { app, page } = await launch();
+    await app.evaluate(({ Menu }) => { globalThis.__popped = []; Menu.prototype.popup = function () { globalThis.__popped.push(this.items.map(i => i.label).filter(Boolean)); }; });
+    const box = await page.evaluateHandle(() => [...document.querySelectorAll('input')].find(i => (i.type === 'text' || i.type === 'number') && i.offsetParent));
+    await box.click({ button: 'right' }); await sleep(400);
+    let popped = await app.evaluate(() => globalThis.__popped);
+    ok(popped.length === 1 && ['Cut', 'Copy', 'Paste', 'Select all'].every(l => popped[0].includes(l)), 'text box menu: ' + JSON.stringify(popped));
+    const r = await page.evaluate(() => { const b = document.querySelector('canvas').getBoundingClientRect(); return [b.left + b.width / 2, b.top + b.height / 3]; });
+    await page.mouse.click(r[0], r[1], { button: 'right' }); await sleep(400);
+    popped = await app.evaluate(() => globalThis.__popped);
+    ok(popped.length === 1, '3D view opened a menu: ' + JSON.stringify(popped));
+  });
+
   for (const a of apps) await kill(a);
   try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (e) { /* leftover temp folder is harmless */ }
   const bad = results.filter(r => !r[1]).length;

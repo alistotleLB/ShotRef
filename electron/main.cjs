@@ -180,6 +180,27 @@ function hardenSession(ses) {
   ses.setPermissionRequestHandler((wc, perm, cb) => cb(perm === 'clipboard-sanitized-write'));
   ses.setPermissionCheckHandler((wc, perm) => perm === 'clipboard-sanitized-write');
 }
+function contextMenuTemplate(params, wc) {
+  const f = params.editFlags || {}, tpl = [];
+  const sep = () => { if (tpl.length && tpl[tpl.length - 1].type !== 'separator') tpl.push({ type: 'separator' }); };
+  if (params.isEditable) {
+    tpl.push({ label: 'Undo', role: 'undo', enabled: !!f.canUndo }, { label: 'Redo', role: 'redo', enabled: !!f.canRedo });
+    sep();
+    tpl.push({ label: 'Cut', role: 'cut', enabled: !!f.canCut }, { label: 'Copy', role: 'copy', enabled: !!f.canCopy },
+      { label: 'Paste', role: 'paste', enabled: !!f.canPaste }, { label: 'Delete', role: 'delete', enabled: !!f.canDelete });
+    sep();
+    tpl.push({ label: 'Select all', role: 'selectAll', enabled: !!f.canSelectAll });
+  } else if (params.selectionText && params.selectionText.trim()) {
+    tpl.push({ label: 'Copy', role: 'copy' });
+  }
+  if (params.mediaType === 'image') {
+    sep();
+    tpl.push({ label: 'Copy image', click: () => wc && wc.copyImageAt(params.x, params.y) });
+  }
+  if (tpl.length && tpl[tpl.length - 1].type === 'separator') tpl.pop();
+  return tpl;
+}
+global.__shotrefContextMenu = p => contextMenuTemplate(p, null).map(i => i.type === 'separator' ? '-' : i.label + (i.enabled === false ? ' (off)' : '')); /* for test/desktop.cjs */
 function createWindow(startFile) {
   win = new BrowserWindow({
     width: 1440, height: 900, minWidth: 1100, minHeight: 700, backgroundColor: '#141518', icon: ICON, title: 'ShotRef', show: false,
@@ -190,6 +211,12 @@ function createWindow(startFile) {
   win.on('page-title-updated', e => e.preventDefault()); /* the page's setTitle decides */
   wc.on('will-navigate', e => e.preventDefault());
   wc.setWindowOpenHandler(() => ({ action: 'deny' }));
+  /* Electron has no right-click menu of its own: give the same one a browser shows (text boxes, selected text, images).
+     The page still blocks it where it uses right-click itself (3D view, keyframes), as in the browser. */
+  wc.on('context-menu', (e, params) => {
+    const tpl = contextMenuTemplate(params, wc);
+    if (tpl.length) Menu.buildFromTemplate(tpl).popup({ window: win });
+  });
   win.on('close', e => {
     if (closeAllowed || !pageReady || wc.isCrashed()) return; /* a page that never started cannot ask, so do not trap the window */
     e.preventDefault(); send('shotref:menu', 'close-request'); /* the page asks about unsaved work and calls closeOk() */
