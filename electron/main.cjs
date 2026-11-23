@@ -62,7 +62,13 @@ const cleanFilters = f => (Array.isArray(f) ? f : [])
 /* I2: write to a temp file next to the target, then rename over it, so a failed write never damages the existing file */
 async function writeAtomic(file, data, enc) {
   const tmp = file + '.tmp-' + process.pid;
-  try { await fs.promises.writeFile(tmp, data, enc); await fs.promises.rename(tmp, file); }
+  try {
+    await fs.promises.writeFile(tmp, data, enc);
+    for (let i = 0; ; i++) { /* sync tools and antivirus can hold the target for a moment */
+      try { await fs.promises.rename(tmp, file); break; }
+      catch (e) { if (i >= 4 || !['EPERM', 'EBUSY', 'EACCES'].includes(e && e.code)) throw e; await new Promise(r => setTimeout(r, 100)); }
+    }
+  }
   catch (e) { await fs.promises.unlink(tmp).catch(() => {}); throw e; }
 }
 
@@ -72,6 +78,7 @@ async function readProject(file) {
   return { text, name: path.basename(file), path: file };
 }
 async function openPath(file) { /* argv, second launch, recent menu */
+  if (win && !pageReady) { pendingFile = file; return; } /* the page is not listening yet: open it once it is */
   try { send('shotref:open-file', await readProject(file)); }
   catch (e) {
     if (e && e.code === 'ENOENT') { settings.recent = settings.recent.filter(p => p !== file); saveSettings(); buildMenu(); }
@@ -137,7 +144,7 @@ ipcMain.handle('shotref:pick-file', async (e, kind, filters) => {
   } catch (err) { console.error('ShotRef: pick failed', err); return null; }
 });
 
-ipcMain.on('shotref:page-ready', () => { pageReady = true; });
+ipcMain.on('shotref:page-ready', () => { pageReady = true; if (pendingFile) { const f = pendingFile; pendingFile = null; openPath(f); } });
 ipcMain.on('shotref:set-title', (e, t) => { if (typeof t === 'string' && win && !win.isDestroyed()) win.setTitle(t.slice(0, 200)); });
 ipcMain.on('shotref:close-ok', () => { closeAllowed = true; if (win && !win.isDestroyed()) win.close(); });
 ipcMain.on('shotref:version-sync', e => { e.returnValue = app.getVersion(); });

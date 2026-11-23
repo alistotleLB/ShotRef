@@ -374,7 +374,7 @@ function writeAutosave() {
   if (autosaveOff) return;
   if (!autosaveReady) { autosaveWaiting = true; return; }
   const ids = [...usedAssetIds(state)].filter(id => assets[id]);
-  const put = a => localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({ state, assets: a, assetIds: ids, v: FORMAT_VERSION }));
+  const put = a => localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({ state, assets: a, assetIds: ids, v: FORMAT_VERSION, dirty: platform.isDirty() })); /* dirty: unsaved changes, so a restored session keeps its "unsaved" mark */
   if (idb.ok !== false) {
     try { put({}); } catch (e) { console.error('ShotRef: could not autosave', e); }
     if (idb.ok) idbSync(ids);
@@ -2423,7 +2423,7 @@ async function doSaveProject(saveAs) {
   for (const id of usedAssetIds(state)) if (assets[id]) used[id] = assets[id];
   const data = JSON.stringify({ app: 'ShotRef', version: FORMAT_VERSION, state, assets: used });
   const r = await platform.saveProject(data, { saveAs: saveAs === true, name: `shotref-${stamp()}.shotref` });
-  if (r.ok) toast('Saved ' + (r.name || 'project'));
+  if (r.ok) { toast('Saved ' + (r.name || 'project')); autosave(); } /* the autosave records that nothing is unsaved now */
   else if (r.canceled) toast('Save cancelled');
   else toast("Couldn't save the project. Your changes are still here, so try again.", 5000);
   return r;
@@ -2837,8 +2837,6 @@ function wire() {
   $$('.modal').forEach(m => m.addEventListener('pointerdown', e => { if (e.target === m && !exporting) { e.preventDefault(); closeModal(m); } })); /* preventDefault: the click must not move focus to the page (K3) */
   $('#cfOk').onclick = () => { closeModal($('#cfOk')); cfCb && cfCb(); };
   $('#cfAlt').onclick = () => { closeModal($('#cfAlt')); cfAltCb && cfAltCb(); };
-  platform.onMenu(onDesktopMenu);
-  platform.onOpenFile(f => { if (f && typeof f.text === 'string') { launchFile = true; closeModal($('#mStart')); loadProjectText(f.text, f, true); } });
   $('#exAspect').append(...ASPECTS.map(a => h('option', { value: a[0] }, a[2])));
   $('#exSize').append(...SIZES.map(s => h('option', { value: s[0] }, s[1])));
   $('#exAspect').onchange = e => { state.settings.aspect = e.target.value; changed(true, true); renderExportDialog(); };
@@ -3017,11 +3015,13 @@ function brokenAssetIds(raw) {
 }
 /* ============================== boot ============================== */
 function boot() {
-  let restored = false, broken = false, raw = null;
+  let restored = false, broken = false, raw = null, wasDirty = false;
   probeStorage();
   try { raw = localStorage.getItem(AUTOSAVE_KEY); } catch (e) { }
   if (raw) {
-    try { const d = normalizeProject(JSON.parse(raw), projectDefaults()); state = d.state; assets = { ...d.assets }; restored = true; }
+    try { const d = normalizeProject(JSON.parse(raw), projectDefaults()); state = d.state; assets = { ...d.assets }; restored = true;
+      const rec = JSON.parse(raw); /* an autosave without the field (older build) counts as unsaved if it holds anything */
+      wasDirty = typeof rec.dirty === 'boolean' ? rec.dirty : !!(state.objects.length || state.plate); }
     catch (e) { broken = true; console.error('ShotRef: could not read the autosave', e); }
   }
   if (!restored) seedScene();
@@ -3030,7 +3030,7 @@ function boot() {
   catch (e) {
     if (!restored) throw e;
     console.error('ShotRef: could not rebuild the autosaved scene', e);
-    restored = false; broken = true;
+    restored = false; broken = true; wasDirty = false;
     state = defaultState(); assets = {}; for (const id of [...modelCache.keys()]) dropModel(id); seedScene();
     syncScene(); applyEnv();
   }
@@ -3039,7 +3039,11 @@ function boot() {
     try { localStorage.removeItem('shotref.autosave'); localStorage.setItem('shotref.autosave.broken', raw); }
     catch (e) { console.error('ShotRef: could not keep a copy of the broken autosave', e); }
   }
-  pushHistory(); platform.setDirty(false); setSimple(simple); setView('editor'); setGizmoMode('translate');
+  pushHistory(); platform.setDirty(wasDirty); setSimple(simple);
+  /* only now: queued menu / file events from the desktop shell must see the restored scene and its unsaved mark */
+  platform.onMenu(onDesktopMenu);
+  platform.onOpenFile(f => { if (f && typeof f.text === 'string') { launchFile = true; closeModal($('#mStart')); loadProjectText(f.text, f, true); } });
+ setView('editor'); setGizmoMode('translate');
   requestAnimationFrame(frame);
   let seen = false; try { seen = localStorage.getItem('shotref.seenHelp'); localStorage.setItem('shotref.seenHelp', '1'); } catch (e) { }
   if (autosaveOff) toast(NO_AUTOSAVE, 6000); /* starter sets still open below on a first visit */

@@ -133,6 +133,22 @@ const ok = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
     await kill(app);
   });
 
+  await check('a restored session keeps its unsaved mark, so a file from Windows asks before replacing it', async () => {
+    const userData = path.join(tmp, 'restore-profile');
+    const first = await launch([], { userData });
+    await first.page.evaluate(() => window.__edit());
+    await first.page.waitForFunction(() => { try { return JSON.parse(localStorage.getItem('shotref.autosave')).dirty === true; } catch (e) { return false; } }, null, { timeout: 8000 });
+    const gone = new Promise(r => first.app.process().once('exit', r));
+    await first.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+    await first.page.waitForSelector('#mConfirm:not(.hidden)'); await first.page.click('#cfAlt'); /* Don't save: the autosave keeps the edits */
+    await Promise.race([gone, sleep(8000).then(() => { throw new Error('first run did not exit'); })]);
+    const { app, page } = await launch([file1], { userData, raw: true });
+    await page.waitForSelector('#mConfirm:not(.hidden)', { timeout: 10000 });
+    ok(/Save changes first/.test(await page.textContent('#cfTitle')), 'expected the save-first prompt, got: ' + await page.textContent('#cfTitle'));
+    ok((await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getTitle())).startsWith('•'), 'restored session lost its unsaved mark');
+    await kill(app);
+  });
+
   await check('a failed save leaves the previous file intact (atomic write) and keeps the unsaved mark and a message', async () => {
     const dir = fs.mkdtempSync(path.join(tmp, 'atomic-'));
     const target = path.join(dir, 'keep.shotref');
