@@ -1148,7 +1148,7 @@ function selBarButtons(list) {
     else if (o.type !== 'mark') out.push(btn('path', o.type === 'car' ? 'Draw drive path' : 'Draw path', () => startPath(o.id)), btn('target', 'Keep the camera on this', () => keepCameraOn(o)));
     out.push(sep());
   }
-  out.push(btn('dup', 'Duplicate (Ctrl D)', duplicateSel), btn(locked ? 'unlock' : 'lock', locked ? 'Unlock (Ctrl L)' : 'Lock: stop accidental moves (Ctrl L)', () => lockObjs(list, !locked), locked ? 'on' : ''), btn('trash', 'Delete (Del)', deleteSel, 'danger'));
+  out.push(btn('dup', 'Duplicate (Ctrl D)', duplicateSel), btn(locked ? 'unlock' : 'lock', locked ? 'Unlock (Ctrl L)' : 'Lock: stop accidental moves (Ctrl L)', () => { const l = selObjs(); lockObjs(l, !l.every(o => o.locked)); }, locked ? 'on' : ''), btn('trash', 'Delete (Del)', deleteSel, 'danger'));
   return out;
 }
 function updateSelBar() {
@@ -1610,6 +1610,7 @@ function pruneGroups() {
   for (const g of Object.keys(state.groups)) if (!(n[g] >= 2)) delete state.groups[g];
 }
 function lockObjs(list, on) {
+  list = list.map(o => getObj(o.id)).filter(Boolean); /* by id: undo and redo replace the objects a button was built with */
   if (!list.length) return;
   for (const o of list) o.locked = on;
   const w = list.length === 1 ? list[0].name : list.length + ' items';
@@ -1841,7 +1842,7 @@ function propsMulti(p) {
       h('button', { onclick: () => lockObjs(list, !allLocked), title: 'Ctrl+L' }, allLocked ? 'Unlock all' : 'Lock all')),
     h('div', { class: 'btns' },
       h('button', { onclick: dropToFloor }, 'Drop to floor'),
-      people.length ? h('button', { onclick: () => { for (const o of people) { const cur = clone(evalObj(o, T)); cur.r[1] = Math.atan2(camState.p[0] - cur.p[0], camState.p[2] - cur.p[2]) * R2D; if (o.opts.faceTravel && o.keys.length > 1) o.opts.faceTravel = false; writeObj(o, cur, false); } changed(true, true); toast('People face the camera'); } }, 'People face camera') : null),
+      people.some(o => !o.locked) ? h('button', { onclick: () => { for (const o of people.filter(x => !x.locked)) { const cur = clone(evalObj(o, T)); cur.r[1] = Math.atan2(camState.p[0] - cur.p[0], camState.p[2] - cur.p[2]) * R2D; if (o.opts.faceTravel && o.keys.length > 1) o.opts.faceTravel = false; writeObj(o, cur, false); } changed(true, true); toast('People face the camera'); } }, 'People face camera') : null),
     h('div', { class: 'btns' }, h('button', { onclick: duplicateSel }, 'Duplicate'), h('button', { onclick: deleteSel, style: 'color:#ff9c9c' }, 'Delete'))));
 }
 function propsObject(p, o) {
@@ -2215,7 +2216,7 @@ function focusLensAt(pt, name) {
   writeCam({ fd: d }, true); propsDirty = true;
   toast(`Focus on ${name} (${d.toFixed(2)} m)` + (wasOff ? '. Depth of field is now on' : '') + (keyed ? `. Keyed at ${snapT(T).toFixed(2)} s: double-click something else later in the shot to pull focus` : ''), 4200);
 }
-function keepCameraOn(o) { state.camera.lookAtId = o.id; state.camera.base.tg = evalCam(T).tg; changed(true, true); toast('Camera now keeps ' + o.name + ' in frame'); }
+function keepCameraOn(o) { o = getObj(o.id); if (!o) return; state.camera.lookAtId = o.id; state.camera.base.tg = evalCam(T).tg; changed(true, true); toast('Camera now keeps ' + o.name + ' in frame'); }
 function ctxItems(hit, floor) {
   const items = [], sel = selected && getObj(selected), selP = sel && sel.type === 'person' ? sel : null;
   if (hit && (hit.id === 'camera' || hit.id === 'target')) {
@@ -2236,7 +2237,7 @@ function ctxItems(hit, floor) {
         { label: allLocked ? 'Unlock ' + list.length + ' items' : 'Lock ' + list.length + ' items', fn: () => lockObjs(list, !allLocked), key: 'Ctrl L' }, '-',
         { label: 'Duplicate', fn: duplicateSel, key: 'Ctrl D' },
         { label: 'Drop to floor', fn: dropToFloor },
-        { label: 'Hide', fn: () => { for (const x of list) x.visible = false; syncScene(); updateGizmo(); changed(true, true); toast(list.length + ' items hidden (the eye in the Scene list brings them back)'); } },
+        { label: 'Hide', fn: () => { for (const x of list.map(q => getObj(q.id)).filter(Boolean)) x.visible = false; syncScene(); updateGizmo(); changed(true, true); toast(list.length + ' items hidden (the eye in the Scene list brings them back)'); } },
         { label: 'Delete', fn: deleteSel, key: 'Del', danger: true });
       return items;
     }
@@ -2258,7 +2259,7 @@ function ctxItems(hit, floor) {
     if (o.grp) items.push({ label: 'Ungroup', fn: ungroupSel, key: 'Ctrl Shift G' });
     items.push({ label: o.locked ? 'Unlock' : 'Lock (stop accidental moves)', fn: () => lockObjs([o], !o.locked), key: 'Ctrl L' },
       { label: 'Duplicate', fn: duplicateSel, key: 'Ctrl D' },
-      { label: 'Hide', fn: () => { o.visible = false; syncScene(); updateGizmo(); changed(true, true); toast(o.name + ' hidden (the eye in the Scene list brings it back)'); } },
+      { label: 'Hide', fn: () => { const q = getObj(o.id); if (!q) return; q.visible = false; syncScene(); updateGizmo(); changed(true, true); toast(o.name + ' hidden (the eye in the Scene list brings it back)'); } },
       { label: 'Delete', fn: deleteSel, key: 'Del', danger: true });
     return items;
   }
@@ -2266,7 +2267,7 @@ function ctxItems(hit, floor) {
     const at = [snapV(floor.x), 0, snapV(floor.z)];
     items.push({ head: 'On the floor here' }, { label: 'Add a person here', fn: () => addObject('person', null, false, at) }, { label: 'Add floor mark here', fn: () => addObject('mark', null, false, at) });
     if (selP) items.push({ label: `Walk ${selP.name} here`, fn: () => { const c = evalObj(selP, T).p; pathMode = { id: selP.id, pts: [[c[0], c[2]], [at[0], at[2]]], y: c[1], cursor: null }; finishPath(); } });
-    if (sel) items.push({ label: `Move ${sel.name} here`, fn: () => { const cur = clone(evalObj(sel, T)); cur.p = [at[0], cur.p[1], at[2]]; writeObj(sel, cur, true); propsDirty = true; toast(sel.name + ' moved'); } });
+    if (sel && !isMulti()) items.push({ label: `Move ${sel.name} here`, fn: () => { const cur = clone(evalObj(sel, T)); cur.p = [at[0], cur.p[1], at[2]]; writeObj(sel, cur, true); propsDirty = true; toast(sel.name + ' moved'); } });
     items.push({ label: 'Aim the camera here', fn: () => writeCam({ tg: [at[0], 1, at[2]] }, true) });
     if (view === 'top') items.push({ label: 'Move the camera here', fn: () => writeCam({ p: [at[0], camState.p[1], at[2]] }, true) });
   }
@@ -2622,7 +2623,7 @@ function duplicateSel() {
 }
 function dropToFloor() {
   let n = 0;
-  for (const o of targetObjs()) {
+  for (const o of targetObjs().filter(x => !x.locked)) {
     const v = views.get(o.id); if (!v) continue;
     v.group.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(v.group);
     if (bb.isEmpty()) continue;
@@ -3265,7 +3266,7 @@ function wire() {
       else if (ho && selected !== hit.id) { selected = hit.id; uiDirty = true; propsDirty = true; }
       const pos = hit.id === 'camera' ? camState.p : hit.id === 'target' ? camState.tg : evalObj(getObj(hit.id), T).p;
       const py = hit.point.y, g = planeHit(rc, py) || hit.point;
-      drag = { kind: 'move', id: hit.id, py, ox: g.x - pos[0], oz: g.z - pos[2], items: ho ? dragItems() : [] };
+      drag = { kind: 'move', id: hit.id, py, ox: g.x - pos[0], oz: g.z - pos[2], items: ho ? dragItems() : [], alt: e.altKey };
     }
     dragActive = true;
     drag.sx = e.clientX; drag.sy = e.clientY; drag.moved = false;
@@ -3326,6 +3327,8 @@ function wire() {
     const d = drag; drag = null; dragActive = false; gizmo.enabled = true; canvas.style.cursor = '';
     try { canvas.releasePointerCapture(e.pointerId); } catch (_) { }
     if ($('#modeBar').textContent.startsWith('Release')) hideModeBar();
+    /* a click that did not drag narrows the selection to what was clicked (its group, or just it with Alt) */
+    if (!d.moved && d.kind === 'move' && getObj(d.id)) select(d.id, d.alt ? 'single' : undefined);
     if (d.moved) {
       changed(true, true);
       if (d.face) toast((d.items.length > 1 ? d.items.length + ' items now face ' : (getObj(d.id) || {}).name + ' now faces ') + d.face.name);
@@ -3370,8 +3373,7 @@ function wire() {
     const rc = rayFromEvent(e); if (!rc) return;
     const hit = pickAt(rc);
     if (!hit) { if (!e.shiftKey) select(null); }
-    else if (hit.id !== 'ring' && !(selected === hit.id || selIds.includes(hit.id))) select(hit.id, e.altKey ? 'single' : undefined);
-    else if (hit.id !== 'ring' && getObj(hit.id) && selected !== hit.id) { selected = hit.id; uiDirty = true; propsDirty = true; }
+    else if (hit.id !== 'ring' && (getObj(hit.id) || selected !== hit.id)) select(hit.id, e.altKey && getObj(hit.id) ? 'single' : undefined);
   });
   canvas.addEventListener('dblclick', e => {
     if (pathMode) { finishPath(); return; }

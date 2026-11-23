@@ -2462,4 +2462,38 @@ check('Scene list right-click menu works like the 3D one; menus offer group and 
   noErrors(p);
 });
 
+check('selection toolbar and menus act on the current objects after undo and redo', async ({ open }) => {
+  const p = await open(); await p.waitForTimeout(400);
+  const box = await idOfType(p, 'box'), xy = await starterXY(p);
+  await p.mouse.click(...xy.box);
+  await p.mouse.move(...xy.box); await p.mouse.down(); await p.mouse.move(xy.box[0] + 40, xy.box[1] + 20, { steps: 5 }); await p.mouse.move(xy.box[0] + 80, xy.box[1] + 30, { steps: 5 }); await p.mouse.up();
+  await p.keyboard.press('Control+z'); await p.waitForTimeout(300);
+  await p.click('#selBar [data-tip^="Lock"]');
+  ok((await objOf(p, box)).locked === true, 'the toolbar Lock after undo must lock the box that is in the scene now');
+  await p.keyboard.press('Control+z'); await p.keyboard.press('Control+y'); await p.waitForTimeout(300);
+  await p.click('#selBar [data-tip^="Unlock"]');
+  ok((await objOf(p, box)).locked !== true, 'the toolbar Unlock after undo and redo must unlock it');
+  noErrors(p);
+});
+
+check('a plain click on an item inside a multi-selection selects only it; dragging still moves all', async ({ open }) => {
+  const p = await open(); await p.waitForTimeout(400);
+  const person = await idOfType(p, 'person'), box = await idOfType(p, 'box'), xy = await starterXY(p);
+  await p.mouse.click(...xy.person); await shiftClick(p, ...xy.box);
+  ok((await selIdsOf(p)).length === 2, 'set-up');
+  await p.mouse.click(...xy.person);
+  ok(JSON.stringify(await selIdsOf(p)) === JSON.stringify([person]), 'a click should leave only the clicked item, got ' + JSON.stringify(await selIdsOf(p)));
+  await shiftClick(p, ...xy.box);
+  const b0 = (await objOf(p, box)).base.p.slice();
+  await p.mouse.move(...xy.person); await p.mouse.down(); await p.mouse.move(xy.person[0] - 40, xy.person[1] + 20, { steps: 5 }); await p.mouse.move(xy.person[0] - 80, xy.person[1] + 30, { steps: 5 }); await p.mouse.up();
+  const b1 = (await objOf(p, box)).base.p;
+  ok(Math.hypot(b1[0] - b0[0], b1[2] - b0[2]) > 0.3, 'dragging a selected item must still move the whole selection');
+  ok((await selIdsOf(p)).length === 2, 'and a drag keeps the selection');
+  /* locked members and face-camera / drop-to-floor skip locked items */
+  await p.evaluate(i => { const S = window.__shotref; S.state.objects.find(o => o.id === i).locked = true; S.changed(true, true); }, person);
+  await p.waitForTimeout(250);
+  ok(await p.locator('#props button:has-text("People face camera")').count() === 0, 'People face camera is not offered when every person is locked');
+  noErrors(p);
+});
+
 main().catch(e => { console.error(e && e.stack || e); process.exit(2); });
