@@ -1712,4 +1712,212 @@ check('desktop: after Save as, undoing an edit still saves to that file', async 
   ok(c.o.path === path && !c.o.saveAs, 'Save after undo should write to ' + path + ', got ' + JSON.stringify(c.o));
 });
 
+/* =================== batch A: format fields, prefs, menus, lens focus =================== */
+check('artifact-format fields survive opening; dangling references are dropped', async ({ open }) => {
+  const cam = { base: JSON.parse(CAM_BASE), keys: [] };
+  const O = (id, type, extra) => ({ id, type, name: id, base: { p: [0, 0, 0], r: [0, 0, 0], s: [1, 1, 1] }, keys: [], opts: {}, ...extra });
+  const file = { app: 'ShotRef', version: 1, state: {
+    v: 1, meta: { id: 'm1', name: 'Desert overlook' },
+    settings: { shadows: 'yes', shadowSoft: 5, tod: 3, interp: 'natural' },
+    camera: { ...cam, mount: 'ghost', dof: { on: true, fstop: 2.8, auto: false, strength: -2 } },
+    groups: { g1: { name: 'Pair' } },
+    shots: [{ id: 's1', name: 'Wide', camera: { ...cam, lookAtId: 'ghost' }, duration: 4 }],
+    shotId: 'nope',
+    takes: [{ id: 't1', name: 'Take 1', snap: null }, { id: 't2', name: 'Take 2', snap: 'not json' }],
+    takeId: 'gone',
+    objects: [
+      O('c1', 'car', { grp: 'g1', locked: true }),
+      O('p1', 'person', { parent: 'c1', grp: 'gone', opts: { body: 'woman', seated: 'c1', lookAt: 'camera', free: true }, acts: [{ t: 2, pose: 'walk' }, { t: 1, pose: 'sit', at: { p: [0, 0, 0], yaw: 90 } }, { t: 'x', pose: 'run' }] }),
+      O('b1', 'box', { parent: 'zzz', opts: { body: 'robot', seated: 'zzz', lookAt: 'zzz', convertible: 'yes' }, acts: [] }),
+      O('x1', 'box', { parent: 'x2' }), O('x2', 'box', { parent: 'x1' }),
+    ] }, assets: {} };
+  const p = await open();
+  await openFile(p, 'artifact.shotref.json', JSON.stringify(file));
+  await p.waitForFunction(() => window.__shotref.state.objects.length === 5);
+  const s = await stateOf(p), by = id => s.objects.find(o => o.id === id);
+  ok(s.meta.name === 'Desert overlook', 'project name lost');
+  ok(s.groups.g1.name === 'Pair' && by('c1').grp === 'g1' && by('c1').locked === true, 'group or lock lost');
+  ok(by('p1').grp === null, 'dangling group should be null, got ' + by('p1').grp);
+  ok(by('p1').parent === 'c1' && by('p1').opts.seated === 'c1' && by('p1').opts.lookAt === 'camera' && by('p1').opts.body === 'woman' && by('p1').opts.free === true, 'valid person fields lost');
+  ok(by('p1').acts.length === 2 && by('p1').acts[0].t === 1 && by('p1').acts[0].at.yaw === 90, 'acts not sorted/cleaned: ' + JSON.stringify(by('p1').acts));
+  ok(by('b1').parent === null && by('b1').opts.seated === null && !('lookAt' in by('b1').opts) && !('body' in by('b1').opts) && !('convertible' in by('b1').opts) && !('acts' in by('b1')), 'dangling/bad box fields kept: ' + JSON.stringify(by('b1')));
+  ok(!(by('x1').parent && by('x2').parent), 'a parent loop was kept');
+  ok(s.camera.mount === null && s.camera.dof.strength === 3, 'camera mount/blur strength: ' + JSON.stringify([s.camera.mount, s.camera.dof]));
+  ok(s.shots.length === 1 && s.shots[0].camera.lookAtId === null && s.shotId === 's1', 'shots not repaired');
+  ok(s.takes.length === 2 && s.takes[1].snap === null && s.takeId === 't1', 'takes not repaired');
+  ok(!('shadows' in s.settings) && s.settings.shadowSoft === 1 && s.settings.tod === 5 && s.settings.interp === 'natural', 'sun settings: ' + JSON.stringify(s.settings));
+  noErrors(p);
+});
+
+check('prefs store survives broken storage and remembers values', async ({ open }) => {
+  const p = await open();
+  await p.evaluate(() => localStorage.setItem('shotref.prefs', '{broken'));
+  await p.reload(); await p.waitForFunction(() => window.__shotref && window.__shotref.state);
+  await p.evaluate(() => window.__shotref.setPref('leftTab', 'scene'));
+  ok(await p.evaluate(() => JSON.parse(localStorage.getItem('shotref.prefs')).leftTab) === 'scene', 'pref not written');
+  await p.reload(); await p.waitForFunction(() => window.__shotref && window.__shotref.state);
+  ok(await p.evaluate(() => window.__shotref.getPref('leftTab')) === 'scene', 'pref not read back');
+  await p.evaluate(() => { Storage.prototype.setItem = () => { throw new Error('full'); }; });
+  await p.evaluate(() => window.__shotref.setPref('x', 1)); /* must not throw */
+  ok(await p.evaluate(() => window.__shotref.getPref('x')) === 1, 'pref kept in memory when storage throws');
+  noPageErrors(p);
+});
+
+check('undo and redo buttons name the step', async ({ open }) => {
+  const p = await open();
+  await p.waitForTimeout(400);
+  ok(/nothing to undo/i.test(await p.getAttribute('#bUndo', 'title')), 'idle undo title: ' + await p.getAttribute('#bUndo', 'title'));
+  await p.evaluate(() => { window.__shotref.addObject('box'); });
+  await p.waitForFunction(() => /Undo: add Box/i.test(document.querySelector('#bUndo').title));
+  await p.keyboard.press('Control+Z');
+  await p.waitForFunction(() => /Redo: add Box/i.test(document.querySelector('#bRedo').title));
+});
+
+/* right-click on the 3D view */
+const rightClick = (p, x, y, opts = {}) => p.mouse.click(x, y, { button: 'right', ...opts });
+const menuLabels = p => p.evaluate(() => { const m = document.querySelector('#ctxMenu'); return m.style.display === 'block' ? [...m.querySelectorAll('button')].map(b => b.firstElementChild.textContent.replace(/^✓/, '')) : null; });
+const menuHead = p => p.evaluate(() => { const h = document.querySelector('#ctxMenu .head'); return h ? h.textContent : null; });
+const clickItem = (p, label) => p.evaluate(l => { const b = [...document.querySelectorAll('#ctxMenu button')].find(x => x.firstElementChild.textContent.replace(/^✓/, '').startsWith(l)); if (!b) throw new Error('no menu item ' + l); b.click(); }, label);
+async function personXY(p) {
+  const o = await p.evaluate(() => { const S = window.__shotref, o = S.state.objects.find(x => x.type === 'person'); return { id: o.id, p: o.base.p.slice() }; });
+  o.xy = await p.evaluate(q => window.__shotref.project(q[0], 0.9, q[2]), o.p);
+  return o;
+}
+
+check('right-click on a person opens the page menu; Duplicate works; Esc closes', async ({ open }) => {
+  const p = await open();
+  await p.waitForTimeout(500);
+  const o = await personXY(p);
+  await p.evaluate(() => { window.__prevented = null; document.querySelector('#c').addEventListener('contextmenu', e => setTimeout(() => { window.__prevented = e.defaultPrevented; }, 0)); });
+  await rightClick(p, o.xy[0], o.xy[1]);
+  await p.waitForTimeout(200);
+  ok(await p.evaluate(() => window.__prevented) === true, 'the page must preventDefault the contextmenu event (so Electron shows no native menu)');
+  const labels = await menuLabels(p);
+  ok(labels, 'no menu opened');
+  for (const l of ['Draw walk path', 'Frame: Medium shot', 'Frame: Close-up', 'Face the camera', 'Keep camera on this', 'Focus the lens here', 'Duplicate', 'Hide', 'Delete'])
+    ok(labels.some(x => x.startsWith(l)), 'missing "' + l + '" in ' + JSON.stringify(labels));
+  ok(await p.evaluate(() => window.__shotref.selected) === o.id, 'right-click should select the item');
+  await p.keyboard.press('Escape');
+  ok(!(await menuLabels(p)), 'Esc should close the menu');
+  await rightClick(p, o.xy[0], o.xy[1]); await p.waitForTimeout(150);
+  await clickItem(p, 'Duplicate');
+  await p.waitForTimeout(200);
+  ok(await p.evaluate(() => window.__shotref.state.objects.length) === 4, 'Duplicate did not add an object');
+  ok(!(await menuLabels(p)), 'menu should close after choosing');
+  /* clicking outside closes it */
+  await rightClick(p, o.xy[0], o.xy[1]); await p.waitForTimeout(150);
+  await p.mouse.click(5, 450);
+  ok(!(await menuLabels(p)), 'click outside should close the menu');
+  noErrors(p);
+});
+
+check('right-click on the floor offers add / aim / move here; right-drag opens no menu', async ({ open }) => {
+  const p = await open();
+  await p.waitForTimeout(500);
+  const pt = [-6, 0, -2];
+  const xy = await p.evaluate(q => window.__shotref.project(q[0], q[1], q[2]), pt);
+  await p.mouse.move(xy[0], xy[1]); await p.mouse.down({ button: 'right' });
+  for (let i = 1; i <= 8; i++) { await p.mouse.move(xy[0] + i * 6, xy[1] + i * 3); await p.waitForTimeout(15); }
+  await p.mouse.up({ button: 'right' }); await p.waitForTimeout(200);
+  ok(!(await menuLabels(p)), 'a right-drag (pan) must not open the menu');
+  const xy2 = await p.evaluate(q => window.__shotref.project(q[0], q[1], q[2]), pt);
+  await rightClick(p, xy2[0], xy2[1]); await p.waitForTimeout(200);
+  const labels = await menuLabels(p);
+  ok(labels && (await menuHead(p)) === 'On the floor here', 'floor menu head: ' + (await menuHead(p)));
+  for (const l of ['Add a person here', 'Add floor mark here', 'Aim the camera here']) ok(labels.some(x => x.startsWith(l)), 'missing "' + l + '"');
+  ok(!labels.some(x => x.startsWith('Move the camera here')), '"Move the camera here" belongs to Top view only');
+  const n0 = await p.evaluate(() => window.__shotref.state.objects.length);
+  await clickItem(p, 'Add a person here'); await p.waitForTimeout(200);
+  const s = await stateOf(p), np = s.objects[s.objects.length - 1];
+  ok(s.objects.length === n0 + 1 && np.type === 'person' && Math.abs(np.base.p[0] - pt[0]) < 0.6 && Math.abs(np.base.p[2] - pt[2]) < 0.6, 'person not added at the clicked spot: ' + JSON.stringify(np.base.p));
+  await rightClick(p, xy2[0], xy2[1]); await p.waitForTimeout(150);
+  /* the new person stands there, so the menu is now theirs; click the floor a bit further for the floor menu */
+  await p.keyboard.press('Escape');
+  const xy3 = await p.evaluate(q => window.__shotref.project(q[0], q[1], q[2]), [-6, 0, 1]);
+  await rightClick(p, xy3[0], xy3[1]); await p.waitForTimeout(150);
+  const lb = await menuLabels(p);
+  ok(lb && lb.some(x => /^Move .* here/.test(x)) && lb.some(x => /^Walk .* here/.test(x)), 'selected person: move/walk here missing in ' + JSON.stringify(lb));
+  await clickItem(p, 'Aim the camera here'); await p.waitForTimeout(200);
+  const tg = await p.evaluate(() => window.__shotref.state.camera.base.tg);
+  ok(Math.abs(tg[0] + 6) < 0.6 && Math.abs(tg[2] - 1) < 0.6, 'camera not aimed at the spot: ' + JSON.stringify(tg));
+  await p.evaluate(() => window.__shotref.setView('top')); await p.waitForTimeout(300);
+  const t2 = await p.evaluate(q => window.__shotref.project(q[0], q[1], q[2]), [-3, 0, 2]);
+  await rightClick(p, t2[0], t2[1]); await p.waitForTimeout(150);
+  ok((await menuLabels(p) || []).some(x => x.startsWith('Move the camera here')), 'Top view should offer "Move the camera here"');
+  noErrors(p);
+});
+
+check('right-click on a mark and on a diamond', async ({ open }) => {
+  const p = await open();
+  await p.waitForTimeout(400);
+  await p.evaluate(() => { const S = window.__shotref; const o = S.addObject('mark'); o.base.p = [-3, 0, 3]; S.changed(true); S.select(null); });
+  await p.waitForTimeout(300);
+  const xy = await p.evaluate(() => window.__shotref.project(-3, 0.02, 3));
+  await rightClick(p, xy[0], xy[1]); await p.waitForTimeout(200);
+  ok((await menuLabels(p) || []).some(x => /^Walk .* here \(arrive/.test(x)), 'mark menu lacks Walk here: ' + JSON.stringify(await menuLabels(p)));
+  await p.keyboard.press('Escape');
+  /* keyframe diamond: right-click still deletes it, and no menu opens */
+  const pid = await p.evaluate(() => { const S = window.__shotref, o = S.state.objects.find(x => x.type === 'person'); S.select(o.id); S.setKey(o.keys, 0, { p: [0, 0, 0], r: [0, 0, 0], s: [1, 1, 1] }); S.setKey(o.keys, 2, { p: [1, 0, 0], r: [0, 0, 0], s: [1, 1, 1] }); S.changed(true, true); return o.id; });
+  await p.waitForSelector('.dia');
+  await p.locator('.dia').first().click({ button: 'right' }); await p.waitForTimeout(250);
+  ok(await p.evaluate(id => window.__shotref.state.objects.find(o => o.id === id).keys.length, pid) === 1, 'right-click on a diamond should delete the key');
+  ok(!(await menuLabels(p)), 'no page menu on a diamond');
+});
+
+check('camera menu: look through, set start, make static', async ({ open }) => {
+  const p = await open();
+  await p.waitForTimeout(500);
+  const cp = await p.evaluate(() => window.__shotref.state.camera.base.p);
+  const xy = await p.evaluate(q => window.__shotref.project(q[0], q[1], q[2]), cp);
+  await rightClick(p, xy[0], xy[1]); await p.waitForTimeout(200);
+  const labels = await menuLabels(p);
+  ok(labels && labels.some(x => x.startsWith('Look through camera')) && labels.some(x => x.startsWith('Set start frame')) && labels.some(x => x.startsWith('Set end frame')), 'camera menu: ' + JSON.stringify(labels));
+  await clickItem(p, 'Set start frame'); await p.waitForTimeout(200);
+  ok(await p.evaluate(() => window.__shotref.state.camera.keys.length) === 1, 'Set start frame should key the camera');
+  await rightClick(p, xy[0], xy[1]); await p.waitForTimeout(150);
+  await clickItem(p, 'Make static'); await p.waitForTimeout(200);
+  ok(await p.evaluate(() => window.__shotref.state.camera.keys.length) === 0, 'Make static should clear the keys');
+  await rightClick(p, xy[0], xy[1]); await p.waitForTimeout(150);
+  await clickItem(p, 'Look through camera'); await p.waitForTimeout(200);
+  ok(await p.evaluate(() => window.__shotref.view) === 'camera', 'should be in camera view');
+});
+
+check('double-click focuses the lens on what you clicked (DOF on)', async ({ open }) => {
+  const p = await open();
+  await p.waitForTimeout(500);
+  await p.evaluate(() => window.__shotref.setView('camera')); await p.waitForTimeout(300);
+  const o = await personXY(p);
+  ok(!(await p.evaluate(() => window.__shotref.state.camera.dof && window.__shotref.state.camera.dof.on)), 'setup: DOF should start off');
+  const fd0 = await p.evaluate(() => window.__shotref.state.camera.base.fd);
+  await p.mouse.dblclick(o.xy[0], o.xy[1]); await p.waitForTimeout(300);
+  const c = await p.evaluate(() => window.__shotref.state.camera);
+  ok(c.dof.on === true && c.dof.auto === false && c.base.fd !== fd0 && c.base.fd > 0.3, 'dof/fd after double-click: ' + JSON.stringify([c.dof, c.base.fd, fd0]));
+  ok(/Focus on/i.test(await p.textContent('#toast')), 'toast: ' + await p.textContent('#toast'));
+  /* keyed camera: double-click keys the focus at the playhead */
+  await p.evaluate(() => { window.__shotref.applyMove('dollyIn'); });
+  await p.waitForTimeout(300);
+  const o2 = await personXY(p);
+  await p.mouse.dblclick(o2.xy[0], o2.xy[1]); await p.waitForTimeout(300);
+  ok(await p.evaluate(() => window.__shotref.state.camera.keys.length > 0 && window.__shotref.state.camera.keys.every(k => typeof k.fd === 'number')), 'keyed camera: fd should be keyed');
+});
+
+check('quick start and hint talk about right-click and double-click lens focus', async ({ open }) => {
+  const p = await open();
+  await p.waitForTimeout(600);
+  const t = await p.evaluate(() => document.querySelector('#mHelp').textContent);
+  ok(/right-click/i.test(t) && /double-click/i.test(t) && /focus the lens/i.test(t), 'help text lacks right-click / double-click focus');
+  ok(/right-click/i.test(await p.evaluate(() => document.querySelector('#hint').textContent)), 'hint should mention right-click');
+});
+
+check('dropdown menu component: button opens it, items run, click again closes, arrows move', async ({ open }) => {
+  const p = await open();
+  await p.evaluate(() => { const b = document.createElement('button'); b.id = 'tmpMenuBtn'; b.textContent = 'File'; b.style.cssText = 'position:fixed;left:300px;top:60px;z-index:80'; document.body.append(b); window.__hit = 0; window.__shotref.menuButton(b, () => [{ head: 'Test' }, { label: 'One', fn: () => { window.__hit++; }, key: 'Ctrl 1' }, '-', { label: 'Two', check: true, fn: () => { } }]); });
+  await p.click('#tmpMenuBtn');
+  ok((await menuLabels(p) || []).join() === 'One,Two', 'menu items: ' + JSON.stringify(await menuLabels(p)));
+  await p.keyboard.press('ArrowDown'); ok(await p.evaluate(() => document.activeElement.textContent.startsWith('One')), 'ArrowDown should focus the first item');
+  await p.click('#tmpMenuBtn'); ok(!(await menuLabels(p)), 'a second click on the button should close the menu');
+  await p.click('#tmpMenuBtn'); await clickItem(p, 'One');
+  ok(await p.evaluate(() => window.__hit) === 1 && !(await menuLabels(p)), 'item should run once and close the menu');
+});
+
 main().catch(e => { console.error(e && e.stack || e); process.exit(2); });

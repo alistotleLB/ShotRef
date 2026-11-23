@@ -30,6 +30,8 @@ import { platform } from './platform.js';
  * simple                         Simple/Advanced mode: setSimple
  * placing, pathMode, pathFit, rec  click-to-place, path drawing, path fit option, live recording: their start/commit/cancel functions
  * shotPerson                     person picked for shot sizes: propsCamera
+ * menuBtn, menuClosedAt           button whose menu is open, when a menu last closed: showMenu, hideMenu, menuButton
+ * prefs                          per-browser preferences (localStorage shotref.prefs): setPref
  * focusPick, lastWorkView        picking focus in the view: start/finishFocusPick; last non-camera view: setView
  * exRenderer                     offscreen export renderer: getExportRenderer (dropped on context loss)
  * copyBlob                       last copied frame: copyFrame
@@ -62,6 +64,12 @@ const lerp = (a, b, t) => a + (b - a) * t;
 const clone = o => JSON.parse(JSON.stringify(o));
 const arr = v => Array.isArray(v) ? v : [v];
 const fmtTime = t => { const m = Math.floor(t / 60), s = t - m * 60; return String(m).padStart(2, '0') + ':' + s.toFixed(2).padStart(5, '0'); };
+/* per-browser preferences: localStorage 'shotref.prefs' (may be missing, broken or refuse writes: always try/catch) */
+const PREFS_KEY = 'shotref.prefs';
+let prefs = {};
+try { const p = JSON.parse(localStorage.getItem(PREFS_KEY) || '{}'); if (p && typeof p === 'object' && !Array.isArray(p)) prefs = p; } catch (e) { }
+const getPref = (k, d) => (k in prefs ? prefs[k] : d);
+function setPref(k, v) { prefs[k] = v; try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch (e) { } }
 let toastTimer;
 /* while a dialog is open the toast moves to the top of the window, so the dialog doesn't hide it (U7) */
 function placeToast() { const t = $('#toast'); if (t) t.classList.toggle('top', $$('.modal').some(m => !m.classList.contains('hidden'))); }
@@ -1446,10 +1454,10 @@ function groundPointInView() {
   return [Math.round(p.x * 4) / 4, 0, Math.round(p.z * 4) / 4];
 }
 const SHIRTS = ['#3d6fd8', '#c0392b', '#2e8b57', '#d4a017', '#7d3c98', '#e67e22', '#16a085', '#555b66'];
-function addObject(type, extra, place = false) {
+function addObject(type, extra, place = false, at = null) {
   if (placing) commitPlacing();
   if (pathMode) cancelPath();
-  const o = makeObject(type, groundPointInView(), extra);
+  const o = makeObject(type, at || groundPointInView(), extra);
   if (type === 'person') o.color = SHIRTS[persons().length % SHIRTS.length];
   if (type === 'mark') { o.opts.letter = nextMarkLetter(); o.name = 'Mark ' + o.opts.letter; }
   state.objects.push(o); syncScene(); select(o.id);
@@ -1927,13 +1935,130 @@ function tickUI() {
     const nav = view === 'top' ? 'Drag empty space: pan · Scroll: zoom' : 'Drag empty space: orbit · Right-drag: pan · Scroll: zoom';
     putHTML(hint, placing || pathMode ? '<kbd>Esc</kbd> cancel' + (pathMode ? ' · <kbd>Enter</kbd> done · right-click removes the last point' : '')
       : selected && selected !== 'camera' && selected !== 'target'
-        ? 'Drag it on the floor to move · drag the orange ring to turn · <kbd>K</kbd> key · <kbd>Del</kbd> delete'
+        ? 'Drag it on the floor to move · drag the orange ring to turn · right-click for more · <kbd>K</kbd> key · <kbd>Del</kbd> delete'
         : selected ? 'Drag the camera or its aim point on the floor · or use the panel'
-          : nav + ' · Click something to select it, or click Shot camera in the timeline · <kbd>T</kbd> top view · <kbd>C</kbd> camera view');
+          : nav + ' · Click something to select it · right-click for options · double-click an object to focus the lens · <kbd>T</kbd> top view · <kbd>C</kbd> camera view');
   }
   $('#bUndo').disabled = hi <= 0; $('#bRedo').disabled = hi >= hist.length - 1;
+  undoTitles();
+}
+/* the undo and redo buttons say which step they would undo or redo (worked out only when the history changes) */
+let ttKey = null;
+function undoTitles() {
+  const a = hist[hi - 1], b = hist[hi], c = hist[hi + 1];
+  if (ttKey && ttKey[0] === a && ttKey[1] === b && ttKey[2] === c) return;
+  ttKey = [a, b, c];
+  const lab = (w, x, y) => { const d = describeChange(x, y); return w + (d ? ': ' + d : ''); };
+  $('#bUndo').title = hi > 0 ? lab('Undo', a, b) + ' (Ctrl+Z)' : 'Nothing to undo';
+  $('#bRedo').title = hi < hist.length - 1 ? lab('Redo', b, c) + ' (Ctrl+Y)' : 'Nothing to redo';
 }
 
+
+/* ============================== menus ============================== */
+/* One menu element (#ctxMenu) serves dropdown buttons and the right-click menu.
+   items: { head } | { label, fn, key?, check?, danger?, disabled? } | '-' */
+let menuBtn = null, menuClosedAt = 0;
+const menuOpen = () => $('#ctxMenu').style.display === 'block';
+function hideMenu(refocus) {
+  const m = $('#ctxMenu'); if (m.style.display !== 'block') return;
+  menuClosedAt = performance.now(); m.style.display = 'none'; m.innerHTML = '';
+  if (refocus) { try { (menuBtn || $('#c')).focus(); } catch (e) { } }
+}
+function showMenu(x, y, items) {
+  if (!items || !items.length) return false;
+  const m = $('#ctxMenu'); m.innerHTML = '';
+  for (const it of items) {
+    if (it === '-') m.append(h('div', { class: 'sep', role: 'separator' }));
+    else if (it.head) m.append(h('div', { class: 'head' }, it.head));
+    else m.append(h('button', { role: it.check !== undefined ? 'menuitemcheckbox' : 'menuitem', 'aria-checked': it.check !== undefined ? String(!!it.check) : null, class: it.danger ? 'danger' : '', disabled: !!it.disabled, onclick: () => { hideMenu(true); it.fn(); } },
+      h('span', null, it.check !== undefined ? h('span', { class: 'ck' }, it.check ? '\u2713' : '') : null, it.label), it.key ? h('kbd', null, it.key) : null));
+  }
+  m.style.display = 'block';
+  const r = m.getBoundingClientRect();
+  m.style.left = Math.max(4, Math.min(x, innerWidth - r.width - 6)) + 'px'; m.style.top = Math.max(4, Math.min(y, innerHeight - r.height - 6)) + 'px';
+  m.focus();
+  return true;
+}
+/* a button that opens a dropdown below itself; clicking it again closes the menu */
+function menuButton(btn, itemsFn) {
+  btn.addEventListener('click', () => {
+    if (menuBtn === btn && performance.now() - menuClosedAt < 250) { menuBtn = null; return; }
+    const r = btn.getBoundingClientRect(); showMenu(r.left, r.bottom + 4, itemsFn()); menuBtn = btn;
+  });
+}
+function wireMenu() {
+  const m = $('#ctxMenu');
+  m.addEventListener('keydown', e => {
+    const k = e.key; if (!['Escape', 'ArrowDown', 'ArrowUp', 'Home', 'End', 'Tab'].includes(k)) return;
+    e.stopPropagation(); e.preventDefault();
+    if (k === 'Escape' || k === 'Tab') { hideMenu(true); return; }
+    const bs = [...m.querySelectorAll('button:not(:disabled)')]; if (!bs.length) return;
+    let i = bs.indexOf(document.activeElement);
+    i = k === 'Home' ? 0 : k === 'End' ? bs.length - 1 : k === 'ArrowDown' ? (i + 1) % bs.length : (i <= 0 ? bs.length - 1 : i - 1);
+    bs[i].focus();
+  });
+  document.addEventListener('pointerdown', e => { if (menuOpen() && !(e.target.closest && e.target.closest('#ctxMenu'))) hideMenu(); }, true);
+  window.addEventListener('blur', () => hideMenu());
+  window.addEventListener('resize', () => hideMenu());
+  window.addEventListener('wheel', () => hideMenu(), { passive: true, capture: true });
+}
+
+/* ---- right-click menu on the 3D view ---- */
+function makeCameraStatic() {
+  const c = state.camera; c.base = clone(evalCamRaw(T)); c.keys = []; changed(true, true); toast('Camera move cleared: it now stays where it is');
+}
+/* focus the lens on a world point (double-click, or the menu): depth of field on, auto off, keyed if the camera already has keys */
+function focusLensAt(pt, name) {
+  prepRenderCam(T);
+  const fwd = new THREE.Vector3(); renderCam.getWorldDirection(fwd);
+  const d = pt.clone().sub(renderCam.position).dot(fwd);
+  if (d < 0.1) { toast(name + ' is behind the camera'); return; }
+  const dof = ensureDof(), wasOff = !dof.on, keyed = state.camera.keys.length > 0;
+  dof.on = true; dof.auto = false;
+  writeCam({ fd: d }, true); propsDirty = true;
+  toast(`Focus on ${name} (${d.toFixed(2)} m)` + (wasOff ? '. Depth of field is now on' : '') + (keyed ? `. Keyed at ${snapT(T).toFixed(2)} s: double-click something else later in the shot to pull focus` : ''), 4200);
+}
+function ctxItems(hit, floor) {
+  const items = [], sel = selected && getObj(selected), selP = sel && sel.type === 'person' ? sel : null;
+  if (hit && (hit.id === 'camera' || hit.id === 'target')) {
+    select('camera');
+    items.push({ head: 'Shot camera' }, { label: 'Look through camera', fn: () => setView('camera'), key: 'C' }, { label: 'Set start frame', fn: () => setShotEnd('start') }, { label: 'Set end frame', fn: () => setShotEnd('end') });
+    if (state.camera.keys.length) items.push({ label: 'Make static (clear move)', fn: makeCameraStatic });
+    return items;
+  }
+  const o = hit && getObj(hit.id);
+  if (o) {
+    if (selected !== o.id) select(o.id);
+    items.push({ head: o.name });
+    if (o.type === 'mark') {
+      const w = selP || persons()[0];
+      if (w) {
+        const a = evalObj(w, T).p, m = evalObj(o, T).p;
+        const arrive = Math.min(lastT(), snapT(T + Math.max(0.5, Math.hypot(a[0] - m[0], a[2] - m[2]) / pathSpeedOf(w))));
+        items.push({ label: `Walk ${w.name} here (arrive ${arrive.toFixed(1)} s)`, fn: () => walkToMark(w, o.id, arrive) });
+      }
+    } else {
+      if (o.type === 'person') items.push({ label: 'Draw walk path', fn: () => startPath(o.id) }, { label: 'Frame: Medium shot', fn: () => frameShot('medium', o.id) }, { label: 'Frame: Close-up', fn: () => frameShot('cu', o.id) });
+      else items.push({ label: 'Draw path', fn: () => startPath(o.id) });
+      items.push({ label: 'Face the camera', fn: () => faceToward(o, camState.p, 'the camera') });
+      items.push({ label: 'Keep camera on this', fn: () => { state.camera.lookAtId = o.id; state.camera.base.tg = evalCam(T).tg; changed(true); toast('Camera now keeps ' + o.name + ' in frame'); } });
+    }
+    items.push({ label: 'Focus the lens here', key: 'double-click', fn: () => focusLensAt(new THREE.Vector3().fromArray(evalObj(o, T).p), o.name) }, '-',
+      { label: 'Duplicate', fn: duplicateSel, key: 'Ctrl D' },
+      { label: 'Hide', fn: () => { o.visible = false; syncScene(); updateGizmo(); changed(true, true); toast(o.name + ' hidden (the eye in the Scene list brings it back)'); } },
+      { label: 'Delete', fn: deleteSel, key: 'Del', danger: true });
+    return items;
+  }
+  if (floor) {
+    const at = [snapV(floor.x), 0, snapV(floor.z)];
+    items.push({ head: 'On the floor here' }, { label: 'Add a person here', fn: () => addObject('person', null, false, at) }, { label: 'Add floor mark here', fn: () => addObject('mark', null, false, at) });
+    if (selP) items.push({ label: `Walk ${selP.name} here`, fn: () => { startPath(selP.id); if (pathMode) { pathMode.pts.push([at[0], at[2]]); pathBar(); } } });
+    if (sel) items.push({ label: `Move ${sel.name} here`, fn: () => { const cur = clone(evalObj(sel, T)); cur.p = [at[0], cur.p[1], at[2]]; writeObj(sel, cur, true); propsDirty = true; toast(sel.name + ' moved'); } });
+    items.push({ label: 'Aim the camera here', fn: () => writeCam({ tg: [at[0], 1, at[2]] }, true) });
+    if (view === 'top') items.push({ label: 'Move the camera here', fn: () => writeCam({ p: [at[0], camState.p[1], at[2]] }, true) });
+  }
+  return items;
+}
 
 /* ============================== interaction modes ============================== */
 let simple = true; try { simple = localStorage.getItem('shotref.simple') !== '0'; } catch (e) { }
@@ -2847,11 +2972,13 @@ function wire() {
   $('#exEnds').onclick = async () => { if (!(await exportPNG(0, 'start'))) return; await new Promise(r => setTimeout(r, 400)); await exportPNG(lastT(), 'end'); };
   $('#exCancel').onclick = () => { exCancel = true; };
 
+  wireMenu();
   // viewport pointer handling: click to place, drag on the floor, turn ring, paths, picking
-  let pdown = null, drag = null, hoverT = 0;
+  let pdown = null, drag = null, hoverT = 0, rdown = null;
   canvas.addEventListener('pointerdown', e => {
     canvas.focus(); gizmoUsed = false;
     pdown = { x: e.clientX, y: e.clientY, b: e.button };
+    if (e.button === 2) rdown = { x: e.clientX, y: e.clientY };
     if (placing) { e.stopImmediatePropagation(); if (e.button === 0) { movePlacing(e); commitPlacing(); } else cancelPlacing(); pdown = null; return; }
     if (pathMode) {
       e.stopImmediatePropagation();
@@ -2930,8 +3057,26 @@ function wire() {
     const hit = pickAt(rc);
     if (!hit) select(null); else if (hit.id !== 'ring') select(hit.id);
   });
-  canvas.addEventListener('dblclick', () => { if (pathMode) finishPath(); else if (view !== 'camera' && selected) focusSel(); });
-  canvas.addEventListener('contextmenu', e => e.preventDefault());
+  canvas.addEventListener('dblclick', e => {
+    if (pathMode) { finishPath(); return; }
+    if (placing || rec || focusPick) return;
+    const rc = rayFromEvent(e); if (!rc) return;
+    const hit = pickAt(rc), o = hit && getObj(hit.id);
+    if (o && o.type !== 'mark') focusLensAt(hit.point.clone(), o.name); /* F still zooms the view to the selection */
+  });
+  /* right-click opens the page's own menu (never the native one); a right-drag is a pan and opens nothing */
+  canvas.addEventListener('contextmenu', e => {
+    e.preventDefault();
+    const d = rdown; rdown = null;
+    if (placing || pathMode || focusPick || rec) return;
+    if (d && Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4) return;
+    const rc = rayFromEvent(e); if (!rc) return;
+    let hit = pickAt(rc);
+    if (hit && (hit.id === 'ring')) hit = selected ? { id: selected, point: hit.point } : null;
+    let g = hit ? null : planeHit(rc, 0);
+    if (g && Math.hypot(g.x, g.z) > 200) g = null;
+    showMenu(e.clientX, e.clientY, ctxItems(hit, g));
+  });
   canvas.addEventListener('wheel', e => {
     if (view === 'camera' && (e.altKey || e.ctrlKey)) {
       e.preventDefault(); e.stopImmediatePropagation();
@@ -3077,7 +3222,7 @@ function boot() {
     if (e.key === AUTOSAVE_KEY && !tabWarned) { tabWarned = true; toast('ShotRef is open in another tab. Changes here may overwrite it.', 6000); }
   });
   window.addEventListener('pagehide', flushAutosave);
-  window.__shotref = { project: (x, y, z) => { const r = canvas.getBoundingClientRect(); let cam = view === 'top' ? topCam : edCam, rr = { x: 0, y: 0, w: r.width, h: r.height }; if (view === 'camera') { cam = renderCam; rr = camRect(r.width, r.height); } const v = new THREE.Vector3(x, y, z).project(cam); return [r.left + rr.x + (v.x * 0.5 + 0.5) * rr.w, r.top + rr.y + (-v.y * 0.5 + 0.5) * rr.h]; }, get view() { return view; }, get selected() { return selected; }, get state() { return state; }, get assets() { return assets; }, setT: t => setTime(t, false), applyMove, addObject, select, setView, evalCam, exportVideo, exportPNG, pickCodec, _exportCanvas: () => exRenderer ? exRenderer.domElement : null, changed, writeObj, evalObj, setKey, get T() { return T; },
+  window.__shotref = { getPref, setPref, showMenu, menuButton, hideMenu, project: (x, y, z) => { const r = canvas.getBoundingClientRect(); let cam = view === 'top' ? topCam : edCam, rr = { x: 0, y: 0, w: r.width, h: r.height }; if (view === 'camera') { cam = renderCam; rr = camRect(r.width, r.height); } const v = new THREE.Vector3(x, y, z).project(cam); return [r.left + rr.x + (v.x * 0.5 + 0.5) * rr.w, r.top + rr.y + (-v.y * 0.5 + 0.5) * rr.h]; }, get view() { return view; }, get selected() { return selected; }, get state() { return state; }, get assets() { return assets; }, setT: t => setTime(t, false), applyMove, addObject, select, setView, evalCam, exportVideo, exportPNG, pickCodec, _exportCanvas: () => exRenderer ? exRenderer.domElement : null, changed, writeObj, evalObj, setKey, get T() { return T; },
     get rebuilds() { return rebuilds; }, urlCacheIds: () => [...urlCache.keys()],
     get history() { return { at: hi, length: hist.length }; },
     renderStats: () => ({ frame: renderer.info.render.frame, calls: renderer.info.render.calls, draws: drawCount, lastDraw, lastAsync, geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures }) };

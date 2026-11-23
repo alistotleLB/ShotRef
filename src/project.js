@@ -28,7 +28,38 @@ function cleanKeys(keys, fill) {
 function cleanDof(v, d) {
   const x = isObj(v) ? v : {};
   const bool = (a, b) => (typeof a === 'boolean' ? a : b);
-  return { ...copy(d), ...x, on: bool(x.on, bool(d.on, false)), auto: bool(x.auto, bool(d.auto, true)), fstop: num(x.fstop, 0) > 0 ? x.fstop : (num(d.fstop, 0) > 0 ? d.fstop : 2.8) };
+  const out = { ...copy(d), ...x, on: bool(x.on, bool(d.on, false)), auto: bool(x.auto, bool(d.auto, true)), fstop: num(x.fstop, 0) > 0 ? x.fstop : (num(d.fstop, 0) > 0 ? d.fstop : 2.8) };
+  if ('strength' in out) out.strength = num(out.strength, 0) > 0 ? out.strength : 3; /* blur strength, default 3 (artifact files) */
+  return out;
+}
+
+const BODIES = ['man', 'woman', 'child'];
+const str = (v, d) => (typeof v === 'string' && v ? v : d);
+const clampN = (v, a, b, d) => (typeof v === 'number' && Number.isFinite(v) ? Math.min(b, Math.max(a, v)) : d);
+
+/* the shot camera (also used for each shot's saved camera): fills and repairs everything, drops references to objects that are gone */
+function cleanCamera(c, defaults, ids) {
+  const dc = defaults.camera || {};
+  const dcb = dc.base || { p: [3.4, 1.6, 6.2], tg: [0, 1.15, 0], f: 35, roll: 0, fd: 7.2 };
+  const cb = isObj(c.base) ? c.base : {};
+  const base = { ...cb, p: vec3(cb.p, dcb.p), tg: vec3(cb.tg, dcb.tg), f: num(cb.f, dcb.f), roll: num(cb.roll, dcb.roll) };
+  base.fd = num(cb.fd, Math.hypot(base.p[0] - base.tg[0], base.p[1] - base.tg[1], base.p[2] - base.tg[2]));
+  const out = {
+    ...c,
+    base,
+    keys: cleanKeys(c.keys, k => {
+      const o = { ...k, p: vec3(k.p, base.p), tg: vec3(k.tg, base.tg), f: num(k.f, base.f), roll: num(k.roll, base.roll) };
+      if (k.fd !== undefined && typeof k.fd !== 'number') delete o.fd;
+      return o;
+    }),
+    feel: FEELS.includes(c.feel) ? c.feel : (dc.feel || 'gentle'),
+    dof: cleanDof(c.dof, isObj(dc.dof) ? dc.dof : {}),
+    shake: num(c.shake, 0),
+    lookAtId: c.lookAtId != null && ids.has(c.lookAtId) ? c.lookAtId : null,
+    follow: c.follow === true,
+  };
+  if ('mount' in c) out.mount = c.mount != null && ids.has(c.mount) ? c.mount : null; /* camera rides on this object */
+  return out;
 }
 
 export function normalizeProject(raw, defaults = {}) {
@@ -69,26 +100,70 @@ export function normalizeProject(raw, defaults = {}) {
   });
   const ids = new Set(st.objects.map(o => o.id));
 
+  /* new-feature fields on objects: only repaired when present, so files from older builds are not changed */
+  const groups = isObj(src.groups) ? Object.fromEntries(Object.entries(src.groups).filter(([, g]) => isObj(g)).map(([k, g]) => [k, { ...g, name: str(g.name, 'Group') }])) : {};
+  for (const o of st.objects) {
+    if ('grp' in o) o.grp = typeof o.grp === 'string' && groups[o.grp] ? o.grp : null;
+    if ('locked' in o) o.locked = o.locked === true;
+    if ('parent' in o) o.parent = o.parent != null && o.parent !== o.id && ids.has(o.parent) ? String(o.parent) : null;
+    if ('acts' in o) {
+      const acts = (Array.isArray(o.acts) ? o.acts : []).filter(a => isObj(a) && typeof a.pose === 'string' && a.pose && typeof a.t === 'number' && Number.isFinite(a.t)).map(a => {
+        const out = { ...a };
+        if ('at' in a) { if (isObj(a.at) && Array.isArray(a.at.p) && a.at.p.length === 3 && a.at.p.every(x => typeof x === 'number' && Number.isFinite(x))) out.at = { ...a.at, p: a.at.p.slice(), yaw: num(a.at.yaw, 0) }; else delete out.at; }
+        return out;
+      }).sort((a, b) => a.t - b.t);
+      if (acts.length) o.acts = acts; else delete o.acts; /* deleted when empty */
+    }
+    const op = o.opts;
+    if ('body' in op && !BODIES.includes(op.body)) delete op.body;
+    if ('seated' in op) op.seated = op.seated != null && op.seated !== o.id && ids.has(op.seated) ? String(op.seated) : null;
+    if ('lookAt' in op && !(op.lookAt === 'camera' || (op.lookAt != null && op.lookAt !== o.id && ids.has(op.lookAt)))) delete op.lookAt;
+    for (const k of ['free', 'convertible']) if (k in op && typeof op[k] !== 'boolean') delete op[k];
+  }
+  /* a ride-with parent chain must not loop: cut the link that closes a loop */
+  const byId = new Map(st.objects.map(o => [o.id, o]));
+  for (const o of st.objects) {
+    const walk = new Set([o.id]);
+    for (let p = o.parent ? byId.get(o.parent) : null; p; p = p.parent ? byId.get(p.parent) : null) {
+      if (walk.has(p.id)) { o.parent = null; break; }
+      walk.add(p.id);
+    }
+  }
+  if ('groups' in src) st.groups = groups;
+
   /* camera */
-  const dc = defaults.camera || {};
-  const dcb = dc.base || { p: [3.4, 1.6, 6.2], tg: [0, 1.15, 0], f: 35, roll: 0, fd: 7.2 };
-  const c = src.camera, cb = isObj(c.base) ? c.base : {};
-  const base = { ...cb, p: vec3(cb.p, dcb.p), tg: vec3(cb.tg, dcb.tg), f: num(cb.f, dcb.f), roll: num(cb.roll, dcb.roll) };
-  base.fd = num(cb.fd, Math.hypot(base.p[0] - base.tg[0], base.p[1] - base.tg[1], base.p[2] - base.tg[2]));
-  st.camera = {
-    ...c,
-    base,
-    keys: cleanKeys(c.keys, k => {
-      const out = { ...k, p: vec3(k.p, base.p), tg: vec3(k.tg, base.tg), f: num(k.f, base.f), roll: num(k.roll, base.roll) };
-      if (k.fd !== undefined && typeof k.fd !== 'number') delete out.fd;
-      return out;
-    }),
-    feel: FEELS.includes(c.feel) ? c.feel : (dc.feel || 'gentle'),
-    dof: cleanDof(c.dof, isObj(dc.dof) ? dc.dof : {}),
-    shake: num(c.shake, 0),
-    lookAtId: c.lookAtId != null && ids.has(c.lookAtId) ? c.lookAtId : null,
-    follow: c.follow === true,
-  };
+  st.camera = cleanCamera(src.camera, defaults, ids);
+
+  /* project name */
+  if ('meta' in src) st.meta = isObj(src.meta) ? { ...src.meta, id: str(src.meta.id, uid()), name: typeof src.meta.name === 'string' ? src.meta.name : '' } : { id: uid(), name: '' };
+
+  /* shots: each carries its own camera */
+  if ('shots' in src) {
+    const sid = new Set();
+    st.shots = (Array.isArray(src.shots) ? src.shots : []).filter(x => isObj(x) && isObj(x.camera)).map(x => {
+      let id = str(x.id, uid()); while (sid.has(id)) id = uid(); sid.add(id);
+      return { ...x, id, name: str(x.name, 'Shot'), camera: cleanCamera(x.camera, defaults, ids), duration: num(x.duration, 0) > 0 ? x.duration : num(st.settings.duration, 5) };
+    });
+  }
+  if ('shotId' in src || st.shots) st.shotId = st.shots && st.shots.length ? (st.shots.some(x => x.id === src.shotId) ? src.shotId : st.shots[0].id) : null;
+
+  /* takes: snap is a JSON string of the scene (null for the active take) */
+  if ('takes' in src) {
+    const tid = new Set();
+    st.takes = (Array.isArray(src.takes) ? src.takes : []).filter(isObj).map(x => {
+      let id = str(x.id, uid()); while (tid.has(id)) id = uid(); tid.add(id);
+      let snap = null;
+      if (typeof x.snap === 'string') { try { if (isObj(JSON.parse(x.snap))) snap = x.snap; } catch (e) { } }
+      return { ...x, id, name: str(x.name, 'Take'), snap };
+    });
+  }
+  if ('takeId' in src || st.takes) st.takeId = st.takes && st.takes.length ? (st.takes.some(x => x.id === src.takeId) ? src.takeId : st.takes[0].id) : null;
+
+  /* sun and shadows */
+  const ss = st.settings;
+  if ('shadows' in ss && typeof ss.shadows !== 'boolean') delete ss.shadows;
+  if ('shadowSoft' in ss) ss.shadowSoft = clampN(ss.shadowSoft, 0, 1, 0.3);
+  if ('tod' in ss) ss.tod = clampN(ss.tod, 5, 20, 14);
 
   /* location photo */
   if ('plate' in src) st.plate = isObj(src.plate) && typeof src.plate.asset === 'string' ? src.plate : null;

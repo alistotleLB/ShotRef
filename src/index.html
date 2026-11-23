@@ -167,6 +167,16 @@ aside{background:var(--panel);overflow:auto}
 #toast{position:fixed;left:50%;bottom:200px;transform:translateX(-50%);background:#2a2d33;border:1px solid var(--line2);padding:8px 14px;border-radius:8px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:60;box-shadow:0 8px 30px rgba(0,0,0,.4)}
 #toast.show{opacity:1}
 #toast.top{top:16px;bottom:auto}
+#ctxMenu{position:fixed;display:none;z-index:70;min-width:220px;background:#1f2125;border:1px solid var(--line2);border-radius:9px;padding:5px;box-shadow:0 14px 40px rgba(0,0,0,.55)}
+#ctxMenu:focus{outline:none}
+#ctxMenu .head{font-size:11px;color:var(--mute);padding:5px 9px 4px;font-weight:600}
+#ctxMenu button{display:flex;justify-content:space-between;align-items:center;gap:18px;width:100%;text-align:left;border:0;background:transparent;padding:6px 9px;border-radius:6px}
+#ctxMenu button:hover,#ctxMenu button:focus-visible{background:var(--accd);color:#ffe3c6}
+#ctxMenu button:disabled{opacity:.4;cursor:default;background:transparent;color:inherit}
+#ctxMenu button.danger{color:#ff9c9c}
+#ctxMenu kbd{font:10.5px ui-monospace,Consolas,monospace;color:var(--mute)}
+#ctxMenu .sep{height:1px;background:var(--line);margin:4px 2px}
+#ctxMenu button .ck{width:16px;display:inline-block;color:var(--acc2)}
 .drop{position:absolute;inset:0;border:3px dashed var(--acc);background:rgba(255,154,60,.08);display:none;align-items:center;justify-content:center;font-size:18px;color:var(--acc2)}
 #camBar{top:10px;left:10px;display:none;gap:4px;pointer-events:auto}
 #camBar button{background:rgba(25,27,31,.88);backdrop-filter:blur(6px);padding:6px 12px;font-weight:600}
@@ -245,7 +255,7 @@ body.simple #vpTools [data-g]{display:none}
       <button data-g="rotate" title="Rotate (E)">Rotate</button>
       <button data-g="scale" title="Scale (R)">Scale</button>
       <button id="bSnapGrid" title="Snap to 0.25 m and 15°">Snap</button>
-      <button id="bFocus" title="Frame selected object (F)">Focus</button>
+      <button id="bFocus" title="Zoom the view to the selected object (F)">Zoom to</button>
     </div>
     <div id="vpRight" class="ov">
       <button id="bCamHere" title="Put the shot camera where you are looking now">Camera to this view</button>
@@ -339,6 +349,7 @@ body.simple #vpTools [data-g]{display:none}
     <li><b>Start from a set</b> (the New button), or click items on the left and then click on the floor to place them.</li>
     <li><b>Block it.</b> Drag people and props across the floor; drag the orange ring to turn them. <b>Top view</b> (<span class="kbd">T</span>) works like a floor plan.</li>
     <li><b>Move people.</b> Select a person, press <b>Draw walk path</b> and click points on the floor, or send them to a floor mark with an arrival time.</li>
+    <li><b>Right-click</b> anything for what you can do with it: add a person here, walk them to a mark, frame a medium shot, face the camera, duplicate, hide. Right-click the floor to add things or aim the camera there. Right-drag still pans.</li>
     <li><b>Frame the shot.</b> In <b>Camera view</b> (<span class="kbd">C</span>) drag to orbit, right-drag to pan, scroll to dolly, <span class="kbd">W A S D Q E</span> to fly. Or use a shot size: Wide, Medium, Close-up…</li>
     <li><b>Make the move.</b> Press <b>Set start</b>, reframe, press <b>Set end</b>. Or pick a one-click move, or <b>● Record</b> and operate the camera live.</li>
     <li><b>Export</b> an MP4, the current frame, or start + end frames for image-to-video models.</li>
@@ -352,7 +363,9 @@ body.simple #vpTools [data-g]{display:none}
     <div><span class="kbd">K</span></div><div>Add key for the selection (camera in Camera view)</div>
     <div><span class="kbd">←</span> <span class="kbd">→</span></div><div>Step one frame (Shift: 10 frames)</div>
     <div><span class="kbd">Home</span> <span class="kbd">End</span></div><div>Go to start / end</div>
-    <div><span class="kbd">F</span></div><div>Focus the selection</div>
+    <div><span class="kbd">F</span></div><div>Zoom the view to the selection</div>
+    <div>Right-click</div><div>Menu for what is under the pointer (the floor, a person, a prop, a mark, the camera)</div>
+    <div>Double-click</div><div>Focus the lens on what you clicked (turns depth of field on). Double-click something else later to pull focus.</div>
     <div><span class="kbd">Ctrl D</span> · <span class="kbd">Del</span></div><div>Duplicate · Delete</div>
     <div><span class="kbd">Ctrl Z</span> · <span class="kbd">Ctrl Y</span></div><div>Undo · Redo</div>
     <div><span class="kbd">Ctrl S</span> · <span class="kbd">Ctrl O</span></div><div>Save · Open project</div>
@@ -385,6 +398,7 @@ body.simple #vpTools [data-g]{display:none}
   <div class="btns" style="margin-top:14px"><button data-close>Cancel</button><button id="cfAlt" style="display:none"></button><button id="cfOk" class="primary">OK</button></div>
 </div></div>
 
+<div id="ctxMenu" role="menu" tabindex="-1"></div>
 <div id="toast"></div>
 <script>/*APP*/</script>
 </body>

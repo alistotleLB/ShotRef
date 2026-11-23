@@ -242,7 +242,7 @@ const ok = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
     await Promise.race([closed, sleep(8000).then(() => { throw new Error('did not close'); })]);
   });
 
-  await check('right-click shows the browser-style menu on text boxes, and none on the 3D view', async () => {
+  await check('right-click shows the browser-style menu on text boxes, and the page own menu (no native one) on the 3D view', async () => {
     const { app, page } = await launch();
     await app.evaluate(({ Menu }) => { globalThis.__popped = []; Menu.prototype.popup = function () { globalThis.__popped.push(this.items.map(i => i.label).filter(Boolean)); }; });
     const box = await page.evaluateHandle(() => [...document.querySelectorAll('input')].find(i => (i.type === 'text' || i.type === 'number') && i.offsetParent));
@@ -252,7 +252,8 @@ const ok = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
     const r = await page.evaluate(() => { const b = document.querySelector('canvas').getBoundingClientRect(); return [b.left + b.width / 2, b.top + b.height / 3]; });
     await page.mouse.click(r[0], r[1], { button: 'right' }); await sleep(400);
     popped = await app.evaluate(() => globalThis.__popped);
-    ok(popped.length === 1, '3D view opened a menu: ' + JSON.stringify(popped));
+    ok(popped.length === 1, '3D view opened a native menu: ' + JSON.stringify(popped));
+    ok(await page.evaluate(() => document.querySelector('#ctxMenu').style.display === 'block'), 'the 3D view should show the page own menu');
   });
 
   for (const a of apps) await kill(a);
