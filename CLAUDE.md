@@ -8,6 +8,7 @@ ShotRef is a "very dumbed-down Blender" for **blocking and camera moves only**. 
 - `npm run build:debug` writes `dist/ShotRef.debug.html`: not minified, with readable names in errors. Use it when a stack trace is unreadable.
 - The app must stay a **single offline HTML file**: no external requests, CDNs or fonts.
 - Check changes in Chrome or Edge.
+- Desktop app (Windows, Electron, `electron/main.cjs` + `preload.cjs`, loads the same `dist/ShotRef.html`): `npm run desktop` builds the page and starts it; `npm run dist:win` writes `release/ShotRef-Setup-<ver>.exe` and `ShotRef-<ver>-portable.exe` (unsigned). If `electron` has no `dist` folder after `npm install`, run `node node_modules/electron/install.js`.
 - **mp4-muxer** is deprecated: it's superseded by Mediabunny upstream. It works and is bundled; don't upgrade or swap it without testing exports.
 
 ## Testing
@@ -17,6 +18,7 @@ ShotRef is a "very dumbed-down Blender" for **blocking and camera moves only**. 
 - `node test/smoke.cjs --only <part of a check name>` runs single checks. To add one, append a `check('what it proves', async ({ open }) => …)` at the end; the header of the file explains the helpers.
 - Browser: `SHOTREF_BROWSER`, else the system Edge, else Chrome. The test file uses LF line endings only.
 - `node test/perf.cjs` prints performance numbers by hand. It isn't part of `npm test`.
+- `npm run test:desktop` (`test/desktop.cjs`, playwright-core `_electron`, about 20 s) checks the Electron shell against the built page with stubbed native dialogs. Run `npm run build` first. Dirty apps ask before closing, so tests end them by killing the process.
 - Ask the owner before adding another test framework.
 
 ## Where it runs: two environments, keep both working
