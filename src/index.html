@@ -187,6 +187,26 @@ button.icon svg,.ib svg{width:17px;height:17px;stroke:currentColor;fill:none;str
 #camBar button.on{background:rgba(90,58,28,.95);border-color:var(--acc);color:var(--acc2)}
 .recbtn{color:#ff8080}
 .recbtn.on{background:#5a1c1c!important;border-color:#ff5d5d!important;color:#ffd0d0!important}
+/* selection model: group tag, lock button, Locked line, floating toolbar, selection box */
+.ol .gtag{font-size:10px;color:#b9a3ff;background:#2a2340;border-radius:4px;padding:0 5px;white-space:nowrap;max-width:70px;overflow:hidden;text-overflow:ellipsis}
+.ol.ingrp{box-shadow:inset 2px 0 0 #8f7aff}
+.ol .lockb svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:1.8;display:block}
+.ol .lockb{opacity:.3}
+.ol .lockb.on{opacity:1;color:var(--acc2)}
+.ol:hover .lockb,.ol .lockb:focus-visible{opacity:.75}
+.ol .lockb.on:hover{opacity:1}
+.lockline{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--acc2);margin-top:6px}
+.lockline svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.8}
+.lockline button{padding:2px 8px;margin-left:auto}
+#boxSel{display:none;border:1px dashed var(--acc);background:rgba(255,154,60,.08)}
+#selBar{display:none;pointer-events:auto;gap:2px;background:rgba(22,24,28,.92);backdrop-filter:blur(6px);border:1px solid rgba(255,154,60,.45);border-radius:9px;padding:3px;transform:translate(-50%,-100%);box-shadow:0 6px 22px rgba(0,0,0,.45);z-index:4}
+#selBar button{position:relative;background:transparent;border:0;border-radius:6px;padding:4px 6px;color:#e3e6ea;display:flex;align-items:center}
+#selBar button:hover{background:rgba(255,154,60,.18);color:#ffe3c6}
+#selBar button.danger:hover{background:rgba(255,93,93,.18);color:#ffbdbd}
+#selBar button.on{color:var(--acc2)}
+#selBar svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+#selBar [data-tip]:hover::after,#selBar [data-tip]:focus-visible::after{top:auto;bottom:calc(100% + 7px);right:auto;left:50%;transform:translateX(-50%)}
+#selBar .sb-sep{width:1px;background:rgba(255,255,255,.12);margin:3px 2px}
 #modeBar{bottom:46px;left:50%;transform:translateX(-50%);display:none;align-items:center;gap:8px;pointer-events:auto;z-index:5;width:max-content;background:rgba(20,22,26,.94);border:1px solid var(--acc);border-radius:10px;padding:7px 8px 7px 14px;box-shadow:0 8px 30px rgba(0,0,0,.45);max-width:92%}
 #modeBar span{color:#ffe3c6;font-size:12.5px;flex:1 1 auto;white-space:normal}
 #modeBar button{padding:4px 10px;flex:none}
@@ -297,6 +317,8 @@ button.icon{padding:5px 8px;min-width:32px;display:inline-flex;align-items:cente
       <button id="cbPlate" title="Put a photo of the location behind the scene">Location photo</button>
       <button id="cbCopy" title="Copy this frame to the clipboard (Ctrl+C)">Copy frame</button>
     </div>
+    <div id="selBar" class="ov" role="toolbar" aria-label="Selection tools"></div>
+    <div id="boxSel" class="ov"></div>
     <div id="labels" class="ov"></div>
     <div id="modeBar" class="ov"></div>
     <div id="countdown" class="ov"></div>
@@ -376,7 +398,7 @@ button.icon{padding:5px 8px;min-width:32px;display:inline-flex;align-items:cente
   <h2 id="mHelpT">Quick start</h2>
   <ol class="steps">
     <li><b>Start from a set</b> (<b>File</b> then <b>New</b>), or click items on the Add tab on the left and then click on the floor to place them.</li>
-    <li><b>Block it.</b> Drag people and props across the floor; drag the orange ring to turn them. <b>Top view</b> (<span class="kbd">T</span>) works like a floor plan.</li>
+    <li><b>Block it.</b> Drag people and props across the floor; drag the orange ring to turn them (let go over a person or the camera and they face it). Shift-click picks several to move together; <span class="kbd">Ctrl G</span> groups them. <b>Top view</b> (<span class="kbd">T</span>) works like a floor plan.</li>
     <li><b>Move people.</b> Select a person, press <b>Draw walk path</b> and click points on the floor, or send them to a floor mark with an arrival time.</li>
     <li><b>Right-click</b> anything for what you can do with it: add a person here, walk them to a mark, frame a medium shot, face the camera, duplicate, hide. Right-click the floor to add things or aim the camera there. Right-drag still pans.</li>
     <li><b>Frame the shot.</b> In <b>Camera view</b> (<span class="kbd">C</span>) drag to orbit, right-drag to pan, scroll to dolly, <span class="kbd">W A S D Q E</span> to fly. Or use a shot size: Wide, Medium, Close-up…</li>
@@ -396,6 +418,9 @@ button.icon{padding:5px 8px;min-width:32px;display:inline-flex;align-items:cente
     <div><span class="kbd">F</span></div><div>Zoom the view to the selection</div>
     <div>Right-click</div><div>Menu for what is under the pointer (the floor, a person, a prop, a mark, the camera)</div>
     <div>Double-click</div><div>Focus the lens on what you clicked (turns depth of field on). Double-click something else later to pull focus.</div>
+    <div>Shift-click · Shift-drag</div><div>Add or remove one thing in the selection · draw a box on empty space to select what is inside. <span class="kbd">Ctrl A</span> selects everything.</div>
+    <div><span class="kbd">Ctrl G</span> · <span class="kbd">Ctrl Shift G</span></div><div>Group the selection (click one to select all, Alt-click for just one) · Ungroup</div>
+    <div><span class="kbd">Ctrl L</span></div><div>Lock or unlock (a locked thing can't be dragged or deleted by accident)</div>
     <div><span class="kbd">Ctrl D</span> · <span class="kbd">Del</span></div><div>Duplicate · Delete</div>
     <div><span class="kbd">Ctrl Z</span> · <span class="kbd">Ctrl Y</span></div><div>Undo · Redo</div>
     <div><span class="kbd">Ctrl S</span> · <span class="kbd">Ctrl O</span></div><div>Save · Open project</div>

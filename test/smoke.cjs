@@ -864,7 +864,7 @@ check('path cancel is clickable at 1366', async ({ freshContext }) => {
     const fc = await freshContext({ viewport: vp });
     const p = await fc.open();
     await p.evaluate(() => { const S = window.__shotref; S.select(S.state.objects.find(o => o.type === 'person').id); });
-    await p.getByRole('button', { name: /Draw .*path/ }).click();
+    await p.locator('#props').getByRole('button', { name: /Draw .*path/ }).click();
     await p.waitForFunction(() => getComputedStyle(document.querySelector('#modeBar')).display !== 'none');
     const hit = await p.evaluate(() => {
       const b = [...document.querySelectorAll('#modeBar button')].find(x => x.textContent.trim() === 'Cancel');
@@ -2195,6 +2195,271 @@ check('camera view: toolbar and camera buttons do not overlap at 1100 px', async
   await p.waitForTimeout(200);
   const r = await p.evaluate(() => { const a = document.querySelector('#camBar').getBoundingClientRect(), b = document.querySelector('#vpRight').getBoundingClientRect(); return { camR: a.right, vpL: b.left, camT: a.top, vpB: b.bottom, vpT: b.top, camB: a.bottom }; });
   ok(r.camR <= r.vpL || r.camB <= r.vpT || r.vpB <= r.camT, 'camera bar and icon toolbar overlap: ' + JSON.stringify(r));
+});
+
+/* ---- batch C: selection model (multi-select, box select, lock, groups, selection bar, ring release) ---- */
+const proj3 = (p, x, y, z) => p.evaluate(q => window.__shotref.project(q[0], q[1], q[2]), [x, y, z]);
+const selIdsOf = p => p.evaluate(() => window.__shotref.selection.slice());
+const idOfType = (p, type) => p.evaluate(t => window.__shotref.state.objects.find(o => o.type === t).id, type);
+const objOf = (p, id) => p.evaluate(i => JSON.parse(JSON.stringify(window.__shotref.state.objects.find(o => o.id === i) || null)), id);
+const shiftClick = async (p, x, y) => { await p.keyboard.down('Shift'); await p.mouse.click(x, y); await p.keyboard.up('Shift'); };
+const undoTitle = p => p.evaluate(() => document.querySelector('#bUndo').title);
+/* the three starter objects on screen: person (0,0,0), box (2.2,0,-1.5), tree (-3.5,0,-4) */
+async function starterXY(p) {
+  const [pe, bo, tr] = await Promise.all([proj3(p, 0, 0.9, 0), proj3(p, 2.2, 0.4, -1.5), proj3(p, -3.5, 1.5, -4)]);
+  return { person: pe, box: bo, tree: tr };
+}
+
+check('multi-select: Shift-click adds and removes, Ctrl+A selects all, Esc clears, the panel says how many', async ({ open }) => {
+  const p = await open(); await p.waitForTimeout(500);
+  const xy = await starterXY(p), person = await idOfType(p, 'person'), box = await idOfType(p, 'box');
+  await p.mouse.click(...xy.person);
+  ok(JSON.stringify(await selIdsOf(p)) === JSON.stringify([person]), 'plain click selects one');
+  await shiftClick(p, ...xy.box);
+  const two = await selIdsOf(p);
+  ok(two.length === 2 && two.includes(person) && two.includes(box), 'Shift-click should add the box, got ' + JSON.stringify(two));
+  ok(await p.evaluate(() => window.__shotref.selected) === box, 'the last one clicked is the main one');
+  ok(/2 items selected/.test(await p.textContent('#props')), 'the panel should say 2 items selected');
+  await shiftClick(p, ...xy.person);
+  ok(JSON.stringify(await selIdsOf(p)) === JSON.stringify([box]), 'Shift-click on a selected one removes it');
+  await p.keyboard.press('Control+a');
+  ok((await selIdsOf(p)).length === 3, 'Ctrl+A should select all 3, got ' + (await selIdsOf(p)).length);
+  await p.keyboard.press('Escape');
+  ok((await selIdsOf(p)).length === 0 && await p.evaluate(() => window.__shotref.selected) === null, 'Esc clears the selection');
+  noErrors(p);
+});
+
+check('Shift-drag on empty space draws a selection box and selects what it covers', async ({ open }) => {
+  const p = await open(); await p.waitForTimeout(500);
+  const xy = await starterXY(p), person = await idOfType(p, 'person'), box = await idOfType(p, 'box'), tree = await idOfType(p, 'tree');
+  const x0 = Math.min(xy.person[0], xy.box[0]) - 50, y0 = Math.min(xy.person[1], xy.box[1]) - 90, x1 = Math.max(xy.person[0], xy.box[0]) + 50, y1 = Math.max(xy.person[1], xy.box[1]) + 90;
+  ok(xy.tree[0] < x0 || xy.tree[0] > x1 || xy.tree[1] < y0 || xy.tree[1] > y1, 'test set-up: the tree must be outside the box ' + JSON.stringify({ x0, y0, x1, y1, tree: xy.tree }));
+  await p.keyboard.down('Shift');
+  await p.mouse.move(x0, y0); await p.mouse.down(); await p.mouse.move((x0 + x1) / 2, (y0 + y1) / 2, { steps: 4 }); await p.mouse.move(x1, y1, { steps: 4 });
+  const shown = await p.evaluate(() => { const b = document.querySelector('#boxSel'); return b && getComputedStyle(b).display !== 'none' && b.getBoundingClientRect().width > 50; });
+  ok(shown, 'the dashed selection box should show while dragging');
+  await p.mouse.up(); await p.keyboard.up('Shift');
+  const s = await selIdsOf(p);
+  ok(s.includes(person) && s.includes(box) && !s.includes(tree), 'box should select person and box only, got ' + JSON.stringify(s));
+  ok(await p.evaluate(() => getComputedStyle(document.querySelector('#boxSel')).display) === 'none', 'the box hides on release');
+  /* Shift+click on empty space changes nothing */
+  const cr = await p.evaluate(() => { const r = document.querySelector('#c').getBoundingClientRect(); return [r.left + 30, r.bottom - 30]; });
+  await shiftClick(p, cr[0], cr[1]);
+  ok((await selIdsOf(p)).length === 2, 'Shift+click on empty space must keep the selection, got ' + JSON.stringify(await selIdsOf(p)));
+  noErrors(p);
+});
+
+check('dragging one of several moves them all; keyed items get a key at the playhead; undo names it', async ({ open }) => {
+  const p = await open(); await p.waitForTimeout(400);
+  const person = await idOfType(p, 'person'), box = await idOfType(p, 'box');
+  await p.evaluate(id => { const S = window.__shotref, o = S.state.objects.find(x => x.id === id); const tr = x => ({ p: [x, 0, 0], r: [0, 20, 0], s: [1, 1, 1] }); S.setKey(o.keys, 0, tr(0)); S.setKey(o.keys, 2, tr(1)); S.changed(true); S.setT(1); }, person);
+  await p.waitForTimeout(150);
+  const xy = await starterXY(p);
+  const before = await p.evaluate(([a, b]) => { const S = window.__shotref; return { a: S.evalObj(S.state.objects.find(o => o.id === a), 1).p, b: S.state.objects.find(o => o.id === b).base.p.slice() }; }, [person, box]);
+  const pxy = await proj3(p, before.a[0], 0.9, before.a[2]);
+  await p.mouse.click(...pxy); await shiftClick(p, ...xy.box);
+  await p.mouse.move(...xy.box); await p.mouse.down(); await p.mouse.move(xy.box[0] + 40, xy.box[1] + 30, { steps: 6 }); await p.mouse.move(xy.box[0] + 90, xy.box[1] + 50, { steps: 6 }); await p.mouse.up();
+  const after = await p.evaluate(([a, b]) => { const S = window.__shotref, o = S.state.objects.find(x => x.id === a); return { a: S.evalObj(o, 1).p, b: S.state.objects.find(x => x.id === b).base.p.slice(), keysT: o.keys.map(k => k.t) }; }, [person, box]);
+  const da = [after.a[0] - before.a[0], after.a[2] - before.a[2]], db = [after.b[0] - before.b[0], after.b[2] - before.b[2]];
+  ok(Math.hypot(da[0], da[1]) > 0.3, 'the person should have moved: ' + JSON.stringify(da));
+  ok(Math.abs(da[0] - db[0]) < 0.03 && Math.abs(da[1] - db[1]) < 0.03, 'both should move by the same amount: ' + JSON.stringify({ da, db }));
+  ok(after.keysT.some(t => Math.abs(t - 1) < 0.02), 'the keyed person needs a key at the playhead (1 s), keys at ' + JSON.stringify(after.keysT));
+  const bo = await objOf(p, box); ok(bo.keys.length === 0, 'the unkeyed box should change its base pose, not get keys');
+  await p.waitForTimeout(250);
+  ok(/move 2 items/.test(await undoTitle(p)), 'undo should say "move 2 items": ' + await undoTitle(p));
+  noErrors(p);
+});
+
+check('lock: Ctrl+L, outliner button and panel line; locked items select but do not drag or delete', async ({ open }) => {
+  const p = await open(); await p.waitForTimeout(400);
+  const box = await idOfType(p, 'box'), xy = await starterXY(p);
+  await p.mouse.click(...xy.box);
+  await p.keyboard.press('Control+l');
+  ok((await objOf(p, box)).locked === true, 'Ctrl+L should lock the box');
+  await p.waitForTimeout(250);
+  ok(/lock/i.test(await undoTitle(p)), 'undo should name the lock: ' + await undoTitle(p));
+  ok(await p.isVisible('#props .lockline'), 'the panel should show the Locked line');
+  await p.waitForTimeout(250);
+  ok(await p.evaluate(() => window.__shotref.ringKnob()) === null, 'a locked item has no turn ring');
+  const b0 = (await objOf(p, box)).base.p.slice();
+  await p.mouse.move(...xy.box); await p.mouse.down(); await p.mouse.move(xy.box[0] + 60, xy.box[1] + 40, { steps: 6 }); await p.mouse.up();
+  ok(JSON.stringify((await objOf(p, box)).base.p) === JSON.stringify(b0), 'a locked box must not move when dragged');
+  ok(JSON.stringify(await selIdsOf(p)) === JSON.stringify([box]), 'a locked item can still be selected');
+  await p.keyboard.press('Delete');
+  ok(!!(await objOf(p, box)), 'a locked item must not be deleted by the Delete key');
+  await p.click('#props .lockline button');
+  ok((await objOf(p, box)).locked !== true, 'the Unlock button in the panel unlocks');
+  /* outliner lock button */
+  await p.click('#leftTabs [data-lt="scene"]');
+  await p.click('#outliner .ol[data-id="' + box + '"] .lockb');
+  ok((await objOf(p, box)).locked === true, 'the outliner lock button locks');
+  await p.waitForTimeout(250);
+  ok(await p.evaluate(i => document.querySelector('#outliner .ol[data-id="' + i + '"] .lockb').classList.contains('on'), box), 'the lock button shows it is on');
+  await p.click('#outliner .ol[data-id="' + box + '"] .lockb');
+  ok((await objOf(p, box)).locked !== true, 'the outliner lock button unlocks again');
+  /* mixed selection: Delete removes only the unlocked */
+  const person = await idOfType(p, 'person');
+  await p.evaluate(i => { const S = window.__shotref; S.state.objects.find(o => o.id === i).locked = true; S.changed(true, true); }, person);
+  await p.keyboard.press('Control+a'); await p.keyboard.press('Delete');
+  const left = await p.evaluate(() => window.__shotref.state.objects.map(o => o.type));
+  ok(left.length === 1 && left[0] === 'person', 'only the locked person should survive Delete-all, got ' + JSON.stringify(left));
+  noErrors(p);
+});
+
+check('groups: Ctrl+G, click selects all, Alt-click one, group moves together, Ctrl+Shift+G, tag in the Scene list', async ({ open }) => {
+  const p = await open(); await p.waitForTimeout(400);
+  const person = await idOfType(p, 'person'), box = await idOfType(p, 'box'), xy = await starterXY(p);
+  await p.mouse.click(...xy.person); await shiftClick(p, ...xy.box);
+  await p.keyboard.press('Control+g');
+  let st = await stateOf(p);
+  const gp = st.objects.find(o => o.id === person).grp;
+  ok(gp && st.objects.find(o => o.id === box).grp === gp && st.groups[gp] && /^Group/.test(st.groups[gp].name), 'Ctrl+G should group them: ' + JSON.stringify(st.groups));
+  await p.waitForTimeout(250);
+  ok(/group/i.test(await undoTitle(p)), 'undo should name the grouping: ' + await undoTitle(p));
+  await p.keyboard.press('Escape');
+  await p.mouse.click(...xy.person);
+  ok((await selIdsOf(p)).length === 2, 'clicking a group member should select the whole group');
+  ok(await p.isVisible('#props input[value^="Group"]'), 'the panel should offer the group name');
+  await p.keyboard.press('Escape');
+  await p.keyboard.down('Alt'); await p.mouse.click(...xy.person); await p.keyboard.up('Alt');
+  ok(JSON.stringify(await selIdsOf(p)) === JSON.stringify([person]), 'Alt-click picks one inside the group, got ' + JSON.stringify(await selIdsOf(p)));
+  /* dragging a grouped item moves the group */
+  await p.keyboard.press('Escape');
+  const b0 = (await objOf(p, box)).base.p.slice();
+  await p.mouse.move(...xy.person); await p.mouse.down(); await p.mouse.move(xy.person[0] - 50, xy.person[1] + 20, { steps: 6 }); await p.mouse.move(xy.person[0] - 90, xy.person[1] + 30, { steps: 6 }); await p.mouse.up();
+  const b1 = (await objOf(p, box)).base.p;
+  ok(Math.hypot(b1[0] - b0[0], b1[2] - b0[2]) > 0.3, 'dragging one group member should move the other too');
+  /* Scene list tag */
+  await p.click('#leftTabs [data-lt="scene"]');
+  ok(await p.evaluate(i => !!document.querySelector('#outliner .ol[data-id="' + i + '"] .gtag'), box), 'the Scene list should tag grouped items');
+  /* ungroup */
+  await p.keyboard.press('Control+Shift+g');
+  st = await stateOf(p);
+  ok(!st.objects.find(o => o.id === person).grp && !st.objects.find(o => o.id === box).grp && !Object.keys(st.groups || {}).length, 'Ctrl+Shift+G ungroups and drops the group: ' + JSON.stringify(st.groups));
+  noErrors(p);
+});
+
+check('groups tidy themselves: deleting down to one member dissolves the group; duplicating a group makes a new one', async ({ open }) => {
+  const p = await open(); await p.waitForTimeout(400);
+  const person = await idOfType(p, 'person'), box = await idOfType(p, 'box'), xy = await starterXY(p);
+  await p.mouse.click(...xy.person); await shiftClick(p, ...xy.box); await p.keyboard.press('Control+g');
+  await p.keyboard.press('Control+d');
+  let st = await stateOf(p);
+  ok(st.objects.length === 5 && Object.keys(st.groups).length === 2, 'duplicate of a group should be a second group: ' + JSON.stringify(st.groups));
+  const copies = st.objects.slice(3); ok(copies[0].grp && copies[0].grp === copies[1].grp && copies[0].grp !== st.objects.find(o => o.id === person).grp, 'the copies share a new group');
+  ok((await selIdsOf(p)).length === 2, 'the copies end up selected');
+  await p.evaluate(i => { const S = window.__shotref; S.select(i, 'single'); }, person);
+  await p.keyboard.press('Delete');
+  st = await stateOf(p);
+  ok(!st.objects.find(o => o.id === box).grp && Object.keys(st.groups).length === 1, 'a group left with one member dissolves: ' + JSON.stringify(st.groups));
+  noErrors(p);
+});
+
+check('selection toolbar floats over the selection, follows its kind, hides in camera view and while playing', async ({ open }) => {
+  const p = await open(); await p.waitForTimeout(400);
+  const xy = await starterXY(p), person = await idOfType(p, 'person'), box = await idOfType(p, 'box');
+  ok(!(await p.isVisible('#selBar')), 'no toolbar with nothing selected');
+  await p.mouse.click(...xy.person); await p.waitForTimeout(250);
+  ok(await p.isVisible('#selBar'), 'the toolbar shows over a selected person');
+  const r = await p.evaluate(() => { const b = document.querySelector('#selBar').getBoundingClientRect(), v = document.querySelector('#vp').getBoundingClientRect(); return { cx: (b.left + b.right) / 2, bottom: b.bottom, top: b.top, vt: v.top }; });
+  ok(Math.abs(r.cx - xy.person[0]) < 90 && r.bottom < xy.person[1] && r.top >= r.vt, 'the toolbar should sit above the person: ' + JSON.stringify({ r, person: xy.person }));
+  const tips = await p.evaluate(() => [...document.querySelectorAll('#selBar button')].map(b => b.dataset.tip));
+  for (const t of ['Draw walk path', 'Duplicate', 'Lock', 'Delete']) ok(tips.some(x => x && x.startsWith(t)), 'person toolbar misses ' + t + ': ' + JSON.stringify(tips));
+  await p.click('#selBar [data-tip^="Lock"]');
+  ok((await objOf(p, person)).locked === true, 'the toolbar Lock button locks');
+  await p.click('#selBar [data-tip^="Unlock"]');
+  ok((await objOf(p, person)).locked !== true, 'and the same button unlocks');
+  await shiftClick(p, ...xy.box); await p.waitForTimeout(250);
+  const tips2 = await p.evaluate(() => [...document.querySelectorAll('#selBar button')].map(b => b.dataset.tip));
+  ok(tips2.some(x => x && x.startsWith('Group')), 'a multi-selection toolbar offers Group: ' + JSON.stringify(tips2));
+  await p.click('#selBar [data-tip^="Group"]');
+  ok(!!(await objOf(p, box)).grp, 'the toolbar Group button groups');
+  await p.click('#selBar [data-tip^="Duplicate"]');
+  ok((await p.evaluate(() => window.__shotref.state.objects.length)) === 5, 'the toolbar Duplicate copies the group');
+  await p.keyboard.press('c'); await p.waitForTimeout(250);
+  ok(!(await p.isVisible('#selBar')), 'hidden in camera view');
+  await p.keyboard.press('c'); await p.waitForTimeout(250);
+  ok(await p.isVisible('#selBar'), 'back in the editor');
+  await p.keyboard.press(' '); await p.waitForTimeout(300);
+  ok(!(await p.isVisible('#selBar')), 'hidden while playing');
+  await p.keyboard.press(' ');
+  await p.evaluate(() => window.__shotref.setPref('selBar', false)); await p.keyboard.press('ArrowRight'); await p.waitForTimeout(250);
+  ok(!(await p.isVisible('#selBar')), 'the selBar preference turns it off');
+  noErrors(p);
+});
+
+check('the turn ring turns a whole selection together and releasing over a person or the camera faces it', async ({ open }) => {
+  const p = await open(); await p.waitForTimeout(400);
+  const person = await idOfType(p, 'person'), box = await idOfType(p, 'box');
+  await p.keyboard.press('t'); await p.waitForTimeout(400);
+  await p.evaluate(() => { const S = window.__shotref, o = S.addObject('person'); o.base.p = [4, 0, 0]; S.changed(true, true); });
+  await p.waitForTimeout(200);
+  await p.evaluate(id => window.__shotref.select(id), person); await p.waitForTimeout(200);
+  const knob = () => p.evaluate(() => { const k = window.__shotref.ringKnob(); return k ? window.__shotref.project(k[0], k[1], k[2]) : null; });
+  let k = await knob(); ok(k, 'the ring knob should show for the selected person');
+  /* release over the other person: faces +x, yaw 90 */
+  const oxy = await proj3(p, 4, 0.9, 0);
+  await p.mouse.move(...k); await p.mouse.down(); await p.mouse.move((k[0] + oxy[0]) / 2, (k[1] + oxy[1]) / 2, { steps: 5 }); await p.mouse.move(...oxy, { steps: 5 });
+  ok(/Release to face/.test(await p.evaluate(() => document.querySelector('#modeBar').textContent)), 'the bar should say "Release to face ..."');
+  await p.mouse.up();
+  let yaw = (await objOf(p, person)).base.r[1]; yaw = ((yaw % 360) + 360) % 360;
+  ok(Math.abs(yaw - 90) < 1.5, 'releasing over the other person should face them (90), got ' + yaw);
+  await p.waitForTimeout(250);
+  ok(/turn|face/.test(await undoTitle(p)), 'undo names the step: ' + await undoTitle(p));
+  /* release over the camera */
+  k = await knob();
+  const cxy = await p.evaluate(() => { const c = window.__shotref.state.camera.base.p; return window.__shotref.project(c[0], c[1], c[2]); });
+  await p.mouse.move(...k); await p.mouse.down(); await p.mouse.move((k[0] + cxy[0]) / 2, (k[1] + cxy[1]) / 2, { steps: 5 }); await p.mouse.move(...cxy, { steps: 5 }); await p.mouse.up();
+  yaw = (await objOf(p, person)).base.r[1]; yaw = ((yaw % 360) + 360) % 360;
+  const want = Math.atan2(3.4, 6.2) * 180 / Math.PI;
+  ok(Math.abs(yaw - want) < 1.5, 'releasing over the camera should face it (' + want.toFixed(1) + '), got ' + yaw);
+  /* a selection turns together around the middle */
+  await p.evaluate(([a, b]) => { const S = window.__shotref; S.select(a); S.select(b, 'toggle'); }, [person, box]); await p.waitForTimeout(200);
+  const baseOf = ids => p.evaluate(l => l.map(i => JSON.parse(JSON.stringify(window.__shotref.state.objects.find(o => o.id === i).base))), ids);
+  const before = await baseOf([person, box]);
+  k = await knob(); await p.mouse.move(...k); await p.mouse.down(); await p.mouse.move(k[0] + 5, k[1] + 30, { steps: 5 }); await p.mouse.move(k[0] - 70, k[1] + 70, { steps: 8 }); await p.mouse.up();
+  const after = await baseOf([person, box]);
+  const dyaw = [0, 1].map(i => { const d = after[i].r[1] - before[i].r[1]; return ((d % 360) + 540) % 360 - 180; });
+  ok(Math.abs(dyaw[0]) > 5 && Math.abs(dyaw[0] - dyaw[1]) < 0.5, 'both should turn by the same angle, got ' + JSON.stringify(dyaw));
+  const d0 = Math.hypot(before[0].p[0] - before[1].p[0], before[0].p[2] - before[1].p[2]), d1 = Math.hypot(after[0].p[0] - after[1].p[0], after[0].p[2] - after[1].p[2]);
+  ok(Math.abs(d0 - d1) < 0.02, 'turning keeps their spacing: ' + d0 + ' vs ' + d1);
+  await p.waitForTimeout(250);
+  ok(/turn 2 items/.test(await undoTitle(p)), 'undo should say "turn 2 items": ' + await undoTitle(p));
+  noErrors(p);
+});
+
+check('Scene list right-click menu works like the 3D one; menus offer group and lock', async ({ open }) => {
+  const p = await open(); await p.waitForTimeout(400);
+  const box = await idOfType(p, 'box'), person = await idOfType(p, 'person');
+  await p.click('#leftTabs [data-lt="scene"]');
+  await p.click('#outliner .ol[data-id="camera"]', { button: 'right' });
+  let labels = await menuLabels(p); ok(labels && labels.some(x => x.startsWith('Look through camera')), 'camera row menu: ' + JSON.stringify(labels));
+  await p.keyboard.press('Escape');
+  await p.click('#outliner .ol[data-id="' + box + '"]', { button: 'right' });
+  labels = await menuLabels(p);
+  for (const l of ['Lock', 'Duplicate', 'Hide', 'Delete']) ok(labels && labels.some(x => x.startsWith(l)), 'Scene list menu misses ' + l + ': ' + JSON.stringify(labels));
+  ok((await selIdsOf(p))[0] === box, 'right-click in the list selects that row');
+  await clickItem(p, 'Lock');
+  ok((await objOf(p, box)).locked === true, 'menu Lock locks');
+  await p.click('#outliner .ol[data-id="' + box + '"]', { button: 'right' });
+  labels = await menuLabels(p); ok(labels.some(x => x.startsWith('Unlock')), 'a locked item offers Unlock: ' + JSON.stringify(labels));
+  await p.keyboard.press('Escape');
+  /* several rows: Shift-click in the list, then the menu */
+  await p.click('#outliner .ol[data-id="' + person + '"]');
+  await p.click('#outliner .ol[data-id="' + box + '"]', { modifiers: ['Shift'] });
+  ok((await selIdsOf(p)).length === 2, 'Shift-click in the Scene list adds to the selection');
+  await p.click('#outliner .ol[data-id="' + box + '"]', { button: 'right' });
+  labels = await menuLabels(p);
+  ok(labels.some(x => x.startsWith('Group 2 items')) && labels.some(x => /^(Un)?[Ll]ock 2 items/.test(x)), 'multi menu: ' + JSON.stringify(labels));
+  await clickItem(p, 'Group 2 items');
+  ok(!!(await objOf(p, person)).grp, 'menu Group groups');
+  /* the 3D menu */
+  await p.keyboard.press('Escape');
+  const xy = await starterXY(p);
+  await rightClick(p, ...xy.person); await p.waitForTimeout(150);
+  labels = await menuLabels(p);
+  ok(labels.some(x => x.startsWith('Ungroup')) && labels.some(x => /ock/.test(x)), '3D menu on a group member: ' + JSON.stringify(labels));
+  noErrors(p);
 });
 
 main().catch(e => { console.error(e && e.stack || e); process.exit(2); });

@@ -191,8 +191,21 @@ export function describeChange(beforeJSON, afterJSON) {
   if (added.length && removed.length) return 'scene change';
   if (added.length) return nm(added, 'add');
   if (removed.length) return nm(removed, 'delete');
-  for (const o of B) { const p = inA.get(o.id); if (!same(p.base, o.base) || !same(p.keys, o.keys)) return 'move ' + (o.name || 'item'); }
+  const many = (l, w) => w + ' ' + (l.length === 1 ? (l[0].name || 'item') : l.length + ' items');
+  const lockedNow = B.filter(o => !!o.locked !== !!inA.get(o.id).locked);
+  if (lockedNow.length) return many(lockedNow, lockedNow.every(o => o.locked) ? 'lock' : 'unlock');
+  const grouped = B.filter(o => (o.grp || null) !== (inA.get(o.id).grp || null));
+  if (grouped.length) return grouped.every(o => !o.grp) ? 'ungroup ' + (grouped.length === 1 ? (grouped[0].name || 'item') : grouped.length + ' items') : many(grouped, 'group');
+  /* turning only changes the angles (alone, or around the middle of several); moving anything else is a move */
+  const turnedObj = (p, o) => {
+    if (!same(p.base && p.base.r, o.base && o.base.r)) return true;
+    const at = new Map((Array.isArray(p.keys) ? p.keys : []).map(k => [k.t, k.r]));
+    return (Array.isArray(o.keys) ? o.keys : []).some(k => at.has(k.t) && !same(at.get(k.t), k.r));
+  };
+  const moved = B.filter(o => { const p = inA.get(o.id); return !same(p.base, o.base) || !same(p.keys, o.keys); });
+  if (moved.length) return many(moved, moved.every(o => turnedObj(inA.get(o.id), o)) ? 'turn' : 'move');
   for (const o of B) { const p = inA.get(o.id); if (!same(p, o)) return 'change ' + (o.name || 'item'); }
+  if (!same(a.groups, b.groups)) return 'rename group';
   if (!same(a.meta, b.meta)) return 'rename project';
   if (!same(a.camera, b.camera)) return 'camera change';
   if (!same(a.settings, b.settings)) return 'settings change';

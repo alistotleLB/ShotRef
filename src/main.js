@@ -9,7 +9,7 @@ import { platform } from './platform.js';
 
 /* ---- shared values: every module-level `let`, what it holds, and what changes it ----
  * state, assets                  the project and its photos/models: restore, buildState, replaceProject, boot
- * T, playing, view, selected,  playhead: setTime; playing: setPlaying; view: setView; selected: select; pipOn: #bPip;
+ * T, playing, view, selected,  playhead: setTime; playing: setPlaying; view: setView; selected, selIds: select, sanitizeSel; pipOn: #bPip;
  *   pipOn, editRev, ...Dirty     editRev counts edits: changed, quietChange; uiDirty/propsDirty ask frame() to rebuild lists/panel
  * hist, hi                       undo snapshots and position: pushHistory, undo, redo, replaceProject
  * toastTimer                   toast hide timer: toast (downloads capability and the open file/unsaved mark live in platform.js)
@@ -20,6 +20,7 @@ import { platform } from './platform.js';
  * camState, pilotActive          shot camera at the playhead: applyAll; user is steering it: fly, camControls, records
  * pathRev                        editRev the walk paths were last drawn at: updatePaths, select
  * gizmoMode, snapOn, gizmoUsed   arrows mode: setGizmoMode; snap: #bSnapGrid; gizmo was used this click: gizmo, canvas
+ * dragActive, selBarKey         a floor/ring/box drag is running: wire pointer handlers; selection toolbar content key: updateSelBar
  * vw, vh                         canvas size last drawn at: draw
  * depthCache                     depth range for the depth style, per editRev: depthRange
  * plateTex...exportingRender     location photo texture cache: ensurePlate; export frame in progress: renderExportFrame
@@ -144,6 +145,13 @@ const IC = {
   mark: '<ellipse cx="12" cy="15" rx="9" ry="4.5"/><path d="M9 16.5l3-7 3 7M10.2 14h3.6"/>',
   path: '<circle cx="5" cy="18" r="2"/><circle cx="19" cy="6" r="2"/><path d="M7 18c6 0 2-9 7-11 1.5-.6 3-.9 3-.9" stroke-dasharray="2 2.5"/>',
   camera: '<rect x="3" y="7" width="13" height="10" rx="2"/><path d="M16 11l5-3v8l-5-3"/>',
+  group: '<rect x="3" y="6" width="8" height="8" rx="1.5"/><rect x="13" y="10" width="8" height="8" rx="1.5"/><path d="M11 10h2"/>',
+  lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/>',
+  unlock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 017.5-2"/>',
+  frame: '<path d="M4 8V5h3M17 5h3v3M20 16v3h-3M7 19H4v-3"/><circle cx="12" cy="10" r="2.5"/><path d="M8 17c.5-2.3 2-3.5 4-3.5s3.5 1.2 4 3.5"/>',
+  target: '<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>',
+  dup: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 00-1-1H5a1 1 0 00-1 1v10a1 1 0 001 1h3"/>',
+  trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
 };
 const svgI = k => `<svg viewBox="0 0 24 24">${IC[k] || IC.box}</svg>`;
 
@@ -188,6 +196,8 @@ function defaultState() {
 let state = defaultState();
 let assets = {}; // id -> {kind, name, b64, mime, aspect}
 let T = 0, playing = false, view = 'editor', selected = null, pipOn = true, editRev = 1, uiDirty = true, propsDirty = true;
+let selIds = []; /* the selected objects' ids, `selected` (the one clicked last) among them: select, sanitizeSel */
+let dragActive = false; /* a drag on the floor, the ring or a box is under way: the pointer handlers in wire */
 const frames = () => Math.max(2, Math.round(state.settings.duration * state.settings.fps));
 const lastT = () => (frames() - 1) / state.settings.fps;
 const snapT = t => Math.round(t * state.settings.fps) / state.settings.fps;
@@ -278,7 +288,7 @@ function pushHistory() {
 function changed(commit, props = false) { editRev++; uiDirty = true; if (props) propsDirty = true; if (commit) pushHistory(); }
 function restore(s) {
   state = JSON.parse(s);
-  if (selected && selected !== 'camera' && selected !== 'target' && !getObj(selected)) selected = null;
+  sanitizeSel();
   syncScene(); applyEnv(); editRev++; uiDirty = true; propsDirty = true; updateGizmo(); syncTopUI();
 }
 /* undo/redo autosave too, so an undone delete puts its photo or model back in the autosave */
@@ -1024,6 +1034,7 @@ function makePath(color) {
 }
 const camPath = makePath(0xffcf5a), objPath = makePath(0x7fc4ff);
 const selBox = new THREE.BoxHelper(undefined, 0xff9a3c); selBox.visible = false; helpers.add(selBox);
+const selBoxes = []; /* one outline for every further selected item */
 const camProxy = new THREE.Object3D(), tgtProxy = new THREE.Object3D(); scene.add(camProxy, tgtProxy);
 const ringGrp = new THREE.Group(); ringGrp.visible = false; helpers.add(ringGrp);
 const ringVis = new THREE.Mesh(new THREE.TorusGeometry(1, 0.02, 8, 80), new THREE.MeshBasicMaterial({ color: 0xff9a3c, transparent: true, opacity: 0.95, depthTest: false }));
@@ -1085,11 +1096,17 @@ function updateHelpers() {
   if (!gizmo.dragging) { camProxy.position.fromArray(camState.p); tgtProxy.position.fromArray(camState.tg); }
   const v = selected && views.get(selected);
   if (v && v.group.visible) { selBox.setFromObject(v.group); selBox.visible = true; } else selBox.visible = false;
-  // turn ring around the selected object
-  if (v && v.group.visible && view !== 'camera' && !v.isMark) {
+  const others = isMulti() ? selIds.filter(id => id !== selected).map(id => views.get(id)).filter(x => x && x.group.visible) : [];
+  while (selBoxes.length < others.length) { const b = new THREE.BoxHelper(undefined, 0xff9a3c); helpers.add(b); selBoxes.push(b); }
+  selBoxes.forEach((b, i) => { if (i < others.length) { b.setFromObject(others[i].group); b.visible = true; } else b.visible = false; });
+  // turn ring around the selection (hidden when everything selected is locked)
+  const allLocked = isMulti() ? selObjs().every(x => x.locked) : !!(getObj(selected) || {}).locked;
+  if (v && v.group.visible && view !== 'camera' && !v.isMark && !allLocked) {
     _bb.setFromObject(v.group);
+    if (isMulti()) for (const x of others) _bb.expandByObject(x.group);
     const r = Math.max(0.45, Math.max(_bb.max.x - _bb.min.x, _bb.max.z - _bb.min.z) / 2 + 0.25);
-    ringGrp.visible = true; ringGrp.position.set(v.group.position.x, _bb.min.y + 0.03, v.group.position.z); ringGrp.scale.setScalar(r);
+    const cx = isMulti() ? (_bb.min.x + _bb.max.x) / 2 : v.group.position.x, cz = isMulti() ? (_bb.min.z + _bb.max.z) / 2 : v.group.position.z;
+    ringGrp.visible = true; ringGrp.position.set(cx, _bb.min.y + 0.03, cz); ringGrp.scale.setScalar(r);
     const yaw = v.group.rotation.y; ringKnob.position.set(Math.sin(yaw), 0, Math.cos(yaw)); ringKnob.scale.setScalar(1 / r);
   } else ringGrp.visible = false;
   // facing arrows under people
@@ -1116,6 +1133,39 @@ function updateHelpers() {
   const c = new THREE.Vector3(camState.tg[0], 0, camState.tg[2]);
   sun.target.position.copy(c);
   sun.position.set(c.x + Math.cos(el) * Math.sin(az) * 60, Math.sin(el) * 60, c.z + Math.cos(el) * Math.cos(az) * 60);
+}
+
+/* ---- the floating toolbar over the selection ---- */
+let selBarKey = '';
+const _sbBox = new THREE.Box3(), _sbPt = new THREE.Vector3();
+function selBarButtons(list) {
+  const btn = (icon, tip, fn, cls) => h('button', { class: cls || '', 'data-tip': tip, 'aria-label': tip.replace(/ \(.*\)$/, ''), html: svgI(icon), onclick: e => { e.stopPropagation(); fn(); } });
+  const sep = () => h('span', { class: 'sb-sep' }), locked = list.every(o => o.locked), out = [];
+  if (list.length > 1) { const whole = isGroupSel(list); out.push(btn('group', whole ? 'Ungroup (Ctrl Shift G)' : 'Group (Ctrl G)', whole ? ungroupSel : groupSel)); }
+  else {
+    const o = list[0];
+    if (o.type === 'person') out.push(btn('path', 'Draw walk path', () => startPath(o.id)), btn('frame', 'Frame with the camera (medium shot)', () => frameShot('medium', o.id)));
+    else if (o.type !== 'mark') out.push(btn('path', o.type === 'car' ? 'Draw drive path' : 'Draw path', () => startPath(o.id)), btn('target', 'Keep the camera on this', () => keepCameraOn(o)));
+    out.push(sep());
+  }
+  out.push(btn('dup', 'Duplicate (Ctrl D)', duplicateSel), btn(locked ? 'unlock' : 'lock', locked ? 'Unlock (Ctrl L)' : 'Lock: stop accidental moves (Ctrl L)', () => lockObjs(list, !locked), locked ? 'on' : ''), btn('trash', 'Delete (Del)', deleteSel, 'danger'));
+  return out;
+}
+function updateSelBar() {
+  const bar = $('#selBar'), list = selObjs();
+  const hide = () => putStyle(bar, 'display', 'none');
+  if (!list.length || view === 'camera' || playing || dragActive || placing || pathMode || focusPick || rec || gizmo.dragging || getPref('selBar', true) === false || list.some(o => { const v = views.get(o.id); return !v || !v.group.visible; })) return hide();
+  const key = list.map(o => o.id + (o.locked ? 'L' : '') + (o.grp || '')).join(',');
+  if (key !== selBarKey) { selBarKey = key; bar.innerHTML = ''; bar.append(...selBarButtons(list)); }
+  _sbBox.makeEmpty(); for (const o of list) _sbBox.expandByObject(views.get(o.id).group);
+  if (_sbBox.isEmpty()) return hide();
+  const cam = view === 'top' ? topCam : edCam; cam.updateMatrixWorld();
+  _sbBox.getCenter(_sbPt); _sbPt.y = _sbBox.max.y; _sbPt.project(cam);
+  if (_sbPt.z > 1 || _sbPt.z < -1) return hide();
+  const w = vpEl.clientWidth, hh = vpEl.clientHeight, gap = list.some(o => o.type === 'person') ? 30 : 10; /* people carry a name label above them */
+  putStyle(bar, 'left', clamp((_sbPt.x * 0.5 + 0.5) * w, 110, Math.max(110, w - 110)) + 'px');
+  putStyle(bar, 'top', clamp((-_sbPt.y * 0.5 + 0.5) * hh - gap, 100, Math.max(100, hh - 60)) + 'px');
+  putStyle(bar, 'display', 'flex');
 }
 
 /* ---- gizmo ---- */
@@ -1148,7 +1198,8 @@ function updateGizmo() {
   if (view === 'camera' || !selected) return;
   if (selected === 'camera') { gizmo.attach(camProxy); gizmo.setMode('translate'); }
   else if (selected === 'target') { if (!subject()) { gizmo.attach(tgtProxy); gizmo.setMode('translate'); } }
-  else if (!simple) { const v = views.get(selected); if (v && v.group.visible) { gizmo.attach(v.group); gizmo.setMode(gizmoMode); } }
+  /* the arrows move one unlocked item; several at once are moved by dragging or turned with the ring */
+  else if (!simple && !isMulti() && !(getObj(selected) || {}).locked) { const v = views.get(selected); if (v && v.group.visible) { gizmo.attach(v.group); gizmo.setMode(gizmoMode); } }
   gizmo.setTranslationSnap(snapOn ? 0.25 : null); gizmo.setRotationSnap(snapOn ? 15 * D2R : null); gizmo.setScaleSnap(snapOn ? 0.1 : null);
 }
 
@@ -1355,7 +1406,7 @@ function requestRender() { needsRender = true; lastAsync = performance.now(); }
 function pokeRender() { keepAlive = 20; }
 function frameSig() {
   const e = edCam.position, q = edCam.quaternion, tp = topCam.position, pm = pathMode;
-  return [editRev, T, view, selected, playing, rec ? rec.phase : '', pipOn, simple, vpEl.clientWidth, vpEl.clientHeight, window.devicePixelRatio,
+  return [editRev, T, view, selected, selIds.join(), dragActive, playing, rec ? rec.phase : '', pipOn, simple, vpEl.clientWidth, vpEl.clientHeight, window.devicePixelRatio,
     gizmo.dragging, gizmo.axis, e.x, e.y, e.z, q.x, q.y, q.z, q.w, edCam.zoom, tp.x, tp.y, tp.z, topCam.zoom,
     plateKey, plateBusy, placing, focusPick, hi, hist.length, pm ? pm.pts.length + ':' + pm.cursor : ''].join('|');
 }
@@ -1381,7 +1432,7 @@ function frame(now) {
     needsRender = false; lastSig = sig;
     applyAll(T);
     if (rec && rec.phase === 'rec') recSample();
-    updateHelpers();
+    updateHelpers(); updateSelBar();
     renderer.shadowMap.needsUpdate = true;
     draw();
   }
@@ -1496,19 +1547,24 @@ function buildAddPanel() {
   ));
 }
 function iconFor(o) { return svgI(o.type); }
+/* Shift/Ctrl-click toggles a row in the selection; Alt-click picks one inside a group */
+const rowClick = id => e => select(id, id === 'camera' ? undefined : e.shiftKey || e.ctrlKey || e.metaKey ? 'toggle' : e.altKey ? 'single' : undefined);
 function renderOutliner() {
   const el = $('#outliner'), fid = focusedRowId(el); el.innerHTML = '';
-  const row = (id, icon, name, nk, hidden, onEye) => h('div', { class: 'ol' + (selected === id ? ' sel' : '') + (hidden ? ' hid' : ''), tabindex: 0, 'data-id': id, onclick: () => select(id), onkeydown: rowKeys(id), ondblclick: () => { if (id !== 'camera') renameObj(id); } },
-    h('span', { html: icon }), h('span', { class: 'nm' }, name), nk ? h('span', { class: 'kd', title: nk + ' keyframes' }, '◆' + nk) : null,
+  const row = (id, icon, name, nk, hidden, onEye, o) => h('div', { class: 'ol' + (selected === id || selIds.includes(id) ? ' sel' : '') + (hidden ? ' hid' : '') + (o && o.grp ? ' ingrp' : ''), tabindex: 0, 'data-id': id, onclick: rowClick(id), onkeydown: rowKeys(id), ondblclick: () => { if (id !== 'camera') renameObj(id); } },
+    h('span', { html: icon }), h('span', { class: 'nm' }, name),
+    o && o.grp ? h('span', { class: 'gtag', title: 'In ' + groupName(o.grp) }, groupName(o.grp)) : null,
+    nk ? h('span', { class: 'kd', title: nk + ' keyframes' }, '◆' + nk) : null,
+    o ? h('button', { class: 'eye lockb' + (o.locked ? ' on' : ''), title: o.locked ? 'Locked: click to unlock' : 'Lock (stops it being moved by accident)', 'aria-label': o.locked ? 'Unlock ' + name : 'Lock ' + name, html: svgI(o.locked ? 'lock' : 'unlock'), onclick: e => { e.stopPropagation(); lockObjs([o], !o.locked); } }) : null,
     onEye ? h('button', { class: 'eye', title: hidden ? 'Show' : 'Hide', onclick: e => { e.stopPropagation(); onEye(); } }, hidden ? '◌' : '●') : null);
   el.append(row('camera', svgI('camera'), 'Shot camera', state.camera.keys.length));
-  for (const o of state.objects) el.append(row(o.id, iconFor(o), o.name, o.keys.length, o.visible === false, () => { o.visible = o.visible === false; syncScene(); updateGizmo(); changed(true); }));
+  for (const o of state.objects) el.append(row(o.id, iconFor(o), o.name, o.keys.length, o.visible === false, () => { o.visible = o.visible === false; syncScene(); updateGizmo(); changed(true); }, o));
   if (!state.objects.length) el.append(h('div', { class: 'note', style: 'padding:6px 8px' }, 'Nothing here yet. Add a person or an object from the Add tab.'));
   putText($('#sceneCnt'), state.objects.length ? String(state.objects.length) : '');
   refocusRow(el, fid);
 }
 /* list rows (outliner, timeline labels) are keyboard-reachable: Enter or Space selects (U4) */
-function rowKeys(id) { return e => { if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return; e.preventDefault(); e.stopPropagation(); select(id); }; }
+function rowKeys(id) { return e => { if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return; e.preventDefault(); e.stopPropagation(); rowClick(id)(e); }; }
 function focusedRowId(el) { const a = document.activeElement; return a && a !== el && el.contains(a) && a.dataset ? a.dataset.id || null : null; }
 function refocusRow(el, id) { if (!id) return; const r = [...el.querySelectorAll('[data-id]')].find(x => x.dataset.id === id); if (r) r.focus(); }
 function renameObj(id) {
@@ -1520,8 +1576,67 @@ function renameObj(id) {
   const done = () => { const v = inp.value.trim(); if (v) { o.name = v; changed(true, true); } else uiDirty = true; };
   inp.addEventListener('blur', done); inp.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') inp.blur(); if (e.key === 'Escape') { inp.value = o.name; inp.blur(); } });
 }
-function select(id) {
+/* ---- selection: `selected` is the main item (also 'camera' / 'target'); `selIds` holds every selected object, a whole group at once ---- */
+const selObjs = () => selIds.map(getObj).filter(Boolean);
+const isMulti = () => selIds.length > 1;
+const groupMembers = id => { const o = getObj(id); return o && o.grp ? state.objects.filter(x => x.grp === o.grp).map(x => x.id) : [id]; };
+const groupName = gid => (state.groups && state.groups[gid] && state.groups[gid].name) || 'Group';
+/* mode: undefined = this item (and its whole group), 'single' = just this one, 'toggle' = add or remove (Shift/Ctrl-click) */
+function select(id, mode) {
+  const o = id && id !== 'camera' && id !== 'target' ? getObj(id) : null;
+  if (o) {
+    const set = mode === 'single' ? [id] : groupMembers(id);
+    if (mode === 'toggle') {
+      const had = selIds.includes(id);
+      selIds = had ? selIds.filter(x => !set.includes(x)) : [...selIds.filter(x => !set.includes(x)), ...set.filter(x => x !== id), id];
+      id = had ? selIds[selIds.length - 1] || null : id;
+    } else selIds = set.slice();
+  } else if (mode === 'toggle') return;
+  else selIds = [];
   selected = id; updateGizmo(); uiDirty = true; propsDirty = true; pathRev = -1;
+}
+/* after undo, delete, open: forget ids that are gone and keep `selected` and `selIds` in step */
+function sanitizeSel() {
+  selIds = selIds.filter(id => getObj(id));
+  if (selected && selected !== 'camera' && selected !== 'target' && !getObj(selected)) selected = selIds[selIds.length - 1] || null;
+  if (getObj(selected) && !selIds.includes(selected)) selIds.push(selected);
+  if (!getObj(selected) && selected !== 'camera' && selected !== 'target') selected = null;
+}
+/* a group left with fewer than two members is dissolved; groups with nobody in them go */
+function pruneGroups() {
+  if (!state.groups) return;
+  const n = {}; for (const o of state.objects) if (o.grp) n[o.grp] = (n[o.grp] || 0) + 1;
+  for (const o of state.objects) if (o.grp && n[o.grp] < 2) o.grp = null;
+  for (const g of Object.keys(state.groups)) if (!(n[g] >= 2)) delete state.groups[g];
+}
+function lockObjs(list, on) {
+  if (!list.length) return;
+  for (const o of list) o.locked = on;
+  const w = list.length === 1 ? list[0].name : list.length + ' items';
+  updateGizmo(); changed(true, true);
+  toast(on ? w + ' locked. Dragging ' + (list.length === 1 ? 'it' : 'them') + ' now moves the view instead.' : w + ' unlocked');
+}
+const isGroupSel = list => list.length > 1 && list.every(o => o.grp) && new Set(list.map(o => o.grp)).size === 1 && state.objects.filter(x => x.grp === list[0].grp).length === list.length;
+function groupSel() {
+  const list = selObjs(); if (list.length < 2) { toast('Select two or more things to group them'); return; }
+  state.groups = state.groups || {};
+  let n = 1; const names = new Set(Object.values(state.groups).map(g => g.name)); while (names.has('Group ' + n)) n++;
+  const gid = 'g' + uid(); state.groups[gid] = { name: 'Group ' + n };
+  for (const o of list) o.grp = gid;
+  pruneGroups(); changed(true, true);
+  toast(list.length + ' items grouped as "Group ' + n + '". Click any of them to select the whole group (Alt-click for one).', 4500);
+}
+function ungroupSel() {
+  const gids = new Set(selObjs().map(o => o.grp).filter(Boolean)); if (!gids.size) return;
+  for (const o of state.objects) if (gids.has(o.grp)) o.grp = null;
+  for (const g of gids) if (state.groups) delete state.groups[g];
+  changed(true, true); toast('Ungrouped');
+}
+const toggleGroupSel = () => { if (isGroupSel(selObjs()) || (selObjs().length === 1 && selObjs()[0].grp)) ungroupSel(); else groupSel(); };
+function selectAll() {
+  const all = state.objects.filter(o => o.visible !== false); if (!all.length) return;
+  selIds = all.map(o => o.id); selected = selIds[selIds.length - 1];
+  updateGizmo(); uiDirty = true; propsDirty = true; pathRev = -1; toast(all.length + ' items selected');
 }
 
 /* ============================== UI: property fields ============================== */
@@ -1595,6 +1710,7 @@ function renderProps() {
   /* in Camera view with nothing selected, show the camera tools; the selection stays empty (U3) */
   if (selected === 'camera' || selected === 'target' || (view === 'camera' && !selected)) return propsCamera(p);
   const o = selected && getObj(selected);
+  if (o && isMulti()) return propsMulti(p);
   if (o) return propsObject(p, o);
   propsScene(p);
 }
@@ -1705,13 +1821,38 @@ function feelSeg() {
   return h('div', { class: 'seg feel' }, [['constant', 'Constant'], ['gentle', 'Gentle ease'], ['strong', 'Strong ease']].map(([k, l]) =>
     h('button', { class: (c.feel || 'gentle') === k ? 'on' : '', onclick: () => { c.feel = k; changed(true, true); syncTopUI(); } }, l)));
 }
+/* the panel for two or more selected things: what they are, and the group / lock / duplicate / delete actions */
+function propsMulti(p) {
+  const list = selObjs(), whole = isGroupSel(list), g = whole ? state.groups[list[0].grp] : null;
+  const sc = sec(whole ? 'Group' : list.length + ' items selected');
+  if (g) {
+    const nm = h('input', { type: 'text', value: g.name, class: 'grow' });
+    nm.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') nm.blur(); });
+    nm.addEventListener('change', () => { g.name = nm.value.trim() || g.name; changed(true, true); });
+    sc.append(h('div', { class: 'row' }, h('label', null, 'Name'), nm));
+  }
+  sc.append(h('div', { class: 'chips', style: 'margin:4px 0 6px' }, list.map(o => h('button', { onclick: () => select(o.id, 'single'), title: 'Select only this one (or Alt-click it)' }, o.name))),
+    h('p', { class: 'note' }, 'Drag any of them to move them all. The orange ring turns them together. Shift-click adds or removes items. ' + (whole ? '' : list.length + ' items selected.')));
+  p.append(sc);
+  const allLocked = list.every(o => o.locked), people = list.filter(o => o.type === 'person');
+  p.append(sec('Arrange',
+    h('div', { class: 'btns' },
+      whole ? h('button', { onclick: ungroupSel }, 'Ungroup') : h('button', { class: 'primary', onclick: groupSel, title: 'Keep these together: clicking one selects them all (Ctrl+G)' }, 'Group'),
+      h('button', { onclick: () => lockObjs(list, !allLocked), title: 'Ctrl+L' }, allLocked ? 'Unlock all' : 'Lock all')),
+    h('div', { class: 'btns' },
+      h('button', { onclick: dropToFloor }, 'Drop to floor'),
+      people.length ? h('button', { onclick: () => { for (const o of people) { const cur = clone(evalObj(o, T)); cur.r[1] = Math.atan2(camState.p[0] - cur.p[0], camState.p[2] - cur.p[2]) * R2D; if (o.opts.faceTravel && o.keys.length > 1) o.opts.faceTravel = false; writeObj(o, cur, false); } changed(true, true); toast('People face the camera'); } }, 'People face camera') : null),
+    h('div', { class: 'btns' }, h('button', { onclick: duplicateSel }, 'Duplicate'), h('button', { onclick: deleteSel, style: 'color:#ff9c9c' }, 'Delete'))));
+}
 function propsObject(p, o) {
   const tr = () => evalObj(o, T);
   const setPart = (part) => (v, cm) => { const cur = clone(tr()); cur[part] = v; writeObj(o, cur, cm); };
   const name = h('input', { type: 'text', value: o.name, class: 'grow' });
   name.addEventListener('change', () => { o.name = name.value.trim() || o.name; changed(true, true); });
   name.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') name.blur(); });
-  p.append(sec(catalogOf(o.type).label, h('div', { class: 'row' }, h('label', null, 'Name'), name)));
+  p.append(sec(catalogOf(o.type).label, h('div', { class: 'row' }, h('label', null, 'Name'), name),
+    o.locked ? h('div', { class: 'lockline' }, h('span', { html: svgI('lock') }), 'Locked: it will not move when dragged. ', h('button', { onclick: () => lockObjs([o], false) }, 'Unlock')) : null,
+    o.grp ? h('div', { class: 'note' }, 'Part of ' + groupName(o.grp) + '. ', h('a', { href: '#', onclick: e => { e.preventDefault(); select(o.id); } }, 'Select the whole group')) : null));
   const rebuild = (cm = true) => { syncScene(); updateGizmo(); changed(cm); };
   const isMark = o.type === 'mark';
   if (isMark) {
@@ -1949,6 +2090,7 @@ function tickUI() {
     putStyle($('#hud'), 'display', 'none');
     const nav = view === 'top' ? 'Drag empty space: pan · Scroll: zoom' : 'Drag empty space: orbit · Right-drag: pan · Scroll: zoom';
     putHTML(hint, placing || pathMode ? '<kbd>Esc</kbd> cancel' + (pathMode ? ' · <kbd>Enter</kbd> done · right-click removes the last point' : '')
+      : isMulti() ? 'Drag any of them to move them all · drag the orange ring to turn them together · <kbd>Shift</kbd> click adds or removes · <kbd>Ctrl</kbd><kbd>G</kbd> group · <kbd>Ctrl</kbd><kbd>L</kbd> lock'
       : selected && selected !== 'camera' && selected !== 'target'
         ? 'Drag it on the floor to move · drag the orange ring to turn · right-click for more · <kbd>K</kbd> key · <kbd>Del</kbd> delete'
         : selected ? 'Drag the camera or its aim point on the floor · or use the panel'
@@ -2073,6 +2215,7 @@ function focusLensAt(pt, name) {
   writeCam({ fd: d }, true); propsDirty = true;
   toast(`Focus on ${name} (${d.toFixed(2)} m)` + (wasOff ? '. Depth of field is now on' : '') + (keyed ? `. Keyed at ${snapT(T).toFixed(2)} s: double-click something else later in the shot to pull focus` : ''), 4200);
 }
+function keepCameraOn(o) { state.camera.lookAtId = o.id; state.camera.base.tg = evalCam(T).tg; changed(true, true); toast('Camera now keeps ' + o.name + ' in frame'); }
 function ctxItems(hit, floor) {
   const items = [], sel = selected && getObj(selected), selP = sel && sel.type === 'person' ? sel : null;
   if (hit && (hit.id === 'camera' || hit.id === 'target')) {
@@ -2083,7 +2226,20 @@ function ctxItems(hit, floor) {
   }
   const o = hit && getObj(hit.id);
   if (o) {
-    if (selected !== o.id) select(o.id);
+    /* right-clicking something already in the selection keeps the selection (and acts on all of it) */
+    if (selected !== o.id && !selIds.includes(o.id)) select(o.id);
+    const list = selObjs();
+    if (list.length > 1) {
+      const whole = isGroupSel(list), allLocked = list.every(x => x.locked), sameGroup = list.some(x => x.grp);
+      items.push({ head: whole ? groupName(list[0].grp) + ' (' + list.length + ' items)' : list.length + ' items selected' },
+        whole || (sameGroup && list.every(x => x.grp)) ? { label: 'Ungroup', fn: ungroupSel, key: 'Ctrl Shift G' } : { label: 'Group ' + list.length + ' items', fn: groupSel, key: 'Ctrl G' },
+        { label: allLocked ? 'Unlock ' + list.length + ' items' : 'Lock ' + list.length + ' items', fn: () => lockObjs(list, !allLocked), key: 'Ctrl L' }, '-',
+        { label: 'Duplicate', fn: duplicateSel, key: 'Ctrl D' },
+        { label: 'Drop to floor', fn: dropToFloor },
+        { label: 'Hide', fn: () => { for (const x of list) x.visible = false; syncScene(); updateGizmo(); changed(true, true); toast(list.length + ' items hidden (the eye in the Scene list brings them back)'); } },
+        { label: 'Delete', fn: deleteSel, key: 'Del', danger: true });
+      return items;
+    }
     items.push({ head: o.name });
     if (o.type === 'mark') {
       const w = selP || persons()[0];
@@ -2096,9 +2252,11 @@ function ctxItems(hit, floor) {
       if (o.type === 'person') items.push({ label: 'Draw walk path', fn: () => startPath(o.id) }, { label: 'Frame: Medium shot', fn: () => frameShot('medium', o.id) }, { label: 'Frame: Close-up', fn: () => frameShot('cu', o.id) });
       else items.push({ label: 'Draw path', fn: () => startPath(o.id) });
       items.push({ label: 'Face the camera', fn: () => faceToward(o, camState.p, 'the camera') });
-      items.push({ label: 'Keep camera on this', fn: () => { state.camera.lookAtId = o.id; state.camera.base.tg = evalCam(T).tg; changed(true, true); toast('Camera now keeps ' + o.name + ' in frame'); } });
+      items.push({ label: 'Keep camera on this', fn: () => keepCameraOn(o) });
     }
-    items.push({ label: 'Focus the lens here', key: 'double-click', fn: () => focusLensAt(new THREE.Vector3().fromArray(aimPoint(o, T)), o.name) }, '-',
+    items.push({ label: 'Focus the lens here', key: 'double-click', fn: () => focusLensAt(new THREE.Vector3().fromArray(aimPoint(o, T)), o.name) }, '-');
+    if (o.grp) items.push({ label: 'Ungroup', fn: ungroupSel, key: 'Ctrl Shift G' });
+    items.push({ label: o.locked ? 'Unlock' : 'Lock (stop accidental moves)', fn: () => lockObjs([o], !o.locked), key: 'Ctrl L' },
       { label: 'Duplicate', fn: duplicateSel, key: 'Ctrl D' },
       { label: 'Hide', fn: () => { o.visible = false; syncScene(); updateGizmo(); changed(true, true); toast(o.name + ' hidden (the eye in the Scene list brings it back)'); } },
       { label: 'Delete', fn: deleteSel, key: 'Del', danger: true });
@@ -2131,9 +2289,9 @@ function rayFromEvent(e) {
   return _rc;
 }
 function planeHit(rc, y = 0) { const pt = new THREE.Vector3(); return rc.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -y), pt) ? pt : null; }
-function pickAt(rc) {
+function pickAt(rc, noRing = false) {
   const targets = [...views.values()].filter(v => v.group.visible && !(view === 'camera' && v.isMark)).map(v => v.group);
-  if (view !== 'camera') { targets.push(camBody); if (targetMarker.visible) targets.push(targetMarker); if (ringGrp.visible) targets.push(ringPick, ringKnob); }
+  if (view !== 'camera') { targets.push(camBody); if (targetMarker.visible) targets.push(targetMarker); if (ringGrp.visible && !noRing) targets.push(ringPick, ringKnob); }
   const hits = rc.intersectObjects(targets, true);
   for (const hit of hits) {
     let ob = hit.object;
@@ -2159,7 +2317,7 @@ function commitPlacing() {
 }
 function cancelPlacing() {
   const id = placing; placing = null; hideModeBar(); canvas.style.cursor = '';
-  if (id) { state.objects = state.objects.filter(o => o.id !== id); if (selected === id) selected = null; syncScene(); updateGizmo(); changed(false, true); autosave(); }
+  if (id) { state.objects = state.objects.filter(o => o.id !== id); selIds = selIds.filter(x => x !== id); if (selected === id) selected = null; syncScene(); updateGizmo(); changed(false, true); autosave(); }
 }
 function movePlacing(e) {
   const rc = rayFromEvent(e); if (!rc) return; const g = planeHit(rc, 0); const o = getObj(placing); if (!g || !o) return;
@@ -2431,26 +2589,46 @@ function camToEditorView() {
   writeCam({ p, tg }, true);
   toast('Camera placed at your editor view'); propsDirty = true;
 }
+/* what Delete, Duplicate and the menus act on: every selected object, or the one main item */
+const targetObjs = () => selIds.length ? selObjs() : (selected && getObj(selected) ? [getObj(selected)] : []);
 function deleteSel() {
-  if (!selected || selected === 'camera' || selected === 'target') return;
-  const o = getObj(selected); if (!o) return;
+  const all = targetObjs(); if (!all.length) return;
+  /* locked items are never deleted by accident: unlock them first */
+  const list = all.filter(o => !o.locked), kept = all.length - list.length;
+  if (!list.length) { toast((all.length === 1 ? all[0].name + ' is locked' : 'Those are locked') + '. Unlock ' + (all.length === 1 ? 'it' : 'them') + ' first (Ctrl+L).', 3500); return; }
+  const gone = new Set(list.map(o => o.id));
   /* read the aim while the subject still exists, so the framing stays put (A11) */
-  if (state.camera.lookAtId === o.id) { state.camera.base.tg = evalCam(T).tg; state.camera.lookAtId = null; state.camera.follow = false; }
-  state.objects = state.objects.filter(x => x !== o);
-  selected = null; syncScene(); updateGizmo(); changed(true, true); toast(o.name + ' deleted');
+  if (gone.has(state.camera.lookAtId)) { state.camera.base.tg = evalCam(T).tg; state.camera.lookAtId = null; state.camera.follow = false; }
+  state.objects = state.objects.filter(x => !gone.has(x.id));
+  selIds = selIds.filter(id => !gone.has(id)); selected = selIds[selIds.length - 1] || null;
+  pruneGroups(); syncScene(); updateGizmo(); changed(true, true);
+  toast((list.length === 1 ? list[0].name : list.length + ' items') + ' deleted' + (kept ? ' (' + kept + ' locked ' + (kept === 1 ? 'item' : 'items') + ' kept)' : ''));
 }
 function duplicateSel() {
-  const o = selected && getObj(selected); if (!o) return;
-  const c = clone(o); c.id = uid(); c.name = nextName(catalogOf(o.type).label);
-  const off = [0.8, 0, 0.4];
-  c.base.p = c.base.p.map((v, i) => r4(v + off[i])); c.keys.forEach(k => { k.p = k.p.map((v, i) => r4(v + off[i])); });
-  state.objects.push(c); syncScene(); select(c.id); changed(true, true); toast('Duplicated');
+  const src = targetObjs(); if (!src.length) return;
+  const off = [0.8, 0, 0.4], gmap = {}, made = [];
+  for (const o of src) {
+    const c = clone(o); c.id = uid(); if ('locked' in c) c.locked = false; c.name = nextName(catalogOf(o.type).label);
+    if (o.grp) {
+      if (!gmap[o.grp]) { gmap[o.grp] = 'g' + uid(); state.groups = state.groups || {}; state.groups[gmap[o.grp]] = { name: groupName(o.grp) + ' copy' }; }
+      c.grp = gmap[o.grp];
+    }
+    c.base.p = c.base.p.map((v, i) => r4(v + off[i])); c.keys.forEach(k => { k.p = k.p.map((v, i) => r4(v + off[i])); });
+    state.objects.push(c); made.push(c);
+  }
+  pruneGroups(); syncScene();
+  selIds = made.map(o => o.id); selected = selIds[selIds.length - 1]; updateGizmo(); uiDirty = true; propsDirty = true; pathRev = -1;
+  changed(true, true); toast(made.length === 1 ? 'Duplicated' : 'Duplicated ' + made.length + ' items');
 }
 function dropToFloor() {
-  const o = selected && getObj(selected), v = o && views.get(o.id); if (!v) return;
-  v.group.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(v.group);
-  if (bb.isEmpty()) return;
-  const cur = clone(evalObj(o, T)); cur.p[1] = r4(cur.p[1] - bb.min.y); writeObj(o, cur, true);
+  let n = 0;
+  for (const o of targetObjs()) {
+    const v = views.get(o.id); if (!v) continue;
+    v.group.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(v.group);
+    if (bb.isEmpty()) continue;
+    const cur = clone(evalObj(o, T)); cur.p[1] = r4(cur.p[1] - bb.min.y); writeObj(o, cur, false); n++;
+  }
+  if (n) changed(true, true);
 }
 function focusSel() {
   let c = null, rad = 2;
@@ -2493,16 +2671,16 @@ function buildState(fill) {
 /* The one way to swap the whole scene. Keeps undo (pushes a step) and keeps old files in memory so undo can rebuild them.
    On any error the previous scene is put back and the error is rethrown. */
 function replaceProject(newState, newAssets = {}, label) {
-  const prev = { state, assets, selected, T, hist: hist.slice(), histDoc: histDoc.slice(), doc: platform.getDoc(), hi };
+  const prev = { state, assets, selected, selIds: selIds.slice(), T, hist: hist.slice(), histDoc: histDoc.slice(), doc: platform.getDoc(), hi };
   try {
     for (const [id, a] of Object.entries(newAssets)) if (assets[id] && assets[id].b64 !== (a && a.b64)) dropModel(id);
     assets = { ...assets, ...newAssets };
-    state = newState; selected = null; setTime(0);
+    state = newState; selected = null; selIds = []; setTime(0);
     platform.startDoc(); /* Open, New and starters are a new document: Save must not reuse the previous file */
     restore(snapshot()); pushHistory(); resetEditorCam();
     if (label) toast(label);
   } catch (e) {
-    state = prev.state; assets = prev.assets; selected = prev.selected; setTime(prev.T); hist = prev.hist; histDoc = prev.histDoc; platform.restoreDoc(prev.doc); hi = prev.hi;
+    state = prev.state; assets = prev.assets; selected = prev.selected; selIds = prev.selIds; setTime(prev.T); hist = prev.hist; histDoc = prev.histDoc; platform.restoreDoc(prev.doc); hi = prev.hi;
     try { restore(snapshot()); } catch (e2) { console.error('ShotRef: could not put the previous scene back', e2); }
     throw e;
   }
@@ -2512,7 +2690,7 @@ function loadStarter(kind) {
   const built = buildState(() => fillStarter(kind, id => { sel = id; }));
   replaceProject(built, {}, (STARTERS.find(x => x[0] === kind) || [, kind])[1] + ' ready');
   platform.newProject();
-  if (sel) { selected = sel; propsDirty = true; updateGizmo(); }
+  if (sel) { select(sel); }
 }
 function fillStarter(kind, selectId) {
   const L = snapT(lastT());
@@ -3036,8 +3214,16 @@ function wire() {
   $('#exCancel').onclick = () => { exCancel = true; };
 
   wireMenu();
+  /* the Scene list has the same right-click menu as the 3D view */
+  $('#outliner').addEventListener('contextmenu', e => {
+    const r = e.target.closest('.ol'); if (!r || !r.dataset.id) return;
+    e.preventDefault();
+    showMenu(e.clientX, e.clientY, ctxItems({ id: r.dataset.id }, null));
+  });
   // viewport pointer handling: click to place, drag on the floor, turn ring, paths, picking
-  let pdown = null, drag = null, hoverT = 0, rdown = null;
+  let pdown = null, drag = null, hoverT = 0, rdown = null, box = null;
+  /* what a drag moves or turns: every selected item that is not locked, with where it started */
+  const dragItems = () => selObjs().filter(o => !o.locked).map(o => ({ id: o.id, tr: clone(evalObj(o, T)) }));
   canvas.addEventListener('pointerdown', e => {
     canvas.focus(); gizmoUsed = false;
     pdown = { x: e.clientX, y: e.clientY, b: e.button };
@@ -3053,20 +3239,35 @@ function wire() {
     if (focusPick && view === 'camera') { rdown = null; e.stopImmediatePropagation(); const rc = rayFromEvent(e); if (e.button === 0 && rc) finishFocusPick(rc); pdown = null; return; }
     if (rec || e.button !== 0 || view === 'camera' || gizmo.axis) return;
     const rc = rayFromEvent(e); if (!rc) return;
-    const hit = pickAt(rc); if (!hit) return;
+    const hit = pickAt(rc);
+    if (!hit) {
+      /* Shift-drag on empty space draws a selection box (a plain drag still orbits the view) */
+      if (e.shiftKey) { e.stopImmediatePropagation(); box = { x0: e.clientX, y0: e.clientY, x1: null, y1: null }; dragActive = true; pdown = null; try { canvas.setPointerCapture(e.pointerId); } catch (_) { } }
+      return;
+    }
+    const ho = getObj(hit.id);
+    /* Shift/Ctrl-click adds or removes one item; it never starts a drag */
+    if (ho && (e.shiftKey || e.ctrlKey || e.metaKey)) { e.stopImmediatePropagation(); select(hit.id, 'toggle'); pdown = null; return; }
+    if (ho && e.altKey) select(hit.id, 'single'); /* Alt-click picks one item inside a group */
+    /* a locked item can be selected but not dragged: the press goes on to orbit the view */
+    if (ho && ho.locked) { if (selected !== hit.id && !selIds.includes(hit.id)) select(hit.id); return; }
     e.stopImmediatePropagation();
     if (playing) setPlaying(false);
     if (hit.id === 'ring') {
       const o = getObj(selected), v = views.get(selected); if (!o || !v) return;
       const y = ringGrp.position.y, g = planeHit(rc, y) || hit.point;
-      drag = { kind: 'rot', id: selected, py: y, cx: ringGrp.position.x, cz: ringGrp.position.z, a0: Math.atan2(g.x - ringGrp.position.x, g.z - ringGrp.position.z), yaw0: v.group.rotation.y * R2D };
-      if (o.opts.faceTravel && o.keys.length > 1) { o.opts.faceTravel = false; toast('Turning by hand, so "face the way they travel" is now off'); }
+      drag = { kind: 'rot', id: selected, multi: isMulti(), items: dragItems(), py: y, cx: ringGrp.position.x, cz: ringGrp.position.z, a0: Math.atan2(g.x - ringGrp.position.x, g.z - ringGrp.position.z), yaw0: v.group.rotation.y * R2D };
+      let off = 0;
+      for (const it of drag.items) { const q = getObj(it.id); if (q.opts.faceTravel && q.keys.length > 1) { q.opts.faceTravel = false; off++; } }
+      if (off) toast('Turning by hand, so "face the way they travel" is now off');
     } else {
-      if (selected !== hit.id) select(hit.id);
+      if (selected !== hit.id && !selIds.includes(hit.id)) select(hit.id);
+      else if (ho && selected !== hit.id) { selected = hit.id; uiDirty = true; propsDirty = true; }
       const pos = hit.id === 'camera' ? camState.p : hit.id === 'target' ? camState.tg : evalObj(getObj(hit.id), T).p;
       const py = hit.point.y, g = planeHit(rc, py) || hit.point;
-      drag = { kind: 'move', id: hit.id, py, ox: g.x - pos[0], oz: g.z - pos[2] };
+      drag = { kind: 'move', id: hit.id, py, ox: g.x - pos[0], oz: g.z - pos[2], items: ho ? dragItems() : [] };
     }
+    dragActive = true;
     drag.sx = e.clientX; drag.sy = e.clientY; drag.moved = false;
     gizmo.enabled = false;
     try { canvas.setPointerCapture(e.pointerId); } catch (_) { }
@@ -3078,16 +3279,39 @@ function wire() {
       const rc = rayFromEvent(e); if (!rc) return;
       const g = planeHit(rc, drag.py); if (!g) return;
       if (drag.kind === 'rot') {
-        let yaw = drag.yaw0 + (Math.atan2(g.x - drag.cx, g.z - drag.cz) - drag.a0) * R2D;
-        if (snapOn) yaw = Math.round(yaw / 15) * 15;
-        const o = getObj(drag.id), cur = clone(evalObj(o, T)); cur.r[1] = yaw; writeObj(o, cur, false);
+        /* released over another thing (or the camera), the whole set turns to face it; otherwise it follows the pointer */
+        const skip = new Set(selIds), th = (() => { const q = pickAt(rc, true); return q && !skip.has(q.id) && (q.id === 'camera' || getObj(q.id)) ? q : null; })();
+        const prim = clone(evalObj(getObj(drag.id), T));
+        let yaw, face = null;
+        if (th) { const tp = th.id === 'camera' ? camState.p : evalObj(getObj(th.id), T).p; face = { id: th.id, name: th.id === 'camera' ? 'the camera' : getObj(th.id).name }; yaw = Math.atan2(tp[0] - prim.p[0], tp[2] - prim.p[2]) * R2D; showModeBar('Release to face ' + face.name, []); }
+        else {
+          yaw = drag.yaw0 + (Math.atan2(g.x - drag.cx, g.z - drag.cz) - drag.a0) * R2D;
+          if (snapOn) yaw = Math.round(yaw / 15) * 15;
+          if ($('#modeBar').textContent.startsWith('Release')) hideModeBar();
+        }
+        drag.face = face;
+        const dy = yaw - drag.yaw0, ca = Math.cos(dy * D2R), sa = Math.sin(dy * D2R);
+        for (const it of drag.items) {
+          const o = getObj(it.id), cur = clone(it.tr);
+          if (drag.multi) { const x = it.tr.p[0] - drag.cx, z = it.tr.p[2] - drag.cz; cur.p = [r4(drag.cx + x * ca + z * sa), it.tr.p[1], r4(drag.cz - x * sa + z * ca)]; cur.r[1] = it.tr.r[1] + dy; }
+          else cur.r[1] = yaw;
+          writeObj(o, cur, false);
+        }
       } else {
         const nx = snapV(g.x - drag.ox), nz = snapV(g.z - drag.oz);
         if (drag.id === 'camera') writeCam({ p: [nx, camState.p[1], nz] }, false);
         else if (drag.id === 'target') writeCam({ tg: [nx, camState.tg[1], nz] }, false);
-        else { const o = getObj(drag.id), cur = clone(evalObj(o, T)); cur.p = [nx, cur.p[1], nz]; writeObj(o, cur, false); }
+        else if (drag.items.length > 1) {
+          const f = drag.items.find(it => it.id === drag.id) || drag.items[0], dx = nx - f.tr.p[0], dz = nz - f.tr.p[2];
+          for (const it of drag.items) { const cur = clone(it.tr); cur.p = [r4(it.tr.p[0] + dx), it.tr.p[1], r4(it.tr.p[2] + dz)]; writeObj(getObj(it.id), cur, false); }
+        } else { const o = getObj(drag.id), cur = clone(evalObj(o, T)); cur.p = [nx, cur.p[1], nz]; writeObj(o, cur, false); }
       }
       return;
+    }
+    if (box) {
+      const c = canvas.getBoundingClientRect(), b = $('#boxSel');
+      Object.assign(b.style, { display: 'block', left: Math.min(box.x0, e.clientX) - c.left + 'px', top: Math.min(box.y0, e.clientY) - c.top + 'px', width: Math.abs(e.clientX - box.x0) + 'px', height: Math.abs(e.clientY - box.y0) + 'px' });
+      box.x1 = e.clientX; box.y1 = e.clientY; return;
     }
     if (placing) { movePlacing(e); return; }
     if (pathMode) { const rc = rayFromEvent(e), g = rc && planeHit(rc, pathMode.y); pathMode.cursor = g ? [g.x, g.z] : null; return; }
@@ -3099,27 +3323,55 @@ function wire() {
   });
   /* a drag ends on mouse-up, or when the browser cuts it off (pointercancel, lost capture): either way it is saved (K2) */
   const endDrag = e => {
-    const d = drag; drag = null; gizmo.enabled = true; canvas.style.cursor = '';
+    const d = drag; drag = null; dragActive = false; gizmo.enabled = true; canvas.style.cursor = '';
     try { canvas.releasePointerCapture(e.pointerId); } catch (_) { }
-    if (d.moved) changed(true, true);
+    if ($('#modeBar').textContent.startsWith('Release')) hideModeBar();
+    if (d.moved) {
+      changed(true, true);
+      if (d.face) toast((d.items.length > 1 ? d.items.length + ' items now face ' : (getObj(d.id) || {}).name + ' now faces ') + d.face.name);
+    }
     pdown = null;
+  };
+  /* Shift-drag box: select everything whose middle falls inside (added to what is already selected) */
+  const endBox = e => {
+    const b = box; box = null; dragActive = false; $('#boxSel').style.display = 'none';
+    try { canvas.releasePointerCapture(e.pointerId); } catch (_) { }
+    if (!b || b.x1 == null || Math.hypot(b.x1 - b.x0, b.y1 - b.y0) < 5) return;
+    const c = canvas.getBoundingClientRect(), cam = view === 'top' ? topCam : edCam, bb = new THREE.Box3(), pt = new THREE.Vector3();
+    cam.updateMatrixWorld();
+    const xa = Math.min(b.x0, b.x1), xb = Math.max(b.x0, b.x1), ya = Math.min(b.y0, b.y1), yb = Math.max(b.y0, b.y1), found = [];
+    for (const o of state.objects) {
+      const v = views.get(o.id); if (!v || !v.group.visible) continue;
+      bb.setFromObject(v.group); if (bb.isEmpty()) continue;
+      bb.getCenter(pt).project(cam);
+      const sx = c.left + (pt.x * 0.5 + 0.5) * c.width, sy = c.top + (-pt.y * 0.5 + 0.5) * c.height;
+      if (pt.z < 1 && sx >= xa && sx <= xb && sy >= ya && sy <= yb) found.push(o.id);
+    }
+    if (!found.length) return;
+    const set = new Set(selIds); for (const id of found) for (const m of groupMembers(id)) set.add(m);
+    selIds = [...set]; selected = found[found.length - 1];
+    updateGizmo(); uiDirty = true; propsDirty = true; pathRev = -1; toast(selIds.length + (selIds.length === 1 ? ' item selected' : ' items selected'));
   };
   const cutOff = e => {
     if (drag) endDrag(e);
+    if (box) endBox(e);
     pdown = null;
     /* the move/rotate/scale arrows only listen for pointerup */
     if (gizmo.dragging) { canvas.removeEventListener('pointermove', gizmo._onPointerMove); gizmo.pointerUp(null); }
   };
   canvas.addEventListener('pointercancel', cutOff);
-  canvas.addEventListener('lostpointercapture', e => { if (drag) endDrag(e); });
+  canvas.addEventListener('lostpointercapture', e => { if (drag) endDrag(e); else if (box) endBox(e); });
   canvas.addEventListener('pointerup', e => {
     if (drag) { endDrag(e); return; }
+    if (box) { endBox(e); return; }
     if (!pdown || pdown.b !== 0) { pdown = null; return; }
     const moved = Math.hypot(e.clientX - pdown.x, e.clientY - pdown.y) > 4; pdown = null;
     if (moved || gizmoUsed || gizmo.dragging || rec) return;
     const rc = rayFromEvent(e); if (!rc) return;
     const hit = pickAt(rc);
-    if (!hit) select(null); else if (hit.id !== 'ring') select(hit.id);
+    if (!hit) { if (!e.shiftKey) select(null); }
+    else if (hit.id !== 'ring' && !(selected === hit.id || selIds.includes(hit.id))) select(hit.id, e.altKey ? 'single' : undefined);
+    else if (hit.id !== 'ring' && getObj(hit.id) && selected !== hit.id) { selected = hit.id; uiDirty = true; propsDirty = true; }
   });
   canvas.addEventListener('dblclick', e => {
     if (pathMode) { finishPath(); return; }
@@ -3179,6 +3431,9 @@ function wire() {
       else if (k === 's') { e.preventDefault(); saveProject(e.shiftKey); }
       else if (k === 'o') { e.preventDefault(); openDialog(); }
       else if (k === 'd') { e.preventDefault(); duplicateSel(); }
+      else if (k === 'a') { e.preventDefault(); selectAll(); }
+      else if (k === 'g') { e.preventDefault(); if (e.shiftKey) ungroupSel(); else groupSel(); }
+      else if (k === 'l') { e.preventDefault(); const l = targetObjs(); if (l.length) lockObjs(l, !l.every(o => o.locked)); }
       else if (k === 'c' && !e.shiftKey && !(window.getSelection && String(window.getSelection()))) { e.preventDefault(); copyFrame(); }
       return;
     }
@@ -3287,7 +3542,7 @@ function boot() {
     if (e.key === AUTOSAVE_KEY && !tabWarned) { tabWarned = true; toast('ShotRef is open in another tab. Changes here may overwrite it.', 6000); }
   });
   window.addEventListener('pagehide', flushAutosave);
-  window.__shotref = { getPref, setPref, showMenu, menuButton, hideMenu, project: (x, y, z) => { const r = canvas.getBoundingClientRect(); let cam = view === 'top' ? topCam : edCam, rr = { x: 0, y: 0, w: r.width, h: r.height }; if (view === 'camera') { cam = renderCam; rr = camRect(r.width, r.height); } const v = new THREE.Vector3(x, y, z).project(cam); return [r.left + rr.x + (v.x * 0.5 + 0.5) * rr.w, r.top + rr.y + (-v.y * 0.5 + 0.5) * rr.h]; }, get view() { return view; }, get selected() { return selected; }, get state() { return state; }, get assets() { return assets; }, setT: t => setTime(t, false), applyMove, addObject, select, setView, evalCam, exportVideo, exportPNG, pickCodec, _exportCanvas: () => exRenderer ? exRenderer.domElement : null, changed, writeObj, evalObj, setKey, get T() { return T; },
+  window.__shotref = { get selection() { return selIds; }, ringKnob: () => ringGrp.visible ? ringKnob.getWorldPosition(new THREE.Vector3()).toArray() : null, getPref, setPref, showMenu, menuButton, hideMenu, project: (x, y, z) => { const r = canvas.getBoundingClientRect(); let cam = view === 'top' ? topCam : edCam, rr = { x: 0, y: 0, w: r.width, h: r.height }; if (view === 'camera') { cam = renderCam; rr = camRect(r.width, r.height); } const v = new THREE.Vector3(x, y, z).project(cam); return [r.left + rr.x + (v.x * 0.5 + 0.5) * rr.w, r.top + rr.y + (-v.y * 0.5 + 0.5) * rr.h]; }, get view() { return view; }, get selected() { return selected; }, get state() { return state; }, get assets() { return assets; }, setT: t => setTime(t, false), applyMove, addObject, select, setView, evalCam, exportVideo, exportPNG, pickCodec, _exportCanvas: () => exRenderer ? exRenderer.domElement : null, changed, writeObj, evalObj, setKey, get T() { return T; },
     get rebuilds() { return rebuilds; }, urlCacheIds: () => [...urlCache.keys()],
     get history() { return { at: hi, length: hist.length }; },
     renderStats: () => ({ frame: renderer.info.render.frame, calls: renderer.info.render.calls, draws: drawCount, lastDraw, lastAsync, geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures }) };
