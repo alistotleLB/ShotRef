@@ -5,13 +5,14 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
 import { normalizeProject, FORMAT_VERSION, describeChange } from './project.js';
 import * as K from './keys.js';
+import { platform } from './platform.js';
 
 /* ---- shared values: every module-level `let`, what it holds, and what changes it ----
  * state, assets                  the project and its photos/models: restore, buildState, replaceProject, boot
  * T, playing, view, selected,  playhead: setTime; playing: setPlaying; view: setView; selected: select; pipOn: #bPip;
  *   pipOn, editRev, ...Dirty     editRev counts edits: changed, quietChange; uiDirty/propsDirty ask frame() to rebuild lists/panel
  * hist, hi                       undo snapshots and position: pushHistory, undo, redo, replaceProject
- * toastTimer, dlApi              toast hide timer: toast; downloads capability: dlReady
+ * toastTimer                   toast hide timer: toast (downloads capability and the open file/unsaved mark live in platform.js)
  * sizeWarned                     autosave size warning shown once: warnSize
  * autosaveReady, autosaveWaiting boot has loaded stored assets / a save is waiting for that: boot, writeAutosave
  * inlineTooBig, saveTimer        autosave fallback state and the debounce timer: writeAutosave, autosave, flushAutosave
@@ -71,22 +72,15 @@ function bufToB64(buf) { const u = new Uint8Array(buf); let s = ''; for (let i =
 const isTyping = () => { const a = document.activeElement; return !!a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA') && a.type !== 'checkbox' && a.type !== 'range' && a.type !== 'color'; };
 const isField = el => !!el && (el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA');
 
-/* downloads: platform capability when hosted, plain link when run as a file */
-let dlApi;
-const dlReady = (async () => {
-  try { if (window.claude && typeof window.claude.use === 'function') dlApi = await window.claude.use('downloads'); } catch (e) { dlApi = null; }
-})();
+/* exports and downloads go through the platform layer (native dialog in the desktop app, downloads capability on claude.ai, plain link elsewhere) */
+const SAVE_KINDS = { png: ['PNG image', ['png']], mp4: ['MP4 video', ['mp4']], webm: ['WebM video', ['webm']], shotref: ['ShotRef project', ['shotref']] };
 async function saveFile(filename, blob) {
-  await Promise.race([dlReady, new Promise(r => setTimeout(r, 300))]);
-  if (dlApi) {
-    try { await dlApi.save({ filename, data: blob }); toast('Saved ' + filename); }
-    catch (e) { if (e && e.code === 'declined') toast('Save cancelled'); else { console.error('ShotRef: could not save', e); toast("Couldn't save the file. Try again.", 4000); } }
-    return;
-  }
-  const url = URL.createObjectURL(blob);
-  const a = h('a', { href: url, download: filename }); document.body.append(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 4000);
-  toast('Saved ' + filename);
+  const k = SAVE_KINDS[(filename.split('.').pop() || '').toLowerCase()];
+  const r = await platform.saveBlob(filename, blob, { filters: k ? [{ name: k[0], extensions: k[1] }] : [] });
+  if (r.ok) toast('Saved ' + (r.name || filename));
+  else if (r.canceled) toast('Save cancelled');
+  else toast("Couldn't save the file. Try again.", 4000);
+  return r;
 }
 
 /* ============================== constants ============================== */
@@ -266,6 +260,7 @@ function pushHistory() {
   hist = hist.slice(0, hi + 1); hist.push(s);
   if (hist.length > 100) hist.shift();
   hi = hist.length - 1;
+  platform.setDirty(true);
   autosave();
 }
 function changed(commit, props = false) { editRev++; uiDirty = true; if (props) propsDirty = true; if (commit) pushHistory(); }
@@ -276,8 +271,8 @@ function restore(s) {
 }
 /* undo/redo autosave too, so an undone delete puts its photo or model back in the autosave */
 const changeLabel = (word, before, after) => { const d = describeChange(before, after); return d ? word + ': ' + d : word; };
-function undo() { if (exporting) return; if (hi > 0) { hi--; restore(hist[hi]); autosave(); toast(changeLabel('Undo', hist[hi], hist[hi + 1])); } }
-function redo() { if (exporting) return; if (hi < hist.length - 1) { hi++; restore(hist[hi]); autosave(); toast(changeLabel('Redo', hist[hi - 1], hist[hi])); } }
+function undo() { if (exporting) return; if (hi > 0) { hi--; restore(hist[hi]); platform.setDirty(true); autosave(); toast(changeLabel('Undo', hist[hi], hist[hi + 1])); } }
+function redo() { if (exporting) return; if (hi < hist.length - 1) { hi++; restore(hist[hi]); platform.setDirty(true); autosave(); toast(changeLabel('Redo', hist[hi - 1], hist[hi])); } }
 /* ---- autosave ----
    localStorage 'shotref.autosave' = { state, assets: {}, assetIds: [...], v: 2 } (small).
    Photos and models go to IndexedDB (db 'shotref', store 'assets', key = asset id).
@@ -2332,6 +2327,7 @@ function loadStarter(kind) {
   let sel = null;
   const built = buildState(() => fillStarter(kind, id => { sel = id; }));
   replaceProject(built, {}, (STARTERS.find(x => x[0] === kind) || [, kind])[1] + ' ready');
+  platform.newProject();
   if (sel) { selected = sel; propsDirty = true; updateGizmo(); }
 }
 function fillStarter(kind, selectId) {
@@ -2410,12 +2406,17 @@ function seedScene() {
   state.objects.push(p, t, b);
 }
 function resetEditorCam() { edCam.position.set(7, 5, 10); edControls.target.set(0, 1, 0); }
-async function saveProject() {
+/* Save (or Save as). On the web both download a new file; the desktop app writes back to the open file unless saveAs. */
+async function saveProject(saveAs = false) {
   /* only the files this scene uses (memory also keeps older ones for undo) */
   const used = {};
   for (const id of usedAssetIds(state)) if (assets[id]) used[id] = assets[id];
   const data = JSON.stringify({ app: 'ShotRef', version: FORMAT_VERSION, state, assets: used });
-  await saveFile(`shotref-${stamp()}.shotref.json`, new Blob([data], { type: 'application/json' }));
+  const r = await platform.saveProject(data, { saveAs: saveAs === true, name: `shotref-${stamp()}.shotref` });
+  if (r.ok) toast('Saved ' + (r.name || 'project'));
+  else if (r.canceled) toast('Save cancelled');
+  else toast("Couldn't save the project. Your changes are still here, so try again.", 5000);
+  return r;
 }
 /* allowed values for list-type settings: a file with anything else gets the default (I1) */
 const SETTING_ENUMS = {
@@ -2424,14 +2425,15 @@ const SETTING_ENUMS = {
 };
 const projectDefaults = () => ({ settings: DEFAULT_SETTINGS, camera: defaultState().camera, uid, enums: SETTING_ENUMS });
 const BAD_FILE = "This isn't a ShotRef project, or the file is damaged.";
-/* Open a .shotref.json (Open button, Ctrl+O and drag-drop all come here). Asks first if the scene has anything in it. */
-function loadProjectText(txt) {
+/* Open a .shotref / .json project (Open button, Ctrl+O, drag-drop and the desktop app's file events all come here). Asks first if the scene has anything in it.
+   `file` is { name, path } when the desktop app knows where it came from. */
+function loadProjectText(txt, file) {
   if (exporting) { toast('Wait for the export to finish.'); return; }
   let d;
   try { d = normalizeProject(JSON.parse(txt), projectDefaults()); }
   catch (e) { console.error('ShotRef: could not read the project file', e); toast(BAD_FILE, 4000); return; }
   const go = () => {
-    try { replaceProject(d.state, d.assets, 'Project opened'); }
+    try { replaceProject(d.state, d.assets, 'Project opened'); platform.setCurrent(file && file.name, file && file.path); }
     catch (e) { console.error('ShotRef: could not open the project', e); toast(BAD_FILE, 4000); }
   };
   if (state.objects.length || state.plate) confirmBox('Open this file?', 'It will replace the current scene. You can undo this with Ctrl+Z.', go, 'Open file');
@@ -2700,7 +2702,37 @@ function trapTab(e) {
   return true;
 }
 let cfCb = null;
-function confirmBox(title, text, cb, okLabel = 'OK') { $('#cfTitle').textContent = title; $('#cfText').textContent = text; $('#cfOk').textContent = okLabel; cfCb = cb; openModal('mConfirm'); }
+let cfAltCb = null;
+/* alt = { label, cb } adds a middle button (used for "Don't save") */
+function confirmBox(title, text, cb, okLabel = 'OK', alt = null) {
+  $('#cfTitle').textContent = title; $('#cfText').textContent = text; $('#cfOk').textContent = okLabel; cfCb = cb;
+  cfAltCb = alt && alt.cb; $('#cfAlt').textContent = alt ? alt.label : ''; $('#cfAlt').style.display = alt ? '' : 'none';
+  openModal('mConfirm');
+}
+/* the one way to pick a project to open: native dialog on desktop, the file picker on the web */
+async function openDialog() {
+  if (exporting) { toast('Wait for the export to finish.'); return; }
+  const f = await platform.openProject($('#fOpen'));
+  if (f && typeof f.text === 'string') loadProjectText(f.text, f);
+}
+/* The desktop window asked to close. Nothing unsaved: allow it. Otherwise ask, and only allow it once it is safe. */
+function closeRequested() {
+  if (exporting) { toast('Wait for the export to finish before closing.', 4000); return; }
+  if (!platform.isDirty()) { platform.closeOk(); return; }
+  const nm = platform.currentName();
+  confirmBox('Save changes before closing?', (nm ? '"' + nm + '" has' : 'This project has') + ' changes that are not saved.',
+    async () => { const r = await saveProject(false); if (r.ok) platform.closeOk(); }, 'Save',
+    { label: "Don't save", cb: () => platform.closeOk() });
+}
+/* menu clicks from the desktop app's native menu */
+function onDesktopMenu(cmd) {
+  if (cmd === 'close-request') { closeRequested(); return; }
+  if (exporting) { toast('Wait for the export to finish.'); return; }
+  if (cmd === 'new') openStarters();
+  else if (cmd === 'open') openDialog();
+  else if (cmd === 'save') saveProject(false);
+  else if (cmd === 'save-as') saveProject(true);
+}
 
 /* ============================== wiring ============================== */
 function syncTopUI() {
@@ -2721,8 +2753,8 @@ function wire() {
   $$('#lenSet [data-len]').forEach(b => b.onclick = () => setDuration(+b.dataset.len));
   $$('#feelBar button').forEach(b => b.onclick = () => { state.camera.feel = b.dataset.feel; changed(true, true); syncTopUI(); });
   $('#cbStart').onclick = () => setShotEnd('start'); $('#cbEnd').onclick = () => setShotEnd('end'); $('#cbRec').onclick = startRecord;
-  $('#bOpen').onclick = () => $('#fOpen').click();
-  $('#bSave').onclick = saveProject;
+  $('#bOpen').onclick = openDialog;
+  $('#bSave').onclick = () => saveProject(false);
   $('#bUndo').onclick = undo; $('#bRedo').onclick = redo;
   $$('#viewSeg button').forEach(b => b.onclick = () => setView(b.dataset.v));
   $('#bHelp').onclick = () => openModal('mHelp');
@@ -2772,13 +2804,16 @@ function wire() {
     for (const f of e.dataTransfer.files) {
       if (/\.(glb|gltf)$/i.test(f.name)) await importModel(f);
       else if (/^image\//.test(f.type)) { if (view === 'camera') await importPlate(f); else await importImage(f); }
-      else if (/\.json$/i.test(f.name)) loadProjectText(await readFile(f, 'text'));
+      else if (/\.(json|shotref)$/i.test(f.name)) loadProjectText(await readFile(f, 'text'), { name: f.name });
     }
   });
   // modals
   $$('[data-close]').forEach(b => b.onclick = () => closeModal(b));
   $$('.modal').forEach(m => m.addEventListener('pointerdown', e => { if (e.target === m && !exporting) { e.preventDefault(); closeModal(m); } })); /* preventDefault: the click must not move focus to the page (K3) */
   $('#cfOk').onclick = () => { closeModal($('#cfOk')); cfCb && cfCb(); };
+  $('#cfAlt').onclick = () => { closeModal($('#cfAlt')); cfAltCb && cfAltCb(); };
+  platform.onMenu(onDesktopMenu);
+  platform.onOpenFile(f => { if (f && typeof f.text === 'string') loadProjectText(f.text, f); });
   $('#exAspect').append(...ASPECTS.map(a => h('option', { value: a[0] }, a[2])));
   $('#exSize').append(...SIZES.map(s => h('option', { value: s[0] }, s[1])));
   $('#exAspect').onchange = e => { state.settings.aspect = e.target.value; changed(true, true); renderExportDialog(); };
@@ -2909,8 +2944,8 @@ function wire() {
     if (ctrl) {
       if (k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
       else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); redo(); }
-      else if (k === 's') { e.preventDefault(); saveProject(); }
-      else if (k === 'o') { e.preventDefault(); $('#fOpen').click(); }
+      else if (k === 's') { e.preventDefault(); saveProject(e.shiftKey); }
+      else if (k === 'o') { e.preventDefault(); openDialog(); }
       else if (k === 'd') { e.preventDefault(); duplicateSel(); }
       else if (k === 'c' && !e.shiftKey && !(window.getSelection && String(window.getSelection()))) { e.preventDefault(); copyFrame(); }
       return;
@@ -2979,7 +3014,7 @@ function boot() {
     try { localStorage.removeItem('shotref.autosave'); localStorage.setItem('shotref.autosave.broken', raw); }
     catch (e) { console.error('ShotRef: could not keep a copy of the broken autosave', e); }
   }
-  pushHistory(); setSimple(simple); setView('editor'); setGizmoMode('translate');
+  pushHistory(); platform.setDirty(false); setSimple(simple); setView('editor'); setGizmoMode('translate');
   requestAnimationFrame(frame);
   let seen = false; try { seen = localStorage.getItem('shotref.seenHelp'); localStorage.setItem('shotref.seenHelp', '1'); } catch (e) { }
   if (autosaveOff) toast(NO_AUTOSAVE, 6000); /* starter sets still open below on a first visit */

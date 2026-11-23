@@ -184,7 +184,7 @@ check('save then open round-trips', async ({ open, freshContext, downloads }) =>
   await a.evaluate(() => { const S = window.__shotref; S.addObject('person'); S.applyMove('orbitL'); S.changed(true); });
   const before = await stateOf(a);
   await a.click('#bSave');
-  const file = await downloads(a).wait('.json');
+  const file = await downloads(a).wait('.shotref');
   const fc = await freshContext();
   const b = await fc.open();
   await openFile(b, file.name, file.text()); /* the fresh page has a scene, so Open asks first */
@@ -519,8 +519,8 @@ check('last tab to write keeps its photo', async ({ open, fixtures }) => {
 check('save file name has a date', async ({ open, downloads }) => {
   const p = await open();
   await p.click('#bSave');
-  const f = await downloads(p).wait('.json');
-  ok(/^shotref-\d{8}-\d{4}\.shotref\.json$/.test(f.name), 'file is called ' + f.name);
+  const f = await downloads(p).wait('.shotref');
+  ok(/^shotref-\d{8}-\d{4}\.shotref$/.test(f.name), 'file is called ' + f.name);
 });
 
 
@@ -1491,6 +1491,158 @@ check('branding: tab icon, top-bar mark and welcome header', async ({ open, fres
   await q.waitForFunction(() => !document.querySelector('#mStart').classList.contains('hidden'), null, { timeout: 3000 });
   const w = await q.evaluate(() => ({ head: getComputedStyle(document.querySelector('#startHead')).display, h: document.querySelector('#mStartT').textContent }));
   ok(w.head !== 'none' && w.h === 'Start a shot', 'welcome header ' + JSON.stringify(w));
+});
+
+/* ---------------- platform layer: web save/open and the desktop bridge ---------------- */
+/* a stand-in for the Electron preload: records every call, so the page's side can be checked */
+const FAKE_DESKTOP = `(() => {
+  const d = window.__dsk = { calls: [], titles: [], menu: null, openCb: null, nextOpen: null, fail: false, cancel: false, closed: 0 };
+  window.shotrefDesktop = { version: '0.0-test',
+    saveBlob: async (n, buf, f) => { d.calls.push({ k: 'blob', n, size: buf.byteLength, f }); return { ok: true, name: n }; },
+    saveProject: async (text, o) => {
+      d.calls.push({ k: 'proj', o: JSON.parse(JSON.stringify(o || {})), len: text.length });
+      if (d.fail) return { ok: false, error: 'disk full' };
+      if (d.cancel) return { ok: false, canceled: true };
+      const path = (o && !o.saveAs && o.path) || 'C:/shots/' + ((o && o.name) || 'new.shotref');
+      return { ok: true, name: path.split('/').pop(), path };
+    },
+    openProject: async () => d.nextOpen, setTitle: t => d.titles.push(t),
+    onMenu: cb => { d.menu = cb; }, onOpenFile: cb => { d.openCb = cb; }, closeOk: () => { d.closed++; } };
+})();`;
+const desktopPage = async (freshContext) => {
+  const fc = await freshContext();
+  await fc.ctx.addInitScript(FAKE_DESKTOP);
+  return fc.open();
+};
+const dirtyEdit = p => p.evaluate(() => { const S = window.__shotref; S.addObject('box'); S.changed(true); });
+
+check('web: Open accepts .shotref and .json files', async ({ open }) => {
+  const p = await open();
+  const acc = await p.evaluate(() => document.querySelector('#fOpen').accept);
+  ok(/\.shotref/.test(acc) && /\.json/.test(acc), 'accept is ' + acc);
+  const before = await p.evaluate(() => window.__shotref.state.objects.length);
+  const st = await stateOf(p);
+  st.objects = st.objects.slice(0, 1);
+  await openFile(p, 'one.shotref', JSON.stringify({ app: 'ShotRef', version: 2, state: st, assets: {} }));
+  const n = await p.evaluate(() => window.__shotref.state.objects.length);
+  ok(before > 1 && n === 1, 'a .shotref file should open: ' + before + ' -> ' + n);
+});
+
+check('web: Ctrl+Shift+S saves like Save', async ({ open, downloads }) => {
+  const p = await open();
+  await p.keyboard.press('Control+Shift+S');
+  const f = await downloads(p).wait('.shotref');
+  ok(/^shotref-\d{8}-\d{4}\.shotref$/.test(f.name), 'file is called ' + f.name);
+  ok((await p.title()) === 'ShotRef', 'web title must stay ShotRef, got ' + (await p.title()));
+});
+
+check('desktop: Save reuses the file, Save as asks again, title shows name and unsaved dot', async ({ freshContext }) => {
+  const p = await desktopPage(freshContext);
+  ok((await p.title()) === 'ShotRef', 'start title ' + (await p.title()));
+  await p.click('#bSave');
+  await p.waitForFunction(() => window.__dsk.calls.length === 1);
+  let c = await p.evaluate(() => window.__dsk.calls.slice());
+  ok(c[0].k === 'proj' && !c[0].o.saveAs && !c[0].o.path && /^shotref-\d{8}-\d{4}\.shotref$/.test(c[0].o.name), 'first save ' + JSON.stringify(c[0]));
+  await p.waitForFunction(() => window.__dsk.titles.length > 0);
+  const t = await p.evaluate(() => window.__dsk.titles.slice(-1)[0]);
+  ok(t.includes('.shotref') && t.endsWith('ShotRef') && !t.includes('•'), 'saved title ' + t);
+  await dirtyEdit(p);
+  await p.waitForFunction(() => window.__dsk.titles.slice(-1)[0].includes('•'));
+  await p.keyboard.press('Control+S');
+  await p.waitForFunction(() => window.__dsk.calls.length === 2);
+  c = await p.evaluate(() => window.__dsk.calls.slice());
+  ok(c[1].o.path === 'C:/shots/' + c[0].o.name && !c[1].o.saveAs, 'second save should reuse the path ' + JSON.stringify(c[1]));
+  await p.waitForFunction(() => !window.__dsk.titles.slice(-1)[0].includes('•'));
+  await p.keyboard.press('Control+Shift+S');
+  await p.waitForFunction(() => window.__dsk.calls.length === 3);
+  c = await p.evaluate(() => window.__dsk.calls.slice());
+  ok(c[2].o.saveAs === true, 'Ctrl+Shift+S should ask again ' + JSON.stringify(c[2]));
+  noErrors(p, 'desktop page');
+});
+
+check('desktop: a failed save says so and keeps the unsaved dot', async ({ freshContext }) => {
+  const p = await desktopPage(freshContext);
+  await dirtyEdit(p);
+  await p.evaluate(() => { window.__dsk.fail = true; });
+  await p.click('#bSave');
+  await p.waitForFunction(() => window.__dsk.calls.length === 1);
+  await p.waitForTimeout(300);
+  const r = await p.evaluate(() => ({ toast: document.querySelector('#toast').textContent, t: window.__dsk.titles.slice(-1)[0] }));
+  ok(/couldn't save/i.test(r.toast), 'toast: ' + r.toast);
+  ok(r.t && r.t.includes('•'), 'still unsaved: ' + r.t);
+});
+
+check('desktop: Open uses the native dialog and later Save writes back to that file', async ({ freshContext }) => {
+  const p = await desktopPage(freshContext);
+  const st = await stateOf(p);
+  st.objects = st.objects.slice(0, 1);
+  const text = JSON.stringify({ app: 'ShotRef', version: 2, state: st, assets: {} });
+  await p.evaluate(t => { window.__dsk.nextOpen = { text: t, name: 'scene.shotref', path: 'D:/work/scene.shotref' }; }, text);
+  await p.keyboard.press('Control+O');
+  await p.waitForSelector('#mConfirm:not(.hidden)');
+  await p.click('#cfOk');
+  await p.waitForFunction(() => window.__shotref.state.objects.length === 1);
+  const t = await p.evaluate(() => window.__dsk.titles.slice(-1)[0]);
+  ok(t.includes('scene.shotref') && !t.includes('•'), 'title ' + t);
+  await dirtyEdit(p);
+  await p.click('#bSave');
+  await p.waitForFunction(() => window.__dsk.calls.length === 1);
+  const c = await p.evaluate(() => window.__dsk.calls[0]);
+  ok(c.o.path === 'D:/work/scene.shotref', 'Save should write back to the opened file ' + JSON.stringify(c));
+});
+
+check('desktop: menu commands, opened-file events and exports go through the bridge', async ({ freshContext }) => {
+  const p = await desktopPage(freshContext);
+  const st = await stateOf(p);
+  st.objects = st.objects.slice(0, 2);
+  const text = JSON.stringify({ app: 'ShotRef', version: 2, state: st, assets: {} });
+  await p.evaluate(t => window.__dsk.openCb({ text: t, name: 'dbl.shotref', path: 'E:/dbl.shotref' }), text);
+  await p.waitForSelector('#mConfirm:not(.hidden)');
+  await p.click('#cfOk');
+  await p.waitForFunction(() => window.__shotref.state.objects.length === 2);
+  await p.evaluate(() => window.__dsk.menu('save-as'));
+  await p.waitForFunction(() => window.__dsk.calls.length === 1);
+  const c = await p.evaluate(() => window.__dsk.calls[0]);
+  ok(c.o.saveAs === true, 'menu save-as ' + JSON.stringify(c));
+  await p.evaluate(() => window.__dsk.menu('save'));
+  await p.waitForFunction(() => window.__dsk.calls.length === 2);
+  await p.click('#bSnap');
+  await p.waitForFunction(() => window.__dsk.calls.some(x => x.k === 'blob'), null, { timeout: 30000 });
+  const b = await p.evaluate(() => window.__dsk.calls.find(x => x.k === 'blob'));
+  ok(/\.png$/.test(b.n) && b.size > 1000 && JSON.stringify(b.f).includes('png'), 'png via bridge ' + JSON.stringify(b));
+});
+
+check('desktop: closing asks about unsaved changes (Save / Dont save / Cancel)', async ({ freshContext }) => {
+  const p = await desktopPage(freshContext);
+  const closed = () => p.evaluate(() => window.__dsk.closed);
+  await p.evaluate(() => window.__dsk.menu('close-request'));
+  await p.waitForFunction(() => window.__dsk.closed === 1); /* nothing unsaved: closes straight away */
+  await dirtyEdit(p);
+  await p.evaluate(() => window.__dsk.menu('close-request'));
+  await p.waitForSelector('#mConfirm:not(.hidden)');
+  const lab = await p.evaluate(() => ({ t: document.querySelector('#cfTitle').textContent, b: [...document.querySelectorAll('#mConfirm .btns button')].filter(x => x.offsetParent).map(x => x.textContent) }));
+  ok(/save changes/i.test(lab.t) && lab.b.join('|') === "Cancel|Don't save|Save", 'dialog ' + JSON.stringify(lab));
+  await p.click('#mConfirm [data-close]');
+  await p.waitForTimeout(200);
+  ok((await closed()) === 1, 'Cancel must not close');
+  await p.evaluate(() => window.__dsk.menu('close-request'));
+  await p.waitForSelector('#mConfirm:not(.hidden)');
+  await p.click('#cfAlt');
+  await p.waitForFunction(() => window.__dsk.closed === 2);
+  ok((await p.evaluate(() => window.__dsk.calls.length)) === 0, "Don't save must not write a file");
+  await p.evaluate(() => window.__dsk.menu('close-request'));
+  await p.waitForSelector('#mConfirm:not(.hidden)');
+  await p.click('#cfOk');
+  await p.waitForFunction(() => window.__dsk.closed === 3);
+  ok((await p.evaluate(() => window.__dsk.calls.length)) === 1, 'Save must write once');
+  /* a failed save keeps the window open */
+  await dirtyEdit(p);
+  await p.evaluate(() => { window.__dsk.fail = true; window.__dsk.menu('close-request'); });
+  await p.waitForSelector('#mConfirm:not(.hidden)');
+  await p.click('#cfOk');
+  await p.waitForFunction(() => window.__dsk.calls.length === 2);
+  await p.waitForTimeout(300);
+  ok((await closed()) === 3, 'failed save must not close');
 });
 
 main().catch(e => { console.error(e && e.stack || e); process.exit(2); });

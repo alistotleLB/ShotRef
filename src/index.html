@@ -210,7 +210,7 @@ body.simple #vpTools [data-g]{display:none}
     <div class="grp">
       <button id="bNew" title="Start a new project">New</button>
       <button id="bOpen" title="Open a saved project (Ctrl+O)">Open</button>
-      <button id="bSave" title="Save project file (Ctrl+S)">Save</button>
+      <button id="bSave" title="Save project file (Ctrl+S). Save as: Ctrl+Shift+S">Save</button>
     </div>
     <div class="grp">
       <button id="bUndo" title="Undo (Ctrl+Z)">↶ Undo</button>
@@ -303,7 +303,7 @@ body.simple #vpTools [data-g]{display:none}
   </footer>
 </div>
 
-<input type="file" id="fOpen" accept=".json,application/json" hidden>
+<input type="file" id="fOpen" accept=".shotref,.json,application/json" hidden>
 <input type="file" id="fModel" accept=".glb,.gltf" hidden>
 <input type="file" id="fImage" accept="image/*" hidden>
 <input type="file" id="fPlate" accept="image/jpeg,image/png,image/webp" hidden>
@@ -382,7 +382,7 @@ body.simple #vpTools [data-g]{display:none}
 
 <div id="mConfirm" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="cfTitle"><div class="dlg" style="width:min(400px,94vw)">
   <h2 id="cfTitle"></h2><p id="cfText" class="note" style="font-size:13px"></p>
-  <div class="btns" style="margin-top:14px"><button data-close>Cancel</button><button id="cfOk" class="primary">OK</button></div>
+  <div class="btns" style="margin-top:14px"><button data-close>Cancel</button><button id="cfAlt" style="display:none"></button><button id="cfOk" class="primary">OK</button></div>
 </div></div>
 
 <div id="toast"></div>
