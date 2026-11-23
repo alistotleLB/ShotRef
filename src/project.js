@@ -196,6 +196,10 @@ export function describeChange(beforeJSON, afterJSON) {
   if (lockedNow.length) return many(lockedNow, lockedNow.every(o => o.locked) ? 'lock' : 'unlock');
   const grouped = B.filter(o => (o.grp || null) !== (inA.get(o.id).grp || null));
   if (grouped.length) return grouped.every(o => !o.grp) ? 'ungroup ' + (grouped.length === 1 ? (grouped[0].name || 'item') : grouped.length + ' items') : many(grouped, 'group');
+  /* sitting down or standing up also moves them: name it as what it is */
+  const seatOf = o => (o.opts && o.opts.seated) || null;
+  const seatChanged = B.filter(o => seatOf(o) !== seatOf(inA.get(o.id)));
+  if (seatChanged.length) return many(seatChanged, seatChanged.every(o => seatOf(o)) ? 'sit' : 'stand up');
   /* turning only changes the angles (alone, or around the middle of several); moving anything else is a move */
   const turnedObj = (p, o) => {
     if (!same(p.base && p.base.r, o.base && o.base.r)) return true;
@@ -204,7 +208,12 @@ export function describeChange(beforeJSON, afterJSON) {
   };
   const moved = B.filter(o => { const p = inA.get(o.id); return !same(p.base, o.base) || !same(p.keys, o.keys); });
   if (moved.length) return many(moved, moved.every(o => turnedObj(inA.get(o.id), o)) ? 'turn' : 'move');
-  for (const o of B) { const p = inA.get(o.id); if (!same(p, o)) return 'change ' + (o.name || 'item'); }
+  for (const o of B) {
+    const p = inA.get(o.id); if (same(p, o)) continue;
+    if (!same(p.acts, o.acts)) return 'pose change for ' + (o.name || 'item');
+    if (!same(p.opts && p.opts.lookAt, o.opts && o.opts.lookAt)) return 'eyeline for ' + (o.name || 'item');
+    return 'change ' + (o.name || 'item');
+  }
   if (!same(a.groups, b.groups)) return 'rename group';
   if (!same(a.meta, b.meta)) return 'rename project';
   if (!same(a.camera, b.camera)) return 'camera change';

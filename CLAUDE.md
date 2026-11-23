@@ -78,6 +78,7 @@ Main sections of `main.js`, in file order:
   - `POSES` holds the pose functions.
   - `posePerson()` applies a pose and keeps the feet on the ground.
   - `personMotion()` handles facing the travel direction and stride sync, so feet don't slide.
+  - Body types: `opts.body` (`man|woman|child`, `BODIES`/`BODY_SHAPE`). Eyeline: `opts.lookAt` (`'camera'` or an object id), applied last in `posePerson()` so it never moves the feet. Seats: `SEATS` for chair, sofa and bed; `opts.seated` is the seat owner's id; `sitPerson()`/`standPerson()`. Pose changes over time: `obj.acts[] = {t, pose, at?}` read through `actLayer()` (blends over `ACT_BLEND`); `setPoseAt()` adds one, blue tags on the timeline retime or remove them.
 - **Interaction:** pointer handling lives in `wire()`. It covers click to place (`placing`), drawing paths (`pathMode`), dragging on the floor, the turn ring, focus picking, and live camera recording (`rec`).
 - **Panels:** `propsScene()`, `propsCamera()` and `propsObject()` rebuild the right-hand panel when `propsDirty` is set. Use the small builders `numField`, `slider`, `selectRow`, `check` and `sec`.
 - **Export:**

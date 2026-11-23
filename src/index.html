@@ -142,6 +142,12 @@ button.icon svg,.ib svg{width:17px;height:17px;stroke:currentColor;fill:none;str
 .dia{position:absolute;top:50%;width:11px;height:11px;margin:-6px 0 0 -6px;background:var(--acc);transform:rotate(45deg);border:1px solid #2b1a08;cursor:grab;z-index:1}
 .dia:hover{background:#ffd2a3}
 .dia.cam{background:#ffcf5a}
+.lane .act{position:absolute;top:50%;transform:translate(-2px,-50%);height:16px;padding:0 6px;border-radius:8px;background:#2f6f8f;border:1px solid #6fc3ea;color:#e8f7ff;font-size:10px;line-height:14px;white-space:nowrap;cursor:grab;z-index:1}
+.lane .act:hover{background:#3b86ab}
+.actrow{display:flex;align-items:center;gap:5px;margin:4px 0}
+.actrow .t{width:46px;text-align:right;font-variant-numeric:tabular-nums;color:#9fd3ff;font-size:12px;cursor:pointer}
+.actrow select{flex:1}
+.actrow button{padding:2px 8px}
 #tlHead{position:absolute;top:0;bottom:0;width:2px;background:var(--red);pointer-events:none;z-index:3}
 #tlHead::before{content:"";position:absolute;top:0;left:-5px;border:6px solid transparent;border-top:8px solid var(--red)}
 #tlEnd{position:absolute;top:0;bottom:0;right:0;background:rgba(0,0,0,.25);pointer-events:none}
@@ -399,7 +405,7 @@ button.icon{padding:5px 8px;min-width:32px;display:inline-flex;align-items:cente
   <ol class="steps">
     <li><b>Start from a set</b> (<b>File</b> then <b>New</b>), or click items on the Add tab on the left and then click on the floor to place them.</li>
     <li><b>Block it.</b> Drag people and props across the floor; drag the orange ring to turn them (let go over a person or the camera and they face it). Shift-click picks several to move together; <span class="kbd">Ctrl G</span> groups them. <b>Top view</b> (<span class="kbd">T</span>) works like a floor plan.</li>
-    <li><b>Move people.</b> Select a person, press <b>Draw walk path</b> and click points on the floor, or send them to a floor mark with an arrival time.</li>
+    <li><b>Move people.</b> Select a person, press <b>Draw walk path</b> and click points on the floor, or send them to a floor mark with an arrival time. Drag them onto a chair, sofa or bed to sit them down (drag away to stand). Pick a pose later in the shot to change it mid-shot: it shows as a blue tag on the timeline. The eye button over a person makes them look at the camera.</li>
     <li><b>Right-click</b> anything for what you can do with it: add a person here, walk them to a mark, frame a medium shot, face the camera, duplicate, hide. Right-click the floor to add things or aim the camera there. Right-drag still pans.</li>
     <li><b>Frame the shot.</b> In <b>Camera view</b> (<span class="kbd">C</span>) drag to orbit, right-drag to pan, scroll to dolly, <span class="kbd">W A S D Q E</span> to fly. Or use a shot size: Wide, Medium, Close-up…</li>
     <li><b>Make the move.</b> Press <b>Set start</b>, reframe, press <b>Set end</b>. Or pick a one-click move, or <b>● Record</b> and operate the camera live.</li>
@@ -425,7 +431,7 @@ button.icon{padding:5px 8px;min-width:32px;display:inline-flex;align-items:cente
     <div><span class="kbd">Ctrl Z</span> · <span class="kbd">Ctrl Y</span></div><div>Undo · Redo</div>
     <div><span class="kbd">Ctrl S</span> · <span class="kbd">Ctrl O</span></div><div>Save · Open project</div>
     <div><span class="kbd">P</span> · <span class="kbd">Ctrl C</span></div><div>Save current frame as PNG · copy it to the clipboard</div>
-    <div>Timeline</div><div>Click or drag to scrub · drag a ◆ to retime it · right-click a ◆ to delete it</div>
+    <div>Timeline</div><div>Click or drag to scrub · drag a ◆ (or a blue pose tag) to retime it · right-click it to delete it</div>
   </div>
   <p class="note">Your work is autosaved in this browser. Use <b>Save</b> to keep a project file you can reopen anywhere.</p>
   </div>

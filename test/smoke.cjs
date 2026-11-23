@@ -1835,12 +1835,12 @@ check('right-click on the floor offers add / aim / move here; right-drag opens n
   await rightClick(p, xy2[0], xy2[1]); await p.waitForTimeout(200);
   const labels = await menuLabels(p);
   ok(labels && (await menuHead(p)) === 'On the floor here', 'floor menu head: ' + (await menuHead(p)));
-  for (const l of ['Add a person here', 'Add floor mark here', 'Aim the camera here']) ok(labels.some(x => x.startsWith(l)), 'missing "' + l + '"');
+  for (const l of ['Add a man here', 'Add a woman here', 'Add a child here', 'Add floor mark here', 'Aim the camera here']) ok(labels.some(x => x.startsWith(l)), 'missing "' + l + '"');
   ok(!labels.some(x => x.startsWith('Move the camera here')), '"Move the camera here" belongs to Top view only');
   const n0 = await p.evaluate(() => window.__shotref.state.objects.length);
-  await clickItem(p, 'Add a person here'); await p.waitForTimeout(200);
+  await clickItem(p, 'Add a woman here'); await p.waitForTimeout(200);
   const s = await stateOf(p), np = s.objects[s.objects.length - 1];
-  ok(s.objects.length === n0 + 1 && np.type === 'person' && Math.abs(np.base.p[0] - pt[0]) < 0.6 && Math.abs(np.base.p[2] - pt[2]) < 0.6, 'person not added at the clicked spot: ' + JSON.stringify(np.base.p));
+  ok(s.objects.length === n0 + 1 && np.type === 'person' && np.opts.body === 'woman' && Math.abs(np.base.p[0] - pt[0]) < 0.6 && Math.abs(np.base.p[2] - pt[2]) < 0.6, 'person not added at the clicked spot: ' + JSON.stringify(np.base.p));
   await rightClick(p, xy2[0], xy2[1]); await p.waitForTimeout(150);
   /* the new person stands there, so the menu is now theirs; click the floor a bit further for the floor menu */
   await p.keyboard.press('Escape');
@@ -2219,6 +2219,7 @@ check('multi-select: Shift-click adds and removes, Ctrl+A selects all, Esc clear
   const two = await selIdsOf(p);
   ok(two.length === 2 && two.includes(person) && two.includes(box), 'Shift-click should add the box, got ' + JSON.stringify(two));
   ok(await p.evaluate(() => window.__shotref.selected) === box, 'the last one clicked is the main one');
+  await p.waitForTimeout(250); /* the panel is rebuilt on the next drawn frame */
   ok(/2 items selected/.test(await p.textContent('#props')), 'the panel should say 2 items selected');
   await shiftClick(p, ...xy.person);
   ok(JSON.stringify(await selIdsOf(p)) === JSON.stringify([box]), 'Shift-click on a selected one removes it');
@@ -2493,6 +2494,309 @@ check('a plain click on an item inside a multi-selection selects only it; draggi
   await p.evaluate(i => { const S = window.__shotref; S.state.objects.find(o => o.id === i).locked = true; S.changed(true, true); }, person);
   await p.waitForTimeout(250);
   ok(await p.locator('#props button:has-text("People face camera")').count() === 0, 'People face camera is not offered when every person is locked');
+  noErrors(p);
+});
+
+/* ---------------- Batch D: people (body types, eyeline, seats, pose changes over time, face the camera) ---------------- */
+const rigOf = (p, id) => p.evaluate(i => { const S = window.__shotref; S.applyAll(S.T); return S.rig(i); }, id);
+const rigAt = (p, id, t) => p.evaluate(a => { const S = window.__shotref; S.setT(a[1]); S.applyAll(a[1]); return S.rig(a[0]); }, [id, t]);
+const placeAt = (p, x, z) => p.evaluate(q => { const S = window.__shotref; const o = S.state.objects.find(i => i.type === 'person'); o.base.p = [q[0], 0, q[1]]; o.base.r = [0, 0, 0]; S.changed(true, true); return o.id; }, [x, z]);
+const setCamPos = (p, pos) => p.evaluate(q => { const S = window.__shotref; S.state.camera.base.p = q; S.changed(true, true); }, pos);
+const addChair = (p, x, z, type = 'chair') => p.evaluate(q => window.__shotref.addObject(q[2], null, false, [q[0], 0, q[1]]).id, [x, z, type]);
+
+check('people: Add tab has Man, Woman and Child tiles that add that body with its own height, colours and name', async ({ open }) => {
+  const p = await open(); await p.waitForTimeout(400);
+  const tiles = await p.evaluate(() => [...document.querySelectorAll('#addArea .tile[data-body]')].map(b => b.textContent.trim()));
+  ok(JSON.stringify(tiles) === JSON.stringify(['Man', 'Woman', 'Child']), 'tiles: ' + JSON.stringify(tiles));
+  ok(await p.evaluate(() => ![...document.querySelectorAll('#addArea .tile')].some(b => b.textContent.trim() === 'Add person')), 'the single Add person tile is gone');
+  const want = { woman: { name: /^Woman \d/, h: 1.66, color: '#c4566c' }, child: { name: /^Child \d/, h: 1.2, color: '#e0a030' }, man: { name: /^Man \d/, h: 1.78, color: '#3d6fd8' } };
+  for (const k of ['woman', 'child', 'man']) {
+    await p.click('#addArea .tile[data-body="' + k + '"]');
+    const xy = await p.evaluate(() => window.__shotref.project(1.2, 0, 3));
+    await p.mouse.click(...xy); await p.waitForTimeout(250);
+    const o = await p.evaluate(() => { const S = window.__shotref; return JSON.parse(JSON.stringify(S.state.objects[S.state.objects.length - 1])); });
+    ok(o.type === 'person' && o.opts.body === k && want[k].name.test(o.name) && Math.abs(o.opts.height - want[k].h) < 1e-6 && (k !== 'woman' || o.color === want[k].color), k + ' came out as ' + JSON.stringify({ n: o.name, b: o.opts.body, h: o.opts.height, c: o.color }));
+  }
+  /* the panel names the body and has the Man / Woman / Child buttons; switching rebuilds the mannequin */
+  const title = await p.evaluate(() => document.querySelector('#props .sec h3').textContent);
+  ok(title === 'Man', 'the panel title is the body: ' + title);
+  await p.click('#props .seg [data-body="woman"]'); await p.waitForTimeout(200);
+  const o2 = await p.evaluate(() => { const S = window.__shotref; return S.state.objects[S.state.objects.length - 1]; });
+  ok(o2.opts.body === 'woman' && Math.abs(o2.opts.height - 1.66) < 1e-6, 'the body button changes body and height');
+  ok(await p.evaluate(() => document.querySelector('#props .sec h3').textContent) === 'Woman', 'the title follows');
+  noErrors(p);
+});
+
+check('people: bodies have different proportions (shoulders, hips, head, long hair) and old people look as before', async ({ open }) => {
+  const p = await open(); await p.waitForTimeout(300);
+  const ids = await p.evaluate(() => { const S = window.__shotref; return ['man', 'woman', 'child'].map(b => S.addPerson(b, false, [4, 0, 0]).id); });
+  await p.waitForTimeout(200);
+  const [m, w, c] = [await rigOf(p, ids[0]), await rigOf(p, ids[1]), await rigOf(p, ids[2])];
+  ok(Math.abs(m.shoulderX / m.H - 0.118) < 1e-3 && Math.abs(w.shoulderX / w.H - 0.106) < 1e-3 && Math.abs(c.shoulderX / c.H - 0.112) < 1e-3, 'shoulders: ' + [m, w, c].map(r => (r.shoulderX / r.H).toFixed(3)));
+  ok(Math.abs(w.hipX / w.H - 0.066) < 1e-3 && Math.abs(m.hipX / m.H - 0.062) < 1e-3, 'hips differ');
+  ok(c.headScale > 1.3 && m.headScale === 1, 'a child has the bigger head: ' + [m.headScale, c.headScale]);
+  ok(w.headParts === m.headParts + 1, 'a woman has long hair: ' + [m.headParts, w.headParts]);
+  /* the starter person has no body field and must look like a man */
+  const old = await rigOf(p, await idOfType(p, 'person'));
+  ok(Math.abs(old.shoulderX / old.H - 0.118) < 1e-3 && old.headScale === 1, 'a person without opts.body is built as a man');
+  noErrors(p);
+});
+
+check('people: an artifact-made file with body, eyeline, seat and pose changes shows them all', async ({ open }) => {
+  const O = (id, type, extra) => ({ id, type, name: id, color: '#c4566c', base: { p: [0, 0, 0], r: [0, 0, 0], s: [1, 1, 1] }, keys: [], opts: {}, visible: true, ...extra });
+  const file = { app: 'ShotRef', version: 1, state: { v: 1, settings: { duration: 6, fps: 24 }, camera: { base: JSON.parse(CAM_BASE), keys: [] },
+    objects: [
+      O('ch1', 'chair', { base: { p: [2, 0, 0], r: [0, 0, 0], s: [1, 1, 1] } }),
+      O('w1', 'person', { opts: { body: 'woman', height: 1.66, pose: 'stand', lookAt: 'camera', skin: '#d2a07c', pants: '#3e5f8f', hair: '#3a2418' }, acts: [{ t: 2, pose: 'wave' }, { t: 4, pose: 'sit', at: { p: [2, 0, 0.02], yaw: 0 } }] }),
+      O('k1', 'person', { color: '#e0a030', base: { p: [-2, 0, 0], r: [0, 0, 0], s: [1, 1, 1] }, opts: { body: 'child', height: 1.2, pose: 'sit', seated: 'ch1', lookAt: 'w1' } })] }, assets: {} };
+  const p = await open(); await openFile(p, 'art.shotref.json', JSON.stringify(file));
+  await p.waitForFunction(() => window.__shotref.state.objects.length === 3);
+  const st = await stateOf(p), w = st.objects[1], k = st.objects[2];
+  ok(w.opts.body === 'woman' && w.opts.lookAt === 'camera' && w.acts.length === 2 && w.acts[1].at.yaw === 0 && k.opts.body === 'child' && k.opts.seated === 'ch1' && k.opts.lookAt === 'w1', 'fields kept: ' + JSON.stringify([w, k]));
+  const r0 = await rigAt(p, 'w1', 1), r3 = await rigAt(p, 'w1', 3.2), r5 = await rigAt(p, 'w1', 5);
+  ok(Math.abs(r0.shoulderX / r0.H - 0.106) < 1e-3, 'the woman is built as a woman');
+  ok(Math.abs(r3.rSh[0] - r0.rSh[0]) + Math.abs(r3.rSh[1] - r0.rSh[1]) + Math.abs(r3.rSh[2] - r0.rSh[2]) > 0.3, 'she waves at 3.2 s: ' + JSON.stringify([r0.rSh, r3.rSh]));
+  ok(Math.abs(r5.group.p[0] - 2) < 0.2, 'after the sit action she is on the chair, x=' + r5.group.p[0]);
+  ok(r5.lHip[0] < -1.2, 'and sitting (hips bent): ' + r5.lHip[0]);
+  ok(Math.abs(r0.neck[1]) > 0.2, 'she looks at the camera (neck turned ' + r0.neck[1].toFixed(2) + ')');
+  const rk = await rigAt(p, 'k1', 0);
+  ok(Math.abs(rk.neck[1]) > 0.3, 'the child on the chair looks toward the woman: ' + rk.neck[1].toFixed(2));
+  noErrors(p);
+});
+
+check('people: look at the camera, at a person or ahead turns the head and upper body toward it', async ({ open }) => {
+  const p = await open(); await p.waitForTimeout(300);
+  const id = await placeAt(p, 0, 0);
+  const other = await p.evaluate(() => { const S = window.__shotref; return S.addPerson('woman', false, [-3, 0, 0]).id; });
+  await setCamPos(p, [4, 1.6, 0]);
+  let r = await rigOf(p, id);
+  ok(Math.abs(r.neck[1]) < 0.02, 'no eyeline: head straight ahead');
+  await p.evaluate(i => window.__shotref.setLookAt({ id: i }, 'camera'), id);
+  r = await rigOf(p, id);
+  const s1 = Math.sign(r.neck[1]);
+  ok(Math.abs(r.neck[1]) > 0.5 && Math.abs(r.spine[1]) > 0.2, 'looking at the camera to the side: neck ' + r.neck[1].toFixed(2) + ' spine ' + r.spine[1].toFixed(2));
+  await setCamPos(p, [-4, 1.6, 0]);
+  r = await rigOf(p, id);
+  ok(Math.sign(r.neck[1]) === -s1 && Math.abs(r.neck[1]) > 0.5, 'the camera moved to the other side, the head follows: ' + r.neck[1].toFixed(2));
+  await p.evaluate(a => window.__shotref.setLookAt({ id: a[0] }, a[1]), [id, other]);
+  await setCamPos(p, [4, 1.6, 0]);
+  r = await rigOf(p, id);
+  ok(Math.sign(r.neck[1]) === -s1 && Math.abs(r.neck[1]) > 0.5, 'looking at the woman at -x turns the same way as the camera at -x: ' + r.neck[1].toFixed(2));
+  /* the target moves: the head keeps following */
+  await p.evaluate(o => { const S = window.__shotref, q = S.state.objects.find(x => x.id === o); q.keys = [{ t: 0, p: [-3, 0, 0], r: [0, 0, 0], s: [1, 1, 1] }, { t: 2, p: [3, 0, 0], r: [0, 0, 0], s: [1, 1, 1] }]; S.changed(true, true); }, other);
+  const a = await rigAt(p, id, 0), b = await rigAt(p, id, 2);
+  ok(Math.sign(a.neck[1]) === -Math.sign(b.neck[1]) && Math.abs(a.neck[1]) > 0.5 && Math.abs(b.neck[1]) > 0.5, 'follows a moving target: ' + [a.neck[1], b.neck[1]].map(v => v.toFixed(2)));
+  /* a person behind them: eases back toward straight ahead instead of twisting the neck round */
+  await p.evaluate(o => { const q = window.__shotref.state.objects.find(x => x.id === o); q.keys = []; q.base.p = [0, 0, -4]; window.__shotref.changed(true, true); }, other);
+  r = await rigAt(p, id, 0);
+  ok(Math.abs(r.neck[1]) < 0.2, 'a target straight behind does not twist the neck: ' + r.neck[1].toFixed(2));
+  await p.evaluate(i => window.__shotref.setLookAt({ id: i }, null), id);
+  r = await rigAt(p, id, 0);
+  ok(Math.abs(r.neck[1]) < 0.02 && !(await objOf(p, id)).opts.lookAt, 'ahead again');
+  noErrors(p);
+});
+
+check('people: Eyeline panel, selection toolbar and right-click menu set where they look; undo names it', async ({ open }) => {
+  const p = await open(); await p.waitForTimeout(400);
+  const id = await idOfType(p, 'person'), xy = await starterXY(p);
+  await p.mouse.click(...xy.person); await p.waitForTimeout(250);
+  const opts = await p.evaluate(() => { const s = [...document.querySelectorAll('#props .sec')].find(x => x.querySelector('h3').textContent === 'Eyeline'); return s ? [...s.querySelectorAll('option')].map(o => o.textContent) : null; });
+  ok(opts && opts[0].startsWith('Ahead') && opts[1] === 'The camera' && opts.length >= 3, 'Eyeline options: ' + JSON.stringify(opts));
+  await p.selectOption('#props .sec:has(h3:text-is("Eyeline")) select', 'camera');
+  ok((await objOf(p, id)).opts.lookAt === 'camera', 'the panel sets look-at the camera');
+  await p.waitForTimeout(200);
+  ok(/eyeline/.test(await undoTitle(p)), 'undo names it: ' + await undoTitle(p));
+  ok((await p.getAttribute('#selBar [data-tip="Stop looking at the camera"]', 'class') || '').includes('on'), 'the toolbar eye is lit while looking at the camera');
+  await p.click('#selBar [data-tip="Stop looking at the camera"]');
+  ok(!(await objOf(p, id)).opts.lookAt, 'the toolbar toggles it off');
+  await p.click('#selBar [data-tip="Look at the camera"]');
+  ok((await objOf(p, id)).opts.lookAt === 'camera', 'and on');
+  await p.click('#selBar [data-tip="Stop looking at the camera"]');
+  await p.mouse.click(...xy.person, { button: 'right' }); await p.waitForTimeout(200);
+  let labels = await menuLabels(p);
+  ok(labels && labels.includes('Look at the camera'), 'menu: ' + JSON.stringify(labels));
+  await clickItem(p, 'Look at the camera');
+  ok((await objOf(p, id)).opts.lookAt === 'camera', 'the menu sets it');
+  await p.mouse.click(...xy.person, { button: 'right' }); await p.waitForTimeout(200);
+  ok((await menuLabels(p)).includes('Stop looking at the camera'), 'the menu then offers Stop');
+  await p.keyboard.press('Escape');
+  /* "<this> looks at <selected person>" */
+  await p.evaluate(() => window.__shotref.addPerson('woman', false, [-1.5, 0, 0]));
+  await p.waitForTimeout(250);
+  await p.evaluate(i => window.__shotref.select(i), id); await p.waitForTimeout(150);
+  const wxy = await p.evaluate(() => window.__shotref.project(-1.5, 0.9, 0));
+  await p.mouse.click(...wxy, { button: 'right' }); await p.waitForTimeout(200);
+  labels = await menuLabels(p);
+  ok(labels.some(l => /looks at/.test(l)), 'menu offers "looks at" the selected person: ' + JSON.stringify(labels));
+  noErrors(p);
+});
+
+check('people: dragging a person onto a chair sits them; dragging away stands them; undo works', async ({ open }) => {
+  const p = await open(); await p.waitForTimeout(300);
+  const id = await placeAt(p, 0, 0), chair = await addChair(p, 2, 2);
+  await p.waitForTimeout(300);
+  const from = await p.evaluate(() => window.__shotref.project(0, 0.9, 0)), to = await p.evaluate(() => window.__shotref.project(2, 0.9, 2.05));
+  await p.mouse.move(...from); await p.mouse.down();
+  await p.mouse.move((from[0] + to[0]) / 2, (from[1] + to[1]) / 2, { steps: 6 }); await p.mouse.move(...to, { steps: 8 });
+  ok(/Release to sit on Chair/.test(await p.textContent('#modeBar')), 'the bar says Release to sit: ' + await p.textContent('#modeBar'));
+  await p.mouse.up(); await p.waitForTimeout(300);
+  let o = await objOf(p, id);
+  ok(o.opts.seated === chair && o.opts.pose === 'sit' && o.opts.faceTravel === false, 'seated: ' + JSON.stringify(o.opts));
+  ok(Math.abs(o.base.p[0] - 2) < 0.01 && Math.abs(o.base.p[2] - 2.02) < 0.01 && o.base.p[1] === 0, 'sits on the seat spot: ' + o.base.p);
+  const sat = await rigOf(p, id);
+  ok(sat.lHip[0] < -1.2, 'hips are bent');
+  ok(/sit/.test(await undoTitle(p)), 'undo names it: ' + await undoTitle(p));
+  /* drag away: stands */
+  const from2 = await p.evaluate(() => window.__shotref.project(2, 0.7, 2.02)), away = await p.evaluate(() => window.__shotref.project(-1, 0.7, 3));
+  await p.mouse.move(...from2); await p.mouse.down(); await p.mouse.move((from2[0] + away[0]) / 2, (from2[1] + away[1]) / 2, { steps: 6 }); await p.mouse.move(...away, { steps: 8 }); await p.mouse.up(); await p.waitForTimeout(300);
+  o = await objOf(p, id);
+  ok(!o.opts.seated && o.opts.pose === 'stand' && o.base.p[1] === 0 && o.base.p[0] < 0.5, 'dragged away: stands up: ' + JSON.stringify([o.opts.seated, o.opts.pose, o.base.p]));
+  await p.keyboard.press('Control+z'); await p.waitForTimeout(250);
+  ok((await objOf(p, id)).opts.seated === chair, 'undo puts them back on the chair');
+  noErrors(p);
+});
+
+check('people: menu and toolbar Sit / Stand up; a sofa has three seats and the next person takes the next one', async ({ open }) => {
+  const p = await open(); await p.waitForTimeout(300);
+  const a = await placeAt(p, -3, 2), sofa = await addChair(p, 1, 0, 'sofa');
+  const b = await p.evaluate(() => window.__shotref.addPerson('woman', false, [-3, 0, 3]).id);
+  await p.waitForTimeout(300);
+  await p.evaluate(i => window.__shotref.select(i), a); await p.waitForTimeout(200);
+  ok(await p.isVisible('#selBar [data-tip="Sit on the nearest seat"]'), 'toolbar Sit offered');
+  await p.click('#selBar [data-tip="Sit on the nearest seat"]'); await p.waitForTimeout(300);
+  let oa = await objOf(p, a);
+  ok(oa.opts.seated === sofa && oa.opts.pose === 'sit', 'the toolbar sat them on the sofa');
+  ok(await p.isVisible('#selBar [data-tip="Stand up"]'), 'now it offers Stand up');
+  /* the menu on the sofa sits the selected person (the woman) in the next free seat */
+  await p.evaluate(i => window.__shotref.select(i), b); await p.waitForTimeout(150);
+  const sxy = await p.evaluate(() => window.__shotref.project(1, 0.3, -0.2));
+  await p.mouse.click(...sxy, { button: 'right' }); await p.waitForTimeout(200);
+  const labels = await menuLabels(p);
+  ok(labels.some(l => l.startsWith('Sit Woman')), 'menu has Sit <person> here: ' + JSON.stringify(labels));
+  await clickItem(p, 'Sit Woman'); await p.waitForTimeout(300);
+  const ob = await objOf(p, b); oa = await objOf(p, a);
+  ok(ob.opts.seated === sofa && Math.abs(ob.base.p[0] - oa.base.p[0]) > 0.4, 'a different seat on the sofa: ' + [oa.base.p[0], ob.base.p[0]]);
+  /* Stand up from the menu */
+  const bxy = await p.evaluate(q => window.__shotref.project(q[0], 0.7, q[1]), [ob.base.p[0], ob.base.p[2]]);
+  await p.mouse.click(...bxy, { button: 'right' }); await p.waitForTimeout(200);
+  ok((await menuLabels(p)).includes('Stand up'), 'a seated person has Stand up in the menu');
+  await clickItem(p, 'Stand up'); await p.waitForTimeout(250);
+  ok(!(await objOf(p, b)).opts.seated && (await objOf(p, b)).opts.pose === 'stand', 'stood up');
+  /* deleting the sofa clears the seat link */
+  await p.evaluate(i => { window.__shotref.select(i); }, sofa); await p.keyboard.press('Delete'); await p.waitForTimeout(250);
+  ok(!(await objOf(p, a)).opts.seated, 'deleting the sofa leaves nobody "seated" on it');
+  noErrors(p);
+});
+
+check('people: picking a pose at the playhead adds a blue action tag; drag retimes, right-click removes; blends over half a second', async ({ open }) => {
+  const p = await open(); await p.waitForTimeout(400);
+  const id = await idOfType(p, 'person'), xy = await starterXY(p);
+  await p.mouse.click(...xy.person); await p.waitForTimeout(250);
+  ok(await p.evaluate(() => /Pose for the whole shot/.test(document.querySelector('#props').textContent)), 'at 0 s the panel says Pose for the whole shot');
+  await p.evaluate(() => window.__shotref.setT(2)); await p.keyboard.press('ArrowRight'); await p.keyboard.press('ArrowLeft'); await p.waitForTimeout(250);
+  ok(/Pose from 2\.00 s/.test(await p.textContent('#props')), 'at 2 s the panel says Pose from 2.00 s: ' + (await p.textContent('#props')).slice(0, 200));
+  await p.click('#props .posegrid button:has-text("Wave")'); await p.waitForTimeout(300);
+  let o = await objOf(p, id);
+  ok(o.acts && o.acts.length === 1 && o.acts[0].pose === 'wave' && Math.abs(o.acts[0].t - 2) < 0.05 && o.opts.pose === 'stand', 'an action, not a new start pose: ' + JSON.stringify([o.acts, o.opts.pose]));
+  ok(/Actions over time/.test(await p.textContent('#props')), 'the Actions over time list shows');
+  const last = await p.evaluate(() => (window.__shotref.state.settings.duration * window.__shotref.state.settings.fps - 1) / window.__shotref.state.settings.fps);
+  const tag = await p.evaluate(() => { const t = document.querySelector('#tlRows .lane .act'); return t ? { text: t.textContent, left: parseFloat(t.style.left) } : null; });
+  ok(tag && tag.text === 'Wave' && Math.abs(tag.left - o.acts[0].t / last * 100) < 1, 'blue tag on the timeline: ' + JSON.stringify(tag));
+  /* the pose follows time, with a blend */
+  const before = await rigAt(p, id, 1.9), mid = await rigAt(p, id, o.acts[0].t + 0.2), full = await rigAt(p, id, 3);
+  const d = r => Math.abs(r.rSh[1] - before.rSh[1]) + Math.abs(r.rSh[2] - before.rSh[2]) + Math.abs(r.rSh[0] - before.rSh[0]);
+  ok(d(full) > 1 && d(mid) > 0.1 && d(mid) < d(full), 'blends: ' + [d(mid), d(full)].map(v => v.toFixed(2)));
+  /* drag the tag to 4 s */
+  const box = await p.evaluate(() => { const t = document.querySelector('#tlRows .lane .act').getBoundingClientRect(), l = document.querySelector('#tlRows .lane').getBoundingClientRect(); return { x: (t.left + t.right) / 2, y: (t.top + t.bottom) / 2, lx: l.left, w: l.width }; });
+  await p.mouse.move(box.x, box.y); await p.mouse.down(); await p.mouse.move(box.x + 30, box.y, { steps: 4 }); await p.mouse.move(box.lx + box.w * (4 / last), box.y, { steps: 6 }); await p.mouse.up(); await p.waitForTimeout(300);
+  o = await objOf(p, id);
+  ok(Math.abs(o.acts[0].t - 4) < 0.1, 'retimed to about 4 s: ' + o.acts[0].t);
+  ok(/pose change/.test(await undoTitle(p)), 'undo names it: ' + await undoTitle(p));
+  /* right-click removes */
+  await p.click('#tlRows .lane .act', { button: 'right' }); await p.waitForTimeout(250);
+  o = await objOf(p, id);
+  ok(!o.acts, 'right-click removed the tag, and acts is gone when empty');
+  ok(await p.evaluate(() => !document.querySelector('#tlRows .lane .act')), 'tag gone');
+  noErrors(p);
+});
+
+check('people: sitting as an action goes to the nearest seat; list edits, One pose for the whole shot, frame-rate change re-snaps', async ({ open }) => {
+  const p = await open(); await p.waitForTimeout(300);
+  await goAdvanced(p); /* the FPS box is an Advanced control */
+  const id = await placeAt(p, 0.4, 0.2); await addChair(p, 1, 0.2);
+  await p.evaluate(i => window.__shotref.select(i), id); await p.waitForTimeout(250);
+  await p.evaluate(() => { window.__shotref.setT(2); }); await p.keyboard.press('ArrowRight'); await p.keyboard.press('ArrowLeft'); await p.waitForTimeout(200);
+  await p.click('#props .posegrid button:has-text("Sit")'); await p.waitForTimeout(250);
+  let o = await objOf(p, id);
+  ok(o.acts && o.acts[0].pose === 'sit' && o.acts[0].at && Math.abs(o.acts[0].at.p[0] - 1) < 0.01, 'sit action has the seat: ' + JSON.stringify(o.acts));
+  const r1 = await rigAt(p, id, 1), r4 = await rigAt(p, id, 4);
+  ok(Math.abs(r1.group.p[0] - 0.4) < 0.01 && Math.abs(r4.group.p[0] - 1) < 0.01, 'moves onto the chair by the action: ' + [r1.group.p[0], r4.group.p[0]]);
+  /* edit from the list */
+  await p.selectOption('#props .actrow select', 'wave'); await p.waitForTimeout(200);
+  o = await objOf(p, id);
+  ok(o.acts[0].pose === 'wave' && !o.acts[0].at, 'changing the action drops the seat');
+  await p.click('#props button:has-text("One pose for the whole shot")'); await p.waitForTimeout(200);
+  o = await objOf(p, id);
+  ok(!o.acts && o.opts.pose === 'wave', 'collapsed into one pose: ' + JSON.stringify([o.acts, o.opts.pose]));
+  /* frame rate change keeps the tag on a whole frame */
+  await p.evaluate(() => { const S = window.__shotref; S.state.objects.find(x => x.type === 'person').acts = [{ t: 1.0, pose: 'point' }]; S.changed(true, true); });
+  await p.selectOption('#inFps', '30'); await p.waitForTimeout(250);
+  const t = (await objOf(p, id)).acts[0].t;
+  ok(Math.abs(t * 30 - Math.round(t * 30)) < 1e-6 && Math.abs(t - 1) < 0.05, 'act time sits on a 30 fps frame: ' + t);
+  noErrors(p);
+});
+
+check('people: Face the camera turns them and stops the path steering them (menu)', async ({ open }) => {
+  const p = await open(); await p.waitForTimeout(400);
+  const id = await placeAt(p, 0, 0); await setCamPos(p, [5, 1.6, 0]);
+  ok((await objOf(p, id)).opts.faceTravel === true, 'starts with face-the-travel on');
+  await p.waitForTimeout(300);
+  const xy = await starterXY(p);
+  await p.mouse.click(...xy.person, { button: 'right' }); await p.waitForTimeout(200);
+  await clickItem(p, 'Face the camera'); await p.waitForTimeout(200);
+  const o = await objOf(p, id);
+  ok(Math.abs(o.base.r[1] - 90) < 1 && o.opts.faceTravel === false, 'faces +x, travel-steering off: ' + JSON.stringify([o.base.r, o.opts.faceTravel]));
+  const r = await rigOf(p, id);
+  ok(Math.abs(r.group.yaw - Math.PI / 2) < 0.02, 'and it shows');
+  noErrors(p);
+});
+
+check('people: feet stay on the floor while walking, looking and changing pose (looking never moves the soles)', async ({ open }) => {
+  const p = await open(); await p.waitForTimeout(300);
+  const id = await placeAt(p, 0, 0);
+  await p.evaluate(i => { const S = window.__shotref, o = S.state.objects.find(x => x.id === i); o.opts.pose = 'walk'; o.keys = [{ t: 0, p: [-2, 0, 0], r: [0, 90, 0], s: [1, 1, 1] }, { t: 3, p: [3, 0, 0], r: [0, 90, 0], s: [1, 1, 1] }]; o.acts = [{ t: 3.2, pose: 'wave' }]; S.changed(true, true); }, id);
+  const soles = async t => p.evaluate(a => { const S = window.__shotref; S.setT(a[1]); S.applyAll(a[1]); return S.soles(a[0]); }, [id, t]);
+  const times = [0, 0.4, 0.8, 1.2, 1.6, 2.0, 2.4, 2.8, 3.4];
+  const off = []; for (const t of times) off.push(await soles(t));
+  await p.evaluate(i => window.__shotref.setLookAt({ id: i }, 'camera'), id);
+  for (let k = 0; k < times.length; k++) {
+    const on = await soles(times[k]);
+    on.forEach((s, j) => ok(Math.hypot(s[0] - off[k][j][0], s[1] - off[k][j][1], s[2] - off[k][j][2]) < 1e-4, 'looking moved a foot at ' + times[k] + ' s'));
+    const low = Math.min(...on.map(s => s[1]));
+    ok(low > -0.005 && low < 0.005, 'the lowest foot is on the floor at ' + times[k] + ' s: ' + low);
+  }
+  /* the stride still follows the distance walked: one cycle of the walk pose per 1.45 m, so the front foot lands again every cycle */
+  const land = async t0 => { let best = 1e9, at = t0; for (let t = t0; t < t0 + 1.2; t += 0.01) { const s = await soles(t); const y = Math.min(s[0][1], s[1][1]); if (y < best) { best = y; at = t; } } return at; };
+  const a1 = await land(0.5), a2 = await land(a1 + 0.3);
+  ok(a2 > a1, 'a foot lands again later');
+  noErrors(p);
+});
+
+check('people: exports and PNG frames show the changed poses and the eyeline', async ({ open, downloads }) => {
+  const p = await open(); await p.waitForTimeout(300);
+  const id = await placeAt(p, 0, 0); await setCamPos(p, [4, 1.6, 0]);
+  await p.evaluate(i => { const S = window.__shotref, o = S.state.objects.find(x => x.id === i); o.acts = [{ t: 2, pose: 'wave' }]; o.opts.lookAt = 'camera'; S.state.settings.size = 640; S.changed(true, true); }, id);
+  await p.evaluate(() => {
+    window.__cap = []; const orig = HTMLCanvasElement.prototype.toBlob;
+    HTMLCanvasElement.prototype.toBlob = function (cb, ...r) { const S = window.__shotref, o = S.state.objects.find(x => x.type === 'person'); window.__cap.push(S.rig(o.id)); return orig.call(this, cb, ...r); };
+  });
+  await p.evaluate(() => window.__shotref.exportPNG(0.5)); await downloads(p).wait('.png');
+  await p.evaluate(() => window.__shotref.exportPNG(3.5)); await p.waitForTimeout(800);
+  const cap = await p.evaluate(() => window.__cap);
+  ok(cap.length >= 2, 'captured two frames: ' + cap.length);
+  const d = Math.abs(cap[1].rSh[0] - cap[0].rSh[0]) + Math.abs(cap[1].rSh[1] - cap[0].rSh[1]) + Math.abs(cap[1].rSh[2] - cap[0].rSh[2]);
+  ok(d > 1, 'the exported frame at 3.5 s has the wave pose: ' + d.toFixed(2));
+  ok(Math.abs(cap[0].neck[1]) > 0.5 && Math.abs(cap[1].neck[1]) > 0.5, 'and the eyeline: ' + [cap[0].neck[1], cap[1].neck[1]].map(v => v.toFixed(2)));
   noErrors(p);
 });
 

@@ -120,6 +120,11 @@ const DEFAULT_SETTINGS = {
 /* shape icons (24x24 line art) */
 const IC = {
   person: '<circle cx="12" cy="4.5" r="2.3"/><path d="M12 7.5v7M8 10l4-1.5 4 1.5M12 14.5l-3 6.5M12 14.5l3 6.5"/>',
+  woman: '<circle cx="12" cy="4.5" r="2.3"/><path d="M12 7.5l-4 8h8zM9.5 15.5L9 21M14.5 15.5l.5 5.5M8.5 10L7 13M15.5 10l1.5 3"/>',
+  child: '<circle cx="12" cy="9" r="2.6"/><path d="M12 11.6v4.4M9 13.2l3-1 3 1M12 16l-2.4 4.5M12 16l2.4 4.5"/>',
+  eye: '<path d="M2.5 12S6 6 12 6s9.5 6 9.5 6-3.5 6-9.5 6S2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.6"/>',
+  sit: '<circle cx="8" cy="4.5" r="2.2"/><path d="M8 7.2V14h8M16 14v6M8 14v6M6 10.5l2-1.2"/>',
+  stand: '<circle cx="12" cy="4.5" r="2.3"/><path d="M12 7.5v8M8.5 10.5L12 9l3.5 1.5M12 15.5V21M12 15.5V21M9 21h6M12 3v-1.5M10.5 3l-1-1.2M13.5 3l1-1.2"/>',
   box: '<path d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path d="M4 8l8 4 8-4M12 12v8"/>',
   sphere: '<circle cx="12" cy="12" r="8"/><ellipse cx="12" cy="12" rx="8" ry="3"/>',
   cylinder: '<ellipse cx="12" cy="6" rx="7" ry="2.5"/><path d="M5 6v12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5V6"/>',
@@ -157,6 +162,18 @@ const svgI = k => `<svg viewBox="0 0 24 24">${IC[k] || IC.box}</svg>`;
 
 /* entry for a type; an unknown type (from a newer or edited file) gets a plain fallback */
 const catalogOf = type => CATALOG[type] || { label: String(type || 'Object'), cat: 'Shapes', color: '#d6d0c4' };
+/* body types: starting height and colours (the Add tiles and the Look buttons), and the mannequin proportions */
+const BODIES = {
+  man: { label: 'Man', height: 1.78, color: '#3d6fd8', pants: '#2d3340', hair: '#2a1d14', skin: '#c98e6b' },
+  woman: { label: 'Woman', height: 1.66, color: '#c4566c', pants: '#3e5f8f', hair: '#3a2418', skin: '#d2a07c' },
+  child: { label: 'Child', height: 1.2, color: '#e0a030', pants: '#3b6ea5', hair: '#5a3a22', skin: '#d8a882' },
+};
+const BODY_SHAPE = {
+  man: { sh: 0.118, tsx: 1.32, hip: 0.062, pel: 1, head: 1, hairLong: false },
+  woman: { sh: 0.106, tsx: 1.18, hip: 0.066, pel: 1.12, head: 1.02, hairLong: true },
+  child: { sh: 0.112, tsx: 1.28, hip: 0.06, pel: 1, head: 1.32, hairLong: false },
+};
+const bodyOf = o => BODIES[o.opts && o.opts.body] ? o.opts.body : 'man';
 const CATALOG = {
   person: { label: 'Person', cat: 'People', color: '#3d6fd8', opts: { pose: 'stand', height: 1.75, skin: '#c98e6b', pants: '#2d3340', hair: '#2a1d14', speed: 1, faceTravel: true } },
   box: { label: 'Box', cat: 'Shapes', color: '#d6d0c4' },
@@ -813,20 +830,22 @@ function buildPerson(o) {
   const skin = M(o.opts.skin || '#c98e6b', { r: 0.6 }), shirt = M(o.color, { r: 0.85 }), pants = M(o.opts.pants || '#2d3340', { r: 0.9 }), shoe = M('#1d1d1f', { r: 0.6 }), hair = M(o.opts.hair || '#2a1d14', { r: 0.9 });
   const cap = (r, len, mat) => new THREE.Mesh(new THREE.CapsuleGeometry(r, Math.max(0.001, len), 6, 16), mat);
   const J = (parent, x, y, z) => { const j = new THREE.Group(); j.position.set(x, y, z); parent.add(j); return j; };
+  const B = BODY_SHAPE[bodyOf(o)];
   const root = new THREE.Group();
   const pelvis = J(root, 0, 0.52 * H, 0);
-  const pm = cap(0.068 * H, 0.08 * H, pants); pm.rotation.z = Math.PI / 2; pm.position.y = 0.0; pm.scale.set(1, 1, 0.85); pelvis.add(pm);
+  const pm = cap(0.068 * H, 0.08 * H, pants); pm.rotation.z = Math.PI / 2; pm.position.y = 0.0; pm.scale.set(1, B.pel, 0.85 * B.pel); pelvis.add(pm);
   const spine = J(pelvis, 0, 0.03 * H, 0);
-  const tor = cap(0.08 * H, 0.15 * H, shirt); tor.position.y = 0.145 * H; tor.scale.set(1.32, 1, 0.72); spine.add(tor);
+  const tor = cap(0.08 * H, 0.15 * H, shirt); tor.position.y = 0.145 * H; tor.scale.set(B.tsx, 1, 0.72); spine.add(tor);
   const neck = J(spine, 0, 0.29 * H, 0);
   const nm = new THREE.Mesh(new THREE.CylinderGeometry(0.024 * H, 0.028 * H, 0.06 * H, 12), skin); nm.position.y = 0.02 * H; neck.add(nm);
-  const head = J(neck, 0, 0.085 * H, 0);
+  const head = J(neck, 0, 0.085 * H * (0.6 + 0.4 * B.head), 0); head.scale.setScalar(B.head);
   const hm = new THREE.Mesh(new THREE.SphereGeometry(0.062 * H, 24, 18), skin); hm.scale.set(0.92, 1.12, 1); head.add(hm);
   const hr = new THREE.Mesh(new THREE.SphereGeometry(0.066 * H, 24, 12, 0, Math.PI * 2, 0, Math.PI * 0.52), hair); hr.rotation.x = -0.45; hr.position.set(0, 0.008 * H, -0.006 * H); hr.scale.set(0.95, 1.1, 1.02); head.add(hr);
+  if (B.hairLong) { const tail = cap(0.05 * H, 0.1 * H, hair); tail.position.set(0, -0.055 * H, -0.03 * H); tail.scale.set(1.75, 1, 0.75); head.add(tail); }
   const nose = new THREE.Mesh(new THREE.ConeGeometry(0.012 * H, 0.03 * H, 8), skin); nose.rotation.x = Math.PI / 2; nose.position.set(0, -0.004 * H, 0.062 * H); head.add(nose);
   const Lu = 0.165 * H, Lf = 0.15 * H, Lt = 0.245 * H, Ls = 0.245 * H;
   const arm = side => {
-    const sh = J(spine, side * 0.118 * H, 0.255 * H, 0);
+    const sh = J(spine, side * B.sh * H, 0.255 * H, 0);
     const u = cap(0.031 * H, Lu - 0.04 * H, shirt); u.position.y = -Lu / 2; sh.add(u);
     const el = J(sh, 0, -Lu, 0);
     const f = cap(0.026 * H, Lf - 0.03 * H, skin); f.position.y = -Lf / 2; el.add(f);
@@ -834,7 +853,7 @@ function buildPerson(o) {
     return [sh, el];
   };
   const leg = side => {
-    const hp = J(pelvis, side * 0.062 * H, -0.01 * H, 0);
+    const hp = J(pelvis, side * B.hip * H, -0.01 * H, 0);
     const t = cap(0.046 * H, Lt - 0.05 * H, pants); t.position.y = -Lt / 2; hp.add(t);
     const kn = J(hp, 0, -Lt, 0);
     const s = cap(0.037 * H, Ls - 0.04 * H, pants); s.position.y = -Ls / 2; kn.add(s);
@@ -912,8 +931,34 @@ function personMotion(o, t) {
   res.dist = d;
   return res;
 }
-function posePerson(P, o, t, info) {
-  const def = POSES[o.opts.pose] || POSES.stand;
+/* ---- pose changes over time: o.acts = [{t, pose, at?}] sorted by time; o.opts.pose is the starting pose ---- */
+const ACT_BLEND = 0.45; /* seconds a change of pose takes to blend */
+const actList = o => (o.acts && o.acts.length ? o.acts : null);
+/* which pose is current at time t, the one before it, and how far the blend between them has got (0..1) */
+function actLayer(o, t) {
+  const base = { pose: o.opts.pose || 'stand', t: -1e9 }, list = actList(o);
+  if (!list) return { cur: base, prev: null, w: 1 };
+  let i = -1;
+  for (let k = 0; k < list.length; k++) if (list[k].t <= t + 1e-6) i = k;
+  if (i < 0) return { cur: base, prev: null, w: 1 };
+  const u = clamp((t - list[i].t) / ACT_BLEND, 0, 1);
+  return { cur: list[i], prev: i > 0 ? list[i - 1] : base, w: u * u * (3 - 2 * u) };
+}
+const poseAt = (o, t) => actLayer(o, t).cur.pose;
+const poseLabel = k => (POSES[k] || {}).label || k;
+function setActs(o, list) { o.acts = list.sort((a, b) => a.t - b.t); if (!o.acts.length) delete o.acts; }
+/* where a person stands at time t once seat changes are blended in (own path plus the act that moved them to a seat) */
+function actPlace(o, tr, lay) {
+  const to = lay.cur.at || null, from = lay.prev && lay.prev.at || null;
+  if (!to && !from) return tr;
+  const src = from || { p: tr.p, yaw: tr.r[1] }, dst = to || { p: tr.p, yaw: tr.r[1] };
+  const turn = (a, b) => { while (b - a > 180) b -= 360; while (b - a < -180) b += 360; return b; };
+  const out = { p: tr.p.slice(), r: tr.r.slice(), s: tr.s };
+  out.p = src.p.map((v, i) => lerp(v, dst.p[i], lay.w)); out.r[1] = lerp(src.yaw, turn(src.yaw, dst.yaw), lay.w);
+  return out;
+}
+/* the joint angles for one pose at one moment */
+function poseValues(def, P, o, t, info) {
   let ph, w = 1;
   if (def.loco && info.moving) {
     ph = info.dist / (def.stride * P.H / 1.75) * Math.PI * 2;
@@ -921,6 +966,23 @@ function posePerson(P, o, t, info) {
   } else ph = t * (def.cadence || 1) * (o.opts.speed || 1) * Math.PI * 2;
   let a = fullPose(def.f(ph));
   if (w < 1) a = mixPose(fullPose({}), a, w);
+  return a;
+}
+/* ---- eyeline: where a person looks (o.opts.lookAt = 'camera' | another object's id) ---- */
+const _lookV = new THREE.Vector3();
+function lookPoint(o, t, camPos) {
+  const id = o.opts.lookAt; if (!id) return null;
+  if (id === 'camera') return _lookV.fromArray(camPos || camState.p);
+  const s = getObj(id); if (!s || s === o) return null;
+  const tr = evalObj(s, t);
+  if (s.type === 'person') return _lookV.set(tr.p[0], tr.p[1] + (s.opts.height || 1.75) * tr.s[1] * (poseAt(s, t) === 'sit' ? 0.66 : 0.93), tr.p[2]);
+  const v = views.get(s.id);
+  return _lookV.set(tr.p[0], tr.p[1] + (v && v.aimY != null ? v.aimY : 0.5) * tr.s[1], tr.p[2]);
+}
+function posePerson(P, o, t, info, camPos) {
+  const lay = actLayer(o, t);
+  let a = poseValues(POSES[lay.cur.pose] || POSES.stand, P, o, t, info);
+  if (lay.prev && lay.w < 1) a = mixPose(poseValues(POSES[lay.prev.pose] || POSES.stand, P, o, t, info), a, lay.w);
   const R = (j, x, y, z) => j.rotation.set(x * D2R, y * D2R, z * D2R);
   R(P.spine, a.spine[0], a.spine[1] || 0, a.spine[2] || 0);
   R(P.neck, a.neck[0], a.neck[1] || 0, a.neck[2] || 0);
@@ -940,6 +1002,20 @@ function posePerson(P, o, t, info) {
   let minY = Infinity;
   for (const s of P.soles) { _v.setFromMatrixPosition(s.matrixWorld).applyMatrix4(_m); minY = Math.min(minY, _v.y); }
   if (isFinite(minY)) P.pelvis.position.y -= minY;
+  /* the head and upper body turn toward whatever they look at (after the feet are planted, so nothing slides) */
+  const tgt = lookPoint(o, t, camPos);
+  if (tgt) {
+    P.root.updateWorldMatrix(true, true);
+    _m.copy(P.root.matrixWorld).invert();
+    const np = P.neck.getWorldPosition(new THREE.Vector3()).applyMatrix4(_m);
+    const d = tgt.applyMatrix4(_m).sub(np);
+    const yaw = Math.atan2(d.x, d.z) * R2D, pitch = Math.atan2(d.y, Math.hypot(d.x, d.z)) * R2D;
+    const away = Math.abs(yaw) > 110 ? clamp((175 - Math.abs(yaw)) / 65, 0, 1) : 1; /* behind them: ease back to straight ahead */
+    const gy = clamp(yaw, -85, 85) * away, gp = clamp(pitch, -38, 32) * away;
+    P.neck.rotation.y = lerp(P.neck.rotation.y, gy * 0.62 * D2R, away);
+    P.neck.rotation.x = lerp(P.neck.rotation.x, -gp * 0.8 * D2R, away);
+    P.spine.rotation.y += gy * 0.3 * D2R; P.head.rotation.x = -gp * 0.2 * D2R;
+  } else P.head.rotation.x = 0;
 }
 
 /* ============================== scene sync ============================== */
@@ -962,7 +1038,7 @@ function syncScene() {
   for (const [id, v] of views) if (!ids.has(id)) { scene.remove(v.group); disposeTree(v.group); views.delete(id); }
   for (const o of state.objects) {
     let v = views.get(o.id);
-    const sig = JSON.stringify([o.type, o.color, o.opts.height, o.opts.skin, o.opts.pants, o.opts.hair, o.opts.unlit, o.opts.aspect, o.asset, !!(o.asset && assets[o.asset]), o.opts.letter]);
+    const sig = JSON.stringify([o.type, o.color, o.opts.height, o.opts.skin, o.opts.pants, o.opts.hair, o.opts.unlit, o.opts.aspect, o.asset, !!(o.asset && assets[o.asset]), o.opts.letter, o.opts.body]);
     if (!v) { const g = new THREE.Group(); g.userData.objId = o.id; g.rotation.order = 'YXZ'; scene.add(g); v = { group: g, sig: null }; views.set(o.id, v); }
     if (v.sig !== sig) {
       for (const c of [...v.group.children]) { v.group.remove(c); disposeTree(c); }
@@ -978,19 +1054,21 @@ function syncScene() {
 let camState = evalCam(0);
 let pilotActive = false;
 function applyAll(t) {
+  const c = evalCam(t), camPos = pilotActive ? shotCam.position.toArray() : c.p; /* where people who look at the camera look */
   for (const o of state.objects) {
     const v = views.get(o.id); if (!v) continue;
-    const tr = evalObj(o, t), g = v.group;
+    let tr = evalObj(o, t);
+    const g = v.group, lay = v.person && actList(o) ? actLayer(o, t) : null;
+    if (lay) tr = actPlace(o, tr, lay); /* a seat chosen by a pose change moves them there */
     g.position.fromArray(tr.p);
     g.rotation.set(tr.r[0] * D2R, tr.r[1] * D2R, tr.r[2] * D2R, 'YXZ');
     g.scale.fromArray(tr.s);
     if (v.person || o.opts.faceTravel) {
       const info = personMotion(o, t);
-      if (info.yaw != null) g.rotation.y = info.yaw;
-      if (v.person) posePerson(v.person, o, t, info);
+      if (info.yaw != null && !(lay && (lay.cur.at || lay.prev && lay.prev.at))) g.rotation.y = info.yaw;
+      if (v.person) posePerson(v.person, o, t, info, camPos);
     }
   }
-  const c = evalCam(t);
   if (!pilotActive) {
     shotCam.position.fromArray(c.p); shotCam.up.set(0, 1, 0); shotCam.lookAt(c.tg[0], c.tg[1], c.tg[2]);
     camControls.target.fromArray(c.tg);
@@ -1144,7 +1222,13 @@ function selBarButtons(list) {
   if (list.length > 1) { const whole = isGroupSel(list); out.push(btn('group', whole ? 'Ungroup (Ctrl Shift G)' : 'Group (Ctrl G)', whole ? ungroupSel : groupSel)); }
   else {
     const o = list[0];
-    if (o.type === 'person') out.push(btn('path', 'Draw walk path', () => startPath(o.id)), btn('frame', 'Frame with the camera (medium shot)', () => frameShot('medium', o.id)));
+    if (o.type === 'person') {
+      const eyeOn = o.opts.lookAt === 'camera';
+      out.push(btn('path', 'Draw walk path', () => startPath(o.id)), btn('frame', 'Frame with the camera (medium shot)', () => frameShot('medium', o.id)),
+        btn('eye', eyeOn ? 'Stop looking at the camera' : 'Look at the camera', () => setLookAt(o, eyeOn ? null : 'camera'), eyeOn ? 'on' : ''));
+      if (isSeated(o)) out.push(btn('stand', 'Stand up', () => standPerson(o)));
+      else if (nearestSeatFor(o)) out.push(btn('sit', 'Sit on the nearest seat', () => { const s = nearestSeatFor(o); if (s) sitPerson(o, freeSeat(s.o, o)); }));
+    }
     else if (o.type !== 'mark') out.push(btn('path', o.type === 'car' ? 'Draw drive path' : 'Draw path', () => startPath(o.id)), btn('target', 'Keep the camera on this', () => keepCameraOn(o)));
     out.push(sep());
   }
@@ -1155,7 +1239,7 @@ function updateSelBar() {
   const bar = $('#selBar'), list = selObjs();
   const hide = () => putStyle(bar, 'display', 'none');
   if (!list.length || view === 'camera' || playing || dragActive || placing || pathMode || focusPick || rec || gizmo.dragging || getPref('selBar', true) === false || list.some(o => { const v = views.get(o.id); return !v || !v.group.visible; })) return hide();
-  const key = list.map(o => o.id + (o.locked ? 'L' : '') + (o.grp || '')).join(',');
+  const key = list.map(o => o.id + (o.locked ? 'L' : '') + (o.grp || '') + (o.opts.lookAt === 'camera' ? 'E' : '') + (isSeated(o) ? 'S' : '') + (list.length === 1 && o.type === 'person' && !isSeated(o) && nearestSeatFor(o) ? 'N' : '')).join(',');
   if (key !== selBarKey) { selBarKey = key; bar.innerHTML = ''; bar.append(...selBarButtons(list)); }
   _sbBox.makeEmpty(); for (const o of list) _sbBox.expandByObject(views.get(o.id).group);
   if (_sbBox.isEmpty()) return hide();
@@ -1507,17 +1591,26 @@ function groundPointInView() {
   return [Math.round(p.x * 4) / 4, 0, Math.round(p.z * 4) / 4];
 }
 const SHIRTS = ['#3d6fd8', '#c0392b', '#2e8b57', '#d4a017', '#7d3c98', '#e67e22', '#16a085', '#555b66'];
-function addObject(type, extra, place = false, at = null) {
+function addObject(type, extra, place = false, at = null, init = null) {
   if (placing) commitPlacing();
   if (pathMode) cancelPath();
   const o = makeObject(type, at || groundPointInView(), extra);
   if (type === 'person') o.color = SHIRTS[persons().length % SHIRTS.length];
+  if (init) init(o);
   if (type === 'mark') { o.opts.letter = nextMarkLetter(); o.name = 'Mark ' + o.opts.letter; }
   state.objects.push(o); syncScene(); select(o.id);
   if (place) { changed(false, true); startPlacing(o.id); } else { changed(true, true); toast(o.name + ' added'); }
   return o;
 }
 const SIMPLE_SHAPES = ['box', 'wall', 'plane', 'stairs', 'cylinder']; /* the shapes Simple mode lists; "More shapes" shows the rest */
+/* a man, woman or child: their own height and colours, and (after the first of a kind) a different top */
+function addPerson(body, place = true, at = null) {
+  const b = BODIES[body] || BODIES.man, key = BODIES[body] ? body : 'man', n = persons().filter(q => bodyOf(q) === key).length;
+  return addObject('person', null, place, at, o => {
+    Object.assign(o.opts, { body: key, height: b.height, pants: b.pants, hair: b.hair, skin: b.skin });
+    o.color = n ? SHIRTS[(n + 2) % SHIRTS.length] : b.color; o.name = nextName(b.label);
+  });
+}
 /* the Add | Scene tabs on the left; the last one is remembered */
 function setLeftTab(t, save = true) {
   if (t !== 'scene') t = 'add';
@@ -1530,7 +1623,7 @@ function buildAddPanel() {
   const cats = { People: [], Shapes: [], Props: [], Import: [], Blocking: [] };
   for (const [k, c] of Object.entries(CATALOG)) cats[c.cat].push(k);
   area.append(h('div', { class: 'addgrid' },
-    h('button', { class: 'tile big', title: 'Add a person, then click where they stand', onclick: () => addObject('person', null, true) }, h('span', { html: svgI('person') }), 'Add person'),
+    ...Object.entries(BODIES).map(([k, b]) => h('button', { class: 'tile', 'data-body': k, title: 'Add a ' + b.label.toLowerCase() + ', then click where they stand', onclick: () => addPerson(k) }, h('span', { html: svgI(k === 'man' ? 'person' : k) }), b.label)),
     h('button', { class: 'tile big', title: 'Floor mark (like tape on set). Not visible in the shot.', onclick: () => addObject('mark', null, true) }, h('span', { html: svgI('mark') }), 'Add floor mark')));
   for (const cat of ['Props', 'Shapes']) {
     const fewer = cat === 'Shapes' && simple && !getPref('moreShapes', false);
@@ -1546,7 +1639,7 @@ function buildAddPanel() {
     h('button', { class: 'tile', title: 'Import a 3D model (.glb)', onclick: () => pickImport('#fModel', importModel, MODEL_FILTER) }, h('span', { html: svgI('model') }), 'Model .glb'),
   ));
 }
-function iconFor(o) { return svgI(o.type); }
+function iconFor(o) { return svgI(o.type === 'person' ? (bodyOf(o) === 'man' ? 'person' : bodyOf(o)) : o.type); }
 /* Shift/Ctrl-click toggles a row in the selection; Alt-click picks one inside a group */
 const rowClick = id => e => select(id, id === 'camera' ? undefined : e.shiftKey || e.ctrlKey || e.metaKey ? 'toggle' : e.altKey ? 'single' : undefined);
 function renderOutliner() {
@@ -1851,7 +1944,7 @@ function propsObject(p, o) {
   const name = h('input', { type: 'text', value: o.name, class: 'grow' });
   name.addEventListener('change', () => { o.name = name.value.trim() || o.name; changed(true, true); });
   name.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') name.blur(); });
-  p.append(sec(catalogOf(o.type).label, h('div', { class: 'row' }, h('label', null, 'Name'), name),
+  p.append(sec(o.type === 'person' ? BODIES[bodyOf(o)].label : catalogOf(o.type).label, h('div', { class: 'row' }, h('label', null, 'Name'), name),
     o.locked ? h('div', { class: 'lockline' }, h('span', { html: svgI('lock') }), 'Locked: it will not move when dragged. ', h('button', { onclick: () => lockObjs([o], false) }, 'Unlock')) : null,
     o.grp ? h('div', { class: 'note' }, 'Part of ' + groupName(o.grp) + '. ', h('a', { href: '#', onclick: e => { e.preventDefault(); select(o.id); } }, 'Select the whole group')) : null));
   const rebuild = (cm = true) => { syncScene(); updateGizmo(); changed(cm); };
@@ -1867,11 +1960,25 @@ function propsObject(p, o) {
     return;
   }
   if (o.type === 'person') {
-    const pg = h('div', { class: 'posegrid' }, Object.entries(POSES).map(([k, d]) => h('button', { class: o.opts.pose === k ? 'on' : '', onclick: () => { o.opts.pose = k; changed(true, true); } }, d.label, d.anim ? h('i', null, d.loco ? 'moves' : 'animated') : null)));
-    const def = POSES[o.opts.pose] || POSES.stand;
-    p.append(sec('Pose', pg,
+    const cur = poseAt(o, T), atStart = snapT(T) < 0.5 / state.settings.fps;
+    const pg = h('div', { class: 'posegrid' }, Object.entries(POSES).map(([k, d]) => h('button', { class: cur === k ? 'on' : '', onclick: () => setPoseAt(o, k, T) }, d.label, d.anim ? h('i', null, d.loco ? 'moves' : 'animated') : null)));
+    const def = POSES[cur] || POSES.stand;
+    p.append(sec('Pose', h('div', { class: 'keyline' }, h('span', { class: 'kdia', style: 'color:#6fc3ea' }, '●'), atStart ? (o.acts ? 'Starting pose (at 0 s)' : 'Pose for the whole shot') : 'Pose from ' + snapT(T).toFixed(2) + ' s'), pg,
       def.anim && !(def.loco && o.keys.length > 1) ? slider('Action speed', () => o.opts.speed || 1, (v, cm) => { o.opts.speed = v; changed(cm); }, { min: 0.2, max: 3, step: 0.05, fmt: v => v.toFixed(2) + '×' }) : null,
-      def.loco ? h('p', { class: 'note' }, o.keys.length > 1 ? 'Steps match the distance walked, so the feet do not slide.' : 'Walking on the spot. Draw a path below to make them travel.') : null));
+      h('p', { class: 'note' }, 'Pick a pose at the playhead. At 0 s it is the starting pose; later in the shot it becomes a change of action (shown on the timeline), so they can walk in, stop, sit, then wave.'),
+      def.loco ? h('p', { class: 'note' }, o.keys.length > 1 ? 'Steps match the distance walked, so the feet do not slide.' : 'Walking on the spot. Draw a path below to make them travel.') : null,
+      isSeated(o) ? h('div', { class: 'btns' }, h('button', { onclick: () => standPerson(o) }, h('span', { html: svgI('stand'), class: 'bi' }), 'Stand up'), h('span', { class: 'note', style: 'margin:0 0 0 6px;align-self:center' }, 'Sitting on ' + ((getObj(o.opts.seated) || {}).name || 'a seat') + '. Drag them away to stand.')) : null));
+    if (o.acts) {
+      const rows = o.acts.map(a => {
+        const s = h('select', null, Object.entries(POSES).map(([k, d]) => h('option', { value: k }, d.label)));
+        s.value = a.pose; s.onchange = () => { a.pose = s.value; if (a.pose !== 'sit') delete a.at; changed(true, true); };
+        return h('div', { class: 'actrow' }, h('span', { class: 't', title: 'Go to this moment', onclick: () => setTime(a.t) }, a.t.toFixed(2) + ' s'), s, a.at ? h('span', { title: 'Sits on the nearest seat', style: 'color:#6fc3ea' }, '⌂') : null,
+          h('button', { title: 'Remove this action', 'aria-label': 'Remove this action', onclick: () => removeAct(o, a) }, '×'));
+      });
+      p.append(sec('Actions over time', h('div', { class: 'actrow' }, h('span', { class: 't' }, '0.00 s'), h('span', { style: 'flex:1;color:#c9cdd3' }, poseLabel(o.opts.pose || 'stand')), h('span', { class: 'note', style: 'margin:0' }, 'start')), ...rows,
+        h('div', { class: 'btns', style: 'margin-top:6px' }, h('button', { onclick: () => { const cp = poseAt(o, T); delete o.acts; o.opts.pose = cp; changed(true, true); } }, 'One pose for the whole shot')),
+        h('p', { class: 'note' }, 'Drag the blue tags on the timeline to retime them. Right-click a tag to remove it. Changes blend over about half a second.')));
+    }
   }
   // ---- movement
   const who = o.type === 'person' ? 'walk ' : '';
@@ -1895,10 +2002,19 @@ function propsObject(p, o) {
   moveKids.push(h('div', { class: 'row' }, h('button', { onclick: () => faceToward(o, camState.p, 'the camera') }, 'Face camera'), fsel));
   if (o.keys.length > 1 || o.type === 'person') moveKids.push(check('Face the way ' + (o.type === 'person' ? 'they' : 'it') + ' travel' + (o.type === 'person' ? '' : 's'), () => o.opts.faceTravel, v => { o.opts.faceTravel = v; changed(true); }));
   p.append(sec('Move & face', ...moveKids));
-  if (o.type === 'person') p.append(sec('Frame with the camera', shotGrid(() => o.id), h('p', { class: 'note' }, 'Moves the shot camera to frame ' + o.name + '.')));
+  if (o.type === 'person') {
+    const targets = [...state.objects.filter(x => x !== o && x.type === 'person'), ...state.objects.filter(x => x !== o && x.type !== 'person' && x.type !== 'mark')];
+    p.append(sec('Eyeline', selectRow('Look at', [['', 'Ahead (no target)'], ['camera', 'The camera'], ...targets.map(x => [x.id, x.name])], () => o.opts.lookAt || '', v => setLookAt(o, v || null)),
+      h('p', { class: 'note' }, 'The head and upper body turn to keep looking, even while either of them moves.')));
+    p.append(sec('Frame with the camera', shotGrid(() => o.id), h('p', { class: 'note' }, 'Moves the shot camera to frame ' + o.name + '.')));
+  }
   // ---- look
   if (o.type === 'person') {
     p.append(sec('Look',
+      h('div', { class: 'seg feel', style: 'margin-bottom:6px' }, Object.entries(BODIES).map(([k, b]) => h('button', { class: bodyOf(o) === k ? 'on' : '', 'data-body': k, onclick: () => {
+        o.opts.body = k; o.opts.height = b.height; if (k === 'woman' && o.opts.hair === BODIES.man.hair) o.opts.hair = b.hair;
+        syncScene(); updateGizmo(); changed(true, true);
+      } }, b.label))),
       slider('Height', () => o.opts.height || 1.75, (v, cm) => { o.opts.height = v; rebuild(cm); }, { min: 0.8, max: 2.2, step: 0.01, fmt: v => v.toFixed(2) + ' m' }),
       colorRow('Top', () => o.color, (v, cm) => { o.color = v; rebuild(cm); }),
       colorRow('Trousers', () => o.opts.pants, (v, cm) => { o.opts.pants = v; rebuild(cm); }),
@@ -1956,11 +2072,17 @@ function renderTimeline() {
       keyDrag(d, id, k, laneEl);
       laneEl.append(d);
     }
+    const who = isCam ? null : getObj(id);
+    if (who && who.acts) for (const a of who.acts) {
+      if (a.t > L + 1e-6) continue;
+      const tag = h('div', { class: 'act', style: `left:${a.t / L * 100}%`, title: `${poseLabel(a.pose)} at ${a.t.toFixed(2)} s · drag to retime · right-click to remove` }, poseLabel(a.pose));
+      actDrag(tag, who, a, laneEl); laneEl.append(tag);
+    }
     scrubOn(laneEl);
     return h('div', { class: 'tlr' + (selected === id || (isCam && selected === 'target') ? ' sel' : '') }, h('div', { class: 'lab', tabindex: 0, 'data-id': id, title: name, onclick: () => select(id), onkeydown: rowKeys(id) }, h('span', { html: isCam ? svgI('camera') : iconFor(getObj(id)), style: 'display:flex;width:14px;flex:none' }), h('span', { class: 'nm' }, name)), laneEl);
   };
   rows.append(mk('camera', 'Shot camera', state.camera.keys, true));
-  for (const o of state.objects) if (o.keys.length || selected === o.id) rows.append(mk(o.id, o.name, o.keys, false));
+  for (const o of state.objects) if (o.keys.length || o.acts || selected === o.id) rows.append(mk(o.id, o.name, o.keys, false));
   $$('#tlRows .lab svg').forEach(s => { s.style.width = '14px'; s.style.stroke = 'currentColor'; s.style.fill = 'none'; s.style.strokeWidth = '1.6'; });
   refocusRow(rows, fid);
 }
@@ -2003,6 +2125,31 @@ function keyDrag(d, id, k, laneEl) {
       } else { setTime(k.t); if (selected !== id) select(id); }
     };
     d.addEventListener('pointermove', mv); for (const ev of ['pointerup', 'pointercancel']) d.addEventListener(ev, up);
+  });
+}
+/* a blue pose-change tag on a person's row: drag to retime, right-click to remove */
+function actDrag(tag, o, act, laneEl) {
+  tag.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); removeAct(o, act); });
+  tag.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    e.stopPropagation(); if (playing) setPlaying(false);
+    tag.setPointerCapture(e.pointerId);
+    const sx = e.clientX; let moved = false;
+    const mv = ev => {
+      if (Math.abs(ev.clientX - sx) > 3) moved = true;
+      if (!moved) return;
+      const nt = Math.max(1 / state.settings.fps, snapT(timeFromX(ev.clientX, laneEl)));
+      act.t = nt; tag.style.left = (nt / lastT() * 100) + '%'; setTime(nt, false); editRev++;
+    };
+    const up = () => {
+      tag.removeEventListener('pointermove', mv); for (const ev of ['pointerup', 'pointercancel']) tag.removeEventListener(ev, up);
+      if (moved) {
+        /* two tags on one frame: the one just moved wins */
+        setActs(o, o.acts.filter(x => x === act || Math.abs(x.t - act.t) > 0.5 / state.settings.fps));
+        changed(true, true);
+      } else { setTime(act.t); if (selected !== o.id) select(o.id); }
+    };
+    tag.addEventListener('pointermove', mv); for (const ev of ['pointerup', 'pointercancel']) tag.addEventListener(ev, up);
   });
 }
 function selKeysTarget() {
@@ -2116,7 +2263,7 @@ function goStep(s) {
 }
 /* timeline tracks: open while something is keyed, unless you opened or closed them by hand */
 let tracksMode = null;
-const anyKeys = () => state.camera.keys.length > 0 || state.objects.some(o => o.keys.length > 0);
+const anyKeys = () => state.camera.keys.length > 0 || state.objects.some(o => o.keys.length > 0 || actList(o));
 const tracksOpen = () => tracksMode ? tracksMode === 'open' : anyKeys();
 function syncTracks() { const open = tracksOpen(); $('#tl').classList.toggle('closed', !open); putText($('#bTracks'), open ? 'Tracks ▾' : 'Tracks ▴'); }
 /* the undo and redo buttons say which step they would undo or redo (worked out only when the history changes) */
@@ -2250,9 +2397,18 @@ function ctxItems(hit, floor) {
         items.push({ label: `Walk ${w.name} here (arrive ${arrive.toFixed(1)} s)`, fn: () => walkToMark(w, o.id, arrive) });
       }
     } else {
-      if (o.type === 'person') items.push({ label: 'Draw walk path', fn: () => startPath(o.id) }, { label: 'Frame: Medium shot', fn: () => frameShot('medium', o.id) }, { label: 'Frame: Close-up', fn: () => frameShot('cu', o.id) });
-      else items.push({ label: 'Draw path', fn: () => startPath(o.id) });
+      if (o.type === 'person') {
+        items.push({ label: 'Draw walk path', fn: () => startPath(o.id) });
+        if (isSeated(o)) items.push({ label: 'Stand up', fn: () => standPerson(o) });
+        items.push({ label: 'Frame: Medium shot', fn: () => frameShot('medium', o.id) }, { label: 'Frame: Close-up', fn: () => frameShot('cu', o.id) },
+          { label: o.opts.lookAt === 'camera' ? 'Stop looking at the camera' : 'Look at the camera', fn: () => setLookAt(o, o.opts.lookAt === 'camera' ? null : 'camera') });
+        if (selP && selP !== o) items.push({ label: `${o.name} looks at ${selP.name}`, fn: () => setLookAt(o, selP.id) });
+      } else items.push({ label: 'Draw path', fn: () => startPath(o.id) });
       items.push({ label: 'Face the camera', fn: () => faceToward(o, camState.p, 'the camera') });
+      if (seatsOf(o).length) {
+        const who = persons().length ? (selP && selP !== o ? selP : persons().find(q => q.opts.seated !== o.id) || persons()[0]) : null;
+        if (who) items.push({ label: `Sit ${who.name} here`, fn: () => sitPerson(who, freeSeat(o, who)) });
+      }
       items.push({ label: 'Keep camera on this', fn: () => keepCameraOn(o) });
     }
     items.push({ label: 'Focus the lens here', key: 'double-click', fn: () => focusLensAt(new THREE.Vector3().fromArray(aimPoint(o, T)), o.name) }, '-');
@@ -2265,7 +2421,7 @@ function ctxItems(hit, floor) {
   }
   if (floor) {
     const at = [snapV(floor.x), 0, snapV(floor.z)];
-    items.push({ head: 'On the floor here' }, { label: 'Add a person here', fn: () => addObject('person', null, false, at) }, { label: 'Add floor mark here', fn: () => addObject('mark', null, false, at) });
+    items.push({ head: 'On the floor here' }, ...Object.entries(BODIES).map(([k, b]) => ({ label: 'Add a ' + b.label.toLowerCase() + ' here', fn: () => addPerson(k, false, at) })), { label: 'Add floor mark here', fn: () => addObject('mark', null, false, at) });
     if (selP) items.push({ label: `Walk ${selP.name} here`, fn: () => { const c = evalObj(selP, T).p; pathMode = { id: selP.id, pts: [[c[0], c[2]], [at[0], at[2]]], y: c[1], cursor: null }; finishPath(); } });
     if (sel && !isMulti()) items.push({ label: `Move ${sel.name} here`, fn: () => { const cur = clone(evalObj(sel, T)); cur.p = [at[0], cur.p[1], at[2]]; writeObj(sel, cur, true); propsDirty = true; toast(sel.name + ' moved'); } });
     items.push({ label: 'Aim the camera here', fn: () => writeCam({ tg: [at[0], 1, at[2]] }, true) });
@@ -2392,9 +2548,80 @@ function walkToMark(o, markId, arrive) {
 function faceToward(o, pt, label) {
   const cur = clone(evalObj(o, T));
   cur.r[1] = Math.atan2(pt[0] - cur.p[0], pt[2] - cur.p[2]) * R2D;
-  if (o.opts.faceTravel && o.keys.length > 1) { o.opts.faceTravel = false; }
+  o.opts.faceTravel = false; /* turned by hand, so the path no longer steers them */
   writeObj(o, cur, true); propsDirty = true; toast(o.name + ' now faces ' + label);
 }
+
+/* ============================== people: seats, eyeline, pose changes ============================== */
+/* seats on furniture: x, z across and along the item, top = seat height, yaw = which way a sitter faces (0 = like the item) */
+const SEATS = {
+  chair: [{ x: 0, z: 0.02, top: 0.455, yaw: 0 }],
+  sofa: [{ x: -0.55, z: 0.06, top: 0.52, yaw: 0 }, { x: 0, z: 0.06, top: 0.52, yaw: 0 }, { x: 0.55, z: 0.06, top: 0.52, yaw: 0 }],
+  bed: [{ x: 0.7, z: 0.3, top: 0.57, yaw: 90 }, { x: -0.7, z: 0.3, top: 0.57, yaw: -90 }],
+};
+const seatsOf = o => SEATS[o.type] || [];
+/* a seat in the world at time t: where a sitter's hips go and which way they face */
+function seatSpot(o, s, t = T) {
+  const tr = evalObj(o, t), yaw = tr.r[1] * D2R, sx = s.x * tr.s[0], sz = s.z * tr.s[2];
+  return { x: tr.p[0] + sx * Math.cos(yaw) + sz * Math.sin(yaw), z: tr.p[2] - sx * Math.sin(yaw) + sz * Math.cos(yaw), top: tr.p[1] + s.top * tr.s[1], yaw: tr.r[1] + s.yaw };
+}
+/* the closest seat to a floor point (within radius metres), not counting the person themselves */
+function nearestSeat(x, z, exceptId, radius = 0.55, t = T) {
+  let best = null, bd = radius;
+  for (const o of state.objects) {
+    if (o.id === exceptId || o.visible === false) continue;
+    seatsOf(o).forEach((s, i) => { const w = seatSpot(o, s, t), d = Math.hypot(w.x - x, w.z - z); if (d < bd) { bd = d; best = { o, i, w }; } });
+  }
+  return best;
+}
+/* the first seat on this item nobody is sitting in */
+function freeSeat(item, person) {
+  const taken = persons().filter(q => q !== person && q.opts.seated === item.id).map(q => evalObj(q, T).p);
+  const all = seatsOf(item).map((s, i) => ({ o: item, i, w: seatSpot(item, s) }));
+  return all.find(s => !taken.some(p => Math.hypot(p[0] - s.w.x, p[2] - s.w.z) < 0.3)) || all[0];
+}
+/* feet stay on the floor unless the seat is high (a bed's edge is still low enough to sit with feet down) */
+const seatY = (o, seat) => { const y = seat.w.top - 0.21 * (o.opts.height || 1.75) * evalObj(o, T).s[1]; return y < 0.25 ? 0 : y; };
+function sitPerson(o, seat) {
+  o = getObj(o.id); if (!o || !seat) return;
+  const cur = clone(evalObj(o, T));
+  cur.p = [r4(seat.w.x), r4(seatY(o, seat)), r4(seat.w.z)]; cur.r[1] = r4(seat.w.yaw);
+  o.opts.pose = 'sit'; o.opts.seated = seat.o.id; o.opts.faceTravel = false;
+  writeObj(o, cur, false); changed(true, true); toast(o.name + ' sits on ' + seat.o.name);
+}
+function standPerson(o) {
+  o = getObj(o.id); if (!o) return;
+  const cur = clone(evalObj(o, T)); cur.p[1] = 0;
+  o.opts.pose = 'stand'; o.opts.seated = null;
+  writeObj(o, cur, false); changed(true, true); toast(o.name + ' stands up');
+}
+const isSeated = o => o.type === 'person' && !!o.opts.seated && o.opts.pose === 'sit';
+/* the seat a person would take if asked to sit: nearest free one in the scene */
+function nearestSeatFor(o) {
+  const p = evalObj(o, T).p; return nearestSeat(p[0], p[2], o.id, 1e9);
+}
+/* eyeline: a person looks at the camera, at another person or object, or straight ahead (target = null) */
+function setLookAt(o, target) {
+  o = getObj(o.id); if (!o) return;
+  if (target) o.opts.lookAt = target; else delete o.opts.lookAt;
+  const t = target && target !== 'camera' ? getObj(target) : null;
+  changed(true, true); toast(target ? o.name + ' looks at ' + (target === 'camera' ? 'the camera' : t ? t.name : '…') : o.name + ' looks ahead');
+}
+/* pick a pose at the playhead: at 0 s it is the starting pose, later it becomes a change of action on the timeline */
+function setPoseAt(o, pose, t = T) {
+  o = getObj(o.id); if (!o) return;
+  t = snapT(t);
+  const eps = 0.5 / state.settings.fps, label = poseLabel(pose);
+  if (t < eps) { o.opts.pose = pose; if (pose !== 'sit') o.opts.seated = null; changed(true, true); return; }
+  const list = (o.acts || []).filter(a => Math.abs(a.t - t) > eps), act = { t, pose };
+  if (pose === 'sit') { /* sitting as an action goes to the nearest seat */
+    const tr = evalObj(o, t), seat = nearestSeat(tr.p[0], tr.p[2], o.id, 1, t);
+    if (seat) { const y = seat.w.top - 0.21 * (o.opts.height || 1.75) * tr.s[1]; act.at = { p: [r4(seat.w.x), r4(y < 0.25 ? 0 : y), r4(seat.w.z)], yaw: r4(seat.w.yaw) }; }
+  }
+  list.push(act); setActs(o, list); changed(true, true);
+  toast(o.name + ' switches to ' + label.toLowerCase() + ' at ' + t.toFixed(2) + ' s' + (act.at ? ' (on the nearest seat)' : ''), 3500);
+}
+function removeAct(o, act) { setActs(o, o.acts.filter(a => a !== act)); changed(true, true); toast('Action removed'); }
 
 /* ---- shot sizes ---- */
 const SHOTS = [['wide', 'Wide'], ['full', 'Full body'], ['medium', 'Medium'], ['mcu', 'Medium close'], ['cu', 'Close-up'], ['ecu', 'Extreme close'], ['low', 'Low angle'], ['high', 'High angle'], ['top', 'Top-down'], ['ots', 'Over shoulder'], ['two', 'Two-shot']];
@@ -2530,7 +2757,14 @@ function resnapKeys(keys, map) {
   for (let i = f.length - 2; i >= 0; i--) f[i] = Math.min(f[i], f[i + 1] - 1);
   keys.forEach((k, i) => { k.t = f[i] / fps; });
 }
-const resnapAll = map => { resnapKeys(state.camera.keys, map); state.objects.forEach(o => resnapKeys(o.keys, map)); };
+/* pose changes keep to whole frames too; two on one frame merge (the later wins) */
+function resnapActs(o, map) {
+  if (!o.acts) return;
+  const fps = state.settings.fps, byFrame = new Map();
+  for (const a of o.acts) { a.t = Math.max(0, Math.round(map(a.t) * fps)) / fps; byFrame.set(Math.round(a.t * fps), a); }
+  setActs(o, [...byFrame.values()]);
+}
+const resnapAll = map => { resnapKeys(state.camera.keys, map); state.objects.forEach(o => { resnapKeys(o.keys, map); resnapActs(o, map); }); };
 
 /* ---- shot length presets (stretch animation to fit) ---- */
 function setDuration(v) {
@@ -2601,6 +2835,7 @@ function deleteSel() {
   /* read the aim while the subject still exists, so the framing stays put (A11) */
   if (gone.has(state.camera.lookAtId)) { state.camera.base.tg = evalCam(T).tg; state.camera.lookAtId = null; state.camera.follow = false; }
   state.objects = state.objects.filter(x => !gone.has(x.id));
+  for (const q of state.objects) { if (gone.has(q.opts.lookAt)) delete q.opts.lookAt; if (gone.has(q.opts.seated)) q.opts.seated = null; } /* nobody looks at or sits on what is gone */
   selIds = selIds.filter(id => !gone.has(id)); selected = selIds[selIds.length - 1] || null;
   pruneGroups(); syncScene(); updateGizmo(); changed(true, true);
   toast((list.length === 1 ? list[0].name : list.length + ' items') + ' deleted' + (kept ? ' (' + kept + ' locked ' + (kept === 1 ? 'item' : 'items') + ' kept)' : ''));
@@ -3305,7 +3540,14 @@ function wire() {
         else if (drag.items.length > 1) {
           const f = drag.items.find(it => it.id === drag.id) || drag.items[0], dx = nx - f.tr.p[0], dz = nz - f.tr.p[2];
           for (const it of drag.items) { const cur = clone(it.tr); cur.p = [r4(it.tr.p[0] + dx), it.tr.p[1], r4(it.tr.p[2] + dz)]; writeObj(getObj(it.id), cur, false); }
-        } else { const o = getObj(drag.id), cur = clone(evalObj(o, T)); cur.p = [nx, cur.p[1], nz]; writeObj(o, cur, false); }
+        } else {
+          const o = getObj(drag.id), cur = clone(evalObj(o, T));
+          /* a person dragged onto a seat snaps to it; letting go there sits them down */
+          drag.seat = o.type === 'person' && getPref('autoSit', true) ? nearestSeat(nx, nz, o.id) : null;
+          if (drag.seat) { showModeBar('Release to sit on ' + drag.seat.o.name, []); cur.p = [r4(drag.seat.w.x), cur.p[1], r4(drag.seat.w.z)]; }
+          else { cur.p = [nx, cur.p[1], nz]; if ($('#modeBar').textContent.startsWith('Release to sit')) hideModeBar(); }
+          writeObj(o, cur, false);
+        }
       }
       return;
     }
@@ -3329,6 +3571,11 @@ function wire() {
     if ($('#modeBar').textContent.startsWith('Release')) hideModeBar();
     /* a click that did not drag narrows the selection to what was clicked (its group, or just it with Alt) */
     if (!d.moved && d.kind === 'move' && getObj(d.id)) select(d.id, d.alt ? 'single' : undefined);
+    if (d.moved && d.kind === 'move' && getObj(d.id) && getObj(d.id).type === 'person' && d.items.length <= 1) {
+      const o = getObj(d.id);
+      if (d.seat) { sitPerson(o, d.seat); pdown = null; return; } /* dropped on a seat */
+      if (isSeated(o)) { standPerson(o); pdown = null; return; } /* dragged away from the seat */
+    }
     if (d.moved) {
       changed(true, true);
       if (d.face) toast((d.items.length > 1 ? d.items.length + ' items now face ' : (getObj(d.id) || {}).name + ' now faces ') + d.face.name);
@@ -3547,6 +3794,10 @@ function boot() {
   window.__shotref = { get selection() { return selIds; }, ringKnob: () => ringGrp.visible ? ringKnob.getWorldPosition(new THREE.Vector3()).toArray() : null, getPref, setPref, showMenu, menuButton, hideMenu, project: (x, y, z) => { const r = canvas.getBoundingClientRect(); let cam = view === 'top' ? topCam : edCam, rr = { x: 0, y: 0, w: r.width, h: r.height }; if (view === 'camera') { cam = renderCam; rr = camRect(r.width, r.height); } const v = new THREE.Vector3(x, y, z).project(cam); return [r.left + rr.x + (v.x * 0.5 + 0.5) * rr.w, r.top + rr.y + (-v.y * 0.5 + 0.5) * rr.h]; }, get view() { return view; }, get selected() { return selected; }, get state() { return state; }, get assets() { return assets; }, setT: t => setTime(t, false), applyMove, addObject, select, setView, evalCam, exportVideo, exportPNG, pickCodec, _exportCanvas: () => exRenderer ? exRenderer.domElement : null, changed, writeObj, evalObj, setKey, get T() { return T; },
     get rebuilds() { return rebuilds; }, urlCacheIds: () => [...urlCache.keys()],
     get history() { return { at: hi, length: hist.length }; },
+    /* batch D (people) hooks for the smoke test */
+    addPerson, sitPerson, standPerson, setLookAt, setPoseAt, nearestSeat, freeSeat, actLayer, poseAt, applyAll: t => applyAll(t),
+    rig: id => { const v = views.get(id), P = v && v.person; if (!P) return null; const r = j => [j.rotation.x, j.rotation.y, j.rotation.z]; return { H: P.H, neck: r(P.neck), spine: r(P.spine), head: r(P.head), lSh: r(P.lSh), rSh: r(P.rSh), lEl: r(P.lEl), rEl: r(P.rEl), lHip: r(P.lHip), rHip: r(P.rHip), lKnee: r(P.lKnee), rKnee: r(P.rKnee), shoulderX: P.lSh.position.x, hipX: P.lHip.position.x, headScale: P.head.scale.x, headParts: P.head.children.length, pelvisY: P.pelvis.position.y, group: { p: v.group.position.toArray(), yaw: v.group.rotation.y } }; },
+    soles: id => { const v = views.get(id); if (!v || !v.person) return null; v.group.updateMatrixWorld(true); return v.person.soles.map(s => s.getWorldPosition(new THREE.Vector3()).toArray()); },
     renderStats: () => ({ frame: renderer.info.render.frame, calls: renderer.info.render.calls, draws: drawCount, lastDraw, lastAsync, geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures }) };
 }
 boot();
