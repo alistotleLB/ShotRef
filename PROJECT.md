@@ -6,14 +6,15 @@ Read this before doing anything. Claude updates it at the end of every session.
 A "very dumbed-down Blender" in one offline HTML file: block people and props, move the camera, export reference clips and frames for AI video models.
 
 ## Current state            (rewritten every session, 15 lines max)
-Works:   Web/offline file dist/ShotRef.html (881 KB) and Windows app 1.1.0 (release/ShotRef-Setup-1.1.0.exe 121 MB, release/ShotRef-1.1.0-portable.exe 111 MB, unsigned).
-         Desktop: real Save / Save as (writes back to the same file, safely), Open/Import/Export dialogs remember folders, Open recent, double-click .shotref files, single window.
-         New saves use .shotref (old .shotref.json still opens). Branding applied. npm test 89/89, npm run test:desktop 13/13.
-Code:    git, private GitHub repo https://github.com/alistotleLB/ShotRef (main).
-Broken:  Nothing known. Windows shows "protected your PC" on first run (no code-signing certificate).
-Next:    Ali runs checklist C2 (desktop app). Then Phase 3 (installable web app) and Phase 4 (website).
-Not yet tried by Ali: everything since 2026-11-22 (C1 and C2). The real installer run and a real double-click were not tried by Claude either.
-Waiting on Ali: C1 since 2026-11-23, C2 since 2026-11-23.
+IN PROGRESS: porting the newer claude.ai version's features (artifact 6uRy4QMBjvK9Rn5PLedSUq) into this code. Its source was lost; only the built page exists (reference/, git-ignored).
+Plan: docs/plans/2026-11-23-port-plan.md + docs/plans/2026-11-23-port-inventory.md (39 features, 11 batches).
+Done (built by Sonnet, reviewed by Opus, pushed): batch 1+3 (format, right-click menu, double-click lens focus), 2 (top bar, Build/Frame/Export steps, Add/Scene tabs, icon toolbar), 4 (multi-select, box select, lock, groups, selection toolbar), 5 (body types, eyeline, sitting, actions over time).
+Now:  batch 6 (parenting, ground stacking, camera mount, car wheels/convertible, cactus).
+Left: 7 camera UX, 8 light, 9 shots + export panel + prompt, 10 takes, 11 library/recent/settings/split view. Then rebuild the Windows app (npm run dist:win) and checklist C2/C3.
+Tests: npm test 140/140, npm run test:desktop 14/14 (after batch 5).
+Code: private GitHub https://github.com/alistotleLB/ShotRef (main).
+Known: walking feet slide slightly at heel strike (same in the claude.ai version; foot IK = later polish). Windows installer unsigned.
+Waiting on Ali: C1 (browser checklist) and C2 (desktop) — C2 should wait until the port is finished.
 
 ## Ali's goals              (his exact words, dated; never reworded)
 "Act as a principal software engineer leading a review of my application. Inspect the actual code, run the app and safe checks where possible, and give me a prioritized plan covering architecture, bugs and reliability, performance, and UI/UX." - Ali, 2026-11-22
