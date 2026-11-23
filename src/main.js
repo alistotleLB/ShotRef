@@ -31,6 +31,7 @@ import { platform } from './platform.js';
  * placing, pathMode, pathFit, rec  click-to-place, path drawing, path fit option, live recording: their start/commit/cancel functions
  * shotPerson                     person picked for shot sizes: propsCamera
  * menuBtn, menuClosedAt           button whose menu is open, when a menu last closed: showMenu, hideMenu, menuButton
+ * ttKey                          history entries the undo/redo titles were last worked out for: undoTitles
  * prefs                          per-browser preferences (localStorage shotref.prefs): setPref
  * focusPick, lastWorkView        picking focus in the view: start/finishFocusPick; last non-camera view: setView
  * exRenderer                     offscreen export renderer: getExportRenderer (dropped on context loss)
@@ -68,7 +69,7 @@ const fmtTime = t => { const m = Math.floor(t / 60), s = t - m * 60; return Stri
 const PREFS_KEY = 'shotref.prefs';
 let prefs = {};
 try { const p = JSON.parse(localStorage.getItem(PREFS_KEY) || '{}'); if (p && typeof p === 'object' && !Array.isArray(p)) prefs = p; } catch (e) { }
-const getPref = (k, d) => (k in prefs ? prefs[k] : d);
+const getPref = (k, d) => (Object.prototype.hasOwnProperty.call(prefs, k) ? prefs[k] : d);
 function setPref(k, v) { prefs[k] = v; try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch (e) { } }
 let toastTimer;
 /* while a dialog is open the toast moves to the top of the window, so the dialog doesn't hide it (U7) */
@@ -1962,10 +1963,11 @@ const menuOpen = () => $('#ctxMenu').style.display === 'block';
 function hideMenu(refocus) {
   const m = $('#ctxMenu'); if (m.style.display !== 'block') return;
   menuClosedAt = performance.now(); m.style.display = 'none'; m.innerHTML = '';
-  if (refocus) { try { (menuBtn || $('#c')).focus(); } catch (e) { } }
+  if (refocus) { try { (menuBtn || $('#c')).focus(); } catch (e) { } menuBtn = null; }
 }
-function showMenu(x, y, items) {
+function showMenu(x, y, items, opener = null) {
   if (!items || !items.length) return false;
+  menuBtn = opener;
   const m = $('#ctxMenu'); m.innerHTML = '';
   for (const it of items) {
     if (it === '-') m.append(h('div', { class: 'sep', role: 'separator' }));
@@ -1983,14 +1985,16 @@ function showMenu(x, y, items) {
 function menuButton(btn, itemsFn) {
   btn.addEventListener('click', () => {
     if (menuBtn === btn && performance.now() - menuClosedAt < 250) { menuBtn = null; return; }
-    const r = btn.getBoundingClientRect(); showMenu(r.left, r.bottom + 4, itemsFn()); menuBtn = btn;
+    const r = btn.getBoundingClientRect(); showMenu(r.left, r.bottom + 4, itemsFn(), btn);
   });
 }
 function wireMenu() {
   const m = $('#ctxMenu');
   m.addEventListener('keydown', e => {
-    const k = e.key; if (!['Escape', 'ArrowDown', 'ArrowUp', 'Home', 'End', 'Tab'].includes(k)) return;
-    e.stopPropagation(); e.preventDefault();
+    const k = e.key;
+    e.stopPropagation(); /* while a menu is open it owns the keyboard: no other shortcut runs */
+    if (!['Escape', 'ArrowDown', 'ArrowUp', 'Home', 'End', 'Tab'].includes(k)) return; /* Enter and Space press the focused item */
+    e.preventDefault();
     if (k === 'Escape' || k === 'Tab') { hideMenu(true); return; }
     const bs = [...m.querySelectorAll('button:not(:disabled)')]; if (!bs.length) return;
     let i = bs.indexOf(document.activeElement);
@@ -2041,9 +2045,9 @@ function ctxItems(hit, floor) {
       if (o.type === 'person') items.push({ label: 'Draw walk path', fn: () => startPath(o.id) }, { label: 'Frame: Medium shot', fn: () => frameShot('medium', o.id) }, { label: 'Frame: Close-up', fn: () => frameShot('cu', o.id) });
       else items.push({ label: 'Draw path', fn: () => startPath(o.id) });
       items.push({ label: 'Face the camera', fn: () => faceToward(o, camState.p, 'the camera') });
-      items.push({ label: 'Keep camera on this', fn: () => { state.camera.lookAtId = o.id; state.camera.base.tg = evalCam(T).tg; changed(true); toast('Camera now keeps ' + o.name + ' in frame'); } });
+      items.push({ label: 'Keep camera on this', fn: () => { state.camera.lookAtId = o.id; state.camera.base.tg = evalCam(T).tg; changed(true, true); toast('Camera now keeps ' + o.name + ' in frame'); } });
     }
-    items.push({ label: 'Focus the lens here', key: 'double-click', fn: () => focusLensAt(new THREE.Vector3().fromArray(evalObj(o, T).p), o.name) }, '-',
+    items.push({ label: 'Focus the lens here', key: 'double-click', fn: () => focusLensAt(new THREE.Vector3().fromArray(aimPoint(o, T)), o.name) }, '-',
       { label: 'Duplicate', fn: duplicateSel, key: 'Ctrl D' },
       { label: 'Hide', fn: () => { o.visible = false; syncScene(); updateGizmo(); changed(true, true); toast(o.name + ' hidden (the eye in the Scene list brings it back)'); } },
       { label: 'Delete', fn: deleteSel, key: 'Del', danger: true });
@@ -2052,7 +2056,7 @@ function ctxItems(hit, floor) {
   if (floor) {
     const at = [snapV(floor.x), 0, snapV(floor.z)];
     items.push({ head: 'On the floor here' }, { label: 'Add a person here', fn: () => addObject('person', null, false, at) }, { label: 'Add floor mark here', fn: () => addObject('mark', null, false, at) });
-    if (selP) items.push({ label: `Walk ${selP.name} here`, fn: () => { startPath(selP.id); if (pathMode) { pathMode.pts.push([at[0], at[2]]); pathBar(); } } });
+    if (selP) items.push({ label: `Walk ${selP.name} here`, fn: () => { const c = evalObj(selP, T).p; pathMode = { id: selP.id, pts: [[c[0], c[2]], [at[0], at[2]]], y: c[1], cursor: null }; finishPath(); } });
     if (sel) items.push({ label: `Move ${sel.name} here`, fn: () => { const cur = clone(evalObj(sel, T)); cur.p = [at[0], cur.p[1], at[2]]; writeObj(sel, cur, true); propsDirty = true; toast(sel.name + ' moved'); } });
     items.push({ label: 'Aim the camera here', fn: () => writeCam({ tg: [at[0], 1, at[2]] }, true) });
     if (view === 'top') items.push({ label: 'Move the camera here', fn: () => writeCam({ p: [at[0], camState.p[1], at[2]] }, true) });
@@ -2979,14 +2983,15 @@ function wire() {
     canvas.focus(); gizmoUsed = false;
     pdown = { x: e.clientX, y: e.clientY, b: e.button };
     if (e.button === 2) rdown = { x: e.clientX, y: e.clientY };
-    if (placing) { e.stopImmediatePropagation(); if (e.button === 0) { movePlacing(e); commitPlacing(); } else cancelPlacing(); pdown = null; return; }
+    if (placing) { e.stopImmediatePropagation(); rdown = null; if (e.button === 0) { movePlacing(e); commitPlacing(); } else cancelPlacing(); pdown = null; return; }
     if (pathMode) {
       e.stopImmediatePropagation();
       const rc = rayFromEvent(e);
       if (e.button === 0 && rc) { const g = planeHit(rc, pathMode.y); if (g) addPathPoint(g); } else if (e.button === 2) removePathPoint();
+      rdown = null;
       pdown = null; return;
     }
-    if (focusPick && view === 'camera') { e.stopImmediatePropagation(); const rc = rayFromEvent(e); if (e.button === 0 && rc) finishFocusPick(rc); pdown = null; return; }
+    if (focusPick && view === 'camera') { rdown = null; e.stopImmediatePropagation(); const rc = rayFromEvent(e); if (e.button === 0 && rc) finishFocusPick(rc); pdown = null; return; }
     if (rec || e.button !== 0 || view === 'camera' || gizmo.axis) return;
     const rc = rayFromEvent(e); if (!rc) return;
     const hit = pickAt(rc); if (!hit) return;
@@ -3068,8 +3073,8 @@ function wire() {
   canvas.addEventListener('contextmenu', e => {
     e.preventDefault();
     const d = rdown; rdown = null;
-    if (placing || pathMode || focusPick || rec) return;
-    if (d && Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4) return;
+    if (!d || placing || pathMode || focusPick || rec) return; /* no press of ours (or it cancelled placing, a path, a pick): no menu */
+    if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4) return;
     const rc = rayFromEvent(e); if (!rc) return;
     let hit = pickAt(rc);
     if (hit && (hit.id === 'ring')) hit = selected ? { id: selected, point: hit.point } : null;

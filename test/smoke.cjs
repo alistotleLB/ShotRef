@@ -1920,4 +1920,81 @@ check('dropdown menu component: button opens it, items run, click again closes, 
   ok(await p.evaluate(() => window.__hit) === 1 && !(await menuLabels(p)), 'item should run once and close the menu');
 });
 
+/* ---- fix round 1 ---- */
+check('floor menu "Walk X here" makes the walk at once: keys, no path mode, no view switch', async ({ open }) => {
+  const p = await open();
+  await p.waitForTimeout(500);
+  const o = await personXY(p);
+  await p.evaluate(id => window.__shotref.select(id), o.id);
+  const xy = await p.evaluate(q => window.__shotref.project(q[0], q[1], q[2]), [-6, 0, -2]);
+  await rightClick(p, xy[0], xy[1]); await p.waitForTimeout(200);
+  await clickItem(p, 'Walk '); await p.waitForTimeout(300);
+  const r = await p.evaluate(id => { const S = window.__shotref, a = S.state.objects.find(x => x.id === id); return { keys: a.keys.map(k => k.p.slice()), view: S.view, bar: getComputedStyle(document.querySelector('#modeBar')).display }; }, o.id);
+  ok(r.keys.length === 2 && Math.abs(r.keys[1][0] + 6) < 0.6 && Math.abs(r.keys[1][2] + 2) < 0.6, 'walk keys: ' + JSON.stringify(r.keys));
+  ok(r.view === 'editor' && r.bar === 'none', 'should stay in the editor with no path bar: ' + JSON.stringify([r.view, r.bar]));
+  noErrors(p);
+});
+
+check('menu "Focus the lens here" aims at the body like double-click does', async ({ open }) => {
+  const p = await open();
+  await p.waitForTimeout(500);
+  await p.evaluate(() => window.__shotref.setView('camera')); await p.waitForTimeout(300);
+  const o = await personXY(p);
+  await rightClick(p, o.xy[0], o.xy[1]); await p.waitForTimeout(150);
+  await clickItem(p, 'Focus the lens here'); await p.waitForTimeout(250);
+  const fdMenu = await p.evaluate(() => window.__shotref.state.camera.base.fd);
+  const body = await p.evaluate(id => { const S = window.__shotref, a = S.state.objects.find(x => x.id === id), c = S.state.camera.base.p; return Math.hypot(a.base.p[0] - c[0], a.base.p[1] + 1 - c[1], a.base.p[2] - c[2]); }, o.id);
+  const feet = await p.evaluate(id => { const S = window.__shotref, a = S.state.objects.find(x => x.id === id), c = S.state.camera.base.p; return Math.hypot(a.base.p[0] - c[0], a.base.p[1] - c[1], a.base.p[2] - c[2]); }, o.id);
+  ok(Math.abs(fdMenu - body) < Math.abs(fdMenu - feet) || Math.abs(feet - body) < 0.05, 'menu focus ' + fdMenu + ' is nearer the feet (' + feet + ') than the body (' + body + ')');
+});
+
+check('right-click that cancels placing opens no menu; a menu owns the keyboard', async ({ open }) => {
+  const p = await open();
+  await p.waitForTimeout(500);
+  await p.evaluate(() => { window.__shotref.addObject('box', null, true); });
+  await p.waitForTimeout(200);
+  await rightClick(p, 700, 500); await p.waitForTimeout(250);
+  ok(!(await menuLabels(p)), 'cancelling placing with a right-click must not open a menu');
+  const o = await personXY(p);
+  await rightClick(p, o.xy[0], o.xy[1]); await p.waitForTimeout(150);
+  const n = await p.evaluate(() => window.__shotref.state.objects.length);
+  await p.keyboard.press('Delete'); await p.waitForTimeout(150);
+  ok(await p.evaluate(() => window.__shotref.state.objects.length) === n, 'Delete must not run while the menu is open');
+  ok(!!(await menuLabels(p)), 'the menu should stay open on other keys');
+  await p.keyboard.press('Escape');
+  ok(await p.evaluate(() => document.activeElement.id) === 'c', 'focus should return to the 3D view after Esc');
+});
+
+check('numeric ids and parent loops are repaired without dropping valid links', async ({ open }) => {
+  const O = (id, extra) => ({ id, type: 'box', name: 'b' + id, base: { p: [0, 0, 0], r: [0, 0, 0], s: [1, 1, 1] }, keys: [], opts: {}, ...extra });
+  const file = { app: 'ShotRef', version: 1, state: { camera: { base: JSON.parse(CAM_BASE), keys: [], mount: 5 }, objects: [O(5), O(6, { parent: 5 }), O('a', { parent: 'b' }), O('b', { parent: 'c' }), O('c', { parent: 'b' })] }, assets: {} };
+  const p = await open();
+  await openFile(p, 'n.shotref.json', JSON.stringify(file));
+  await p.waitForFunction(() => window.__shotref.state.objects.length === 5);
+  const s = await stateOf(p), by = id => s.objects.find(o => o.id === id);
+  ok(by('6').parent === '5' && s.camera.mount === '5', 'numeric references were dropped');
+  ok(by('a').parent === 'b', 'a valid link into a loop was cut');
+  ok(!(by('b').parent && by('c').parent), 'the loop b/c was kept');
+});
+
+check('artifact-format file survives save then reopen', async ({ open, freshContext, downloads }) => {
+  const cam = { base: JSON.parse(CAM_BASE), keys: [] };
+  const O = (id, type, extra) => ({ id, type, name: id, base: { p: [0, 0, 0], r: [0, 0, 0], s: [1, 1, 1] }, keys: [], opts: {}, ...extra });
+  const file = { app: 'ShotRef', version: 1, state: { v: 1, meta: { id: 'm1', name: 'Desert' }, settings: { shadows: true, shadowSoft: 0.5, tod: 9 }, camera: { ...cam, mount: 'c1', dof: { on: true, fstop: 2, auto: false, strength: 4 } }, groups: { g1: { name: 'Pair' } },
+    shots: [{ id: 's1', name: 'Wide', camera: { ...cam }, duration: 4 }], shotId: 's1', takes: [{ id: 't1', name: 'Take 1', snap: null }], takeId: 't1',
+    objects: [O('c1', 'car', { grp: 'g1', locked: true, opts: { convertible: true } }), O('p1', 'person', { parent: 'c1', opts: { body: 'child', seated: 'c1', lookAt: 'camera', free: true }, acts: [{ t: 1, pose: 'sit', at: { p: [0, 0, 0], yaw: 90 } }] })] }, assets: {} };
+  const a = await open();
+  await openFile(a, 'art.shotref.json', JSON.stringify(file));
+  await a.waitForFunction(() => window.__shotref.state.objects.length === 2);
+  const before = await stateOf(a);
+  await a.click('#bSave');
+  const f = await downloads(a).wait('.shotref');
+  const fc = await freshContext(); const b = await fc.open();
+  await openFile(b, f.name, f.text());
+  await b.waitForFunction(() => window.__shotref.state.objects.length === 2);
+  ok(canon(await stateOf(b)) === canon(before), 'state differs after save and reopen');
+  const st = await stateOf(b);
+  ok(st.meta.name === 'Desert' && st.shots.length === 1 && st.takes.length === 1 && st.objects[1].acts.length === 1 && st.camera.dof.strength === 4 && st.settings.tod === 9, 'new fields lost');
+});
+
 main().catch(e => { console.error(e && e.stack || e); process.exit(2); });

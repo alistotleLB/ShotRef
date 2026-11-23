@@ -34,6 +34,7 @@ function cleanDof(v, d) {
 }
 
 const BODIES = ['man', 'woman', 'child'];
+const has = (ids, v) => v != null && v !== '' && ids.has(String(v));
 const str = (v, d) => (typeof v === 'string' && v ? v : d);
 const clampN = (v, a, b, d) => (typeof v === 'number' && Number.isFinite(v) ? Math.min(b, Math.max(a, v)) : d);
 
@@ -55,10 +56,10 @@ function cleanCamera(c, defaults, ids) {
     feel: FEELS.includes(c.feel) ? c.feel : (dc.feel || 'gentle'),
     dof: cleanDof(c.dof, isObj(dc.dof) ? dc.dof : {}),
     shake: num(c.shake, 0),
-    lookAtId: c.lookAtId != null && ids.has(c.lookAtId) ? c.lookAtId : null,
+    lookAtId: has(ids, c.lookAtId) ? String(c.lookAtId) : null,
     follow: c.follow === true,
   };
-  if ('mount' in c) out.mount = c.mount != null && ids.has(c.mount) ? c.mount : null; /* camera rides on this object */
+  if ('mount' in c) out.mount = has(ids, c.mount) ? String(c.mount) : null; /* camera rides on this object */
   return out;
 }
 
@@ -105,7 +106,7 @@ export function normalizeProject(raw, defaults = {}) {
   for (const o of st.objects) {
     if ('grp' in o) o.grp = typeof o.grp === 'string' && groups[o.grp] ? o.grp : null;
     if ('locked' in o) o.locked = o.locked === true;
-    if ('parent' in o) o.parent = o.parent != null && o.parent !== o.id && ids.has(o.parent) ? String(o.parent) : null;
+    if ('parent' in o) o.parent = has(ids, o.parent) && String(o.parent) !== o.id ? String(o.parent) : null;
     if ('acts' in o) {
       const acts = (Array.isArray(o.acts) ? o.acts : []).filter(a => isObj(a) && typeof a.pose === 'string' && a.pose && typeof a.t === 'number' && Number.isFinite(a.t)).map(a => {
         const out = { ...a };
@@ -116,17 +117,18 @@ export function normalizeProject(raw, defaults = {}) {
     }
     const op = o.opts;
     if ('body' in op && !BODIES.includes(op.body)) delete op.body;
-    if ('seated' in op) op.seated = op.seated != null && op.seated !== o.id && ids.has(op.seated) ? String(op.seated) : null;
-    if ('lookAt' in op && !(op.lookAt === 'camera' || (op.lookAt != null && op.lookAt !== o.id && ids.has(op.lookAt)))) delete op.lookAt;
+    if ('seated' in op) op.seated = has(ids, op.seated) && String(op.seated) !== o.id ? String(op.seated) : null;
+    if ('lookAt' in op) { if (op.lookAt === 'camera') { /* keep */ } else if (has(ids, op.lookAt) && String(op.lookAt) !== o.id) op.lookAt = String(op.lookAt); else delete op.lookAt; }
     for (const k of ['free', 'convertible']) if (k in op && typeof op[k] !== 'boolean') delete op[k];
   }
   /* a ride-with parent chain must not loop: cut the link that closes a loop */
   const byId = new Map(st.objects.map(o => [o.id, o]));
   for (const o of st.objects) {
     const walk = new Set([o.id]);
-    for (let p = o.parent ? byId.get(o.parent) : null; p; p = p.parent ? byId.get(p.parent) : null) {
-      if (walk.has(p.id)) { o.parent = null; break; }
-      walk.add(p.id);
+    let prev = o;
+    for (let q = o.parent ? byId.get(o.parent) : null; q; prev = q, q = q.parent ? byId.get(q.parent) : null) {
+      if (walk.has(q.id)) { prev.parent = null; break; } /* cut only the link that closes the loop */
+      walk.add(q.id);
     }
   }
   if ('groups' in src) st.groups = groups;
