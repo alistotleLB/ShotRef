@@ -7,7 +7,8 @@ function channel(name) {
   ipcRenderer.on(name, (e, v) => { if (cb) cb(v); else queue.push(v); });
   return fn => { if (typeof fn !== 'function') return; cb = fn; while (queue.length) fn(queue.shift()); };
 }
-const onMenu = channel('shotref:menu');
+const menuChannel = channel('shotref:menu');
+const onMenu = fn => { menuChannel(fn); if (typeof fn === 'function') ipcRenderer.send('shotref:page-ready'); };
 const onOpenFile = channel('shotref:open-file');
 
 contextBridge.exposeInMainWorld('shotrefDesktop', {
@@ -19,6 +20,7 @@ contextBridge.exposeInMainWorld('shotrefDesktop', {
     name: opts && typeof opts.name === 'string' ? opts.name : null,
   }),
   openProject: () => ipcRenderer.invoke('shotref:open-project'),
+  pickFile: (kind, filters) => ipcRenderer.invoke('shotref:pick-file', String(kind), filters),
   setTitle: t => ipcRenderer.send('shotref:set-title', String(t)),
   onMenu, onOpenFile,
   closeOk: () => ipcRenderer.send('shotref:close-ok'),

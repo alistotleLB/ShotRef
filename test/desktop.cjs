@@ -12,8 +12,8 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'shotref-desk-'));
 let launches = 0;
 const apps = [];
 
-async function launch(args = []) {
-  const userData = path.join(tmp, 'profile' + (++launches));
+async function launch(args = [], opts = {}) {
+  const userData = opts.userData || path.join(tmp, 'profile' + (++launches));
   const app = await electron.launch({ executablePath: require('electron'), args: [ROOT, '--user-data-dir=' + userData, ...args], cwd: ROOT });
   apps.push(app);
   const page = await app.firstWindow();
@@ -22,8 +22,11 @@ async function launch(args = []) {
   page.on('pageerror', e => errors.push(String(e)));
   await page.waitForFunction(() => window.__shotref && window.__shotref.state, null, { timeout: 30000 });
   page.setDefaultTimeout(8000);
-  await page.waitForFunction(() => !document.querySelector('#mStart').classList.contains('hidden'), null, { timeout: 4000 }).catch(() => {}); /* first launch opens the starter sets */
-  await page.evaluate(() => { document.querySelector('#mStart').classList.add('hidden'); window.__edit = () => { window.__shotref.addObject('box'); window.__shotref.changed(true); }; });
+  if (!opts.raw) { /* first launch opens the starter sets: close them so clicks reach the page */
+    await page.waitForFunction(() => !document.querySelector('#mStart').classList.contains('hidden'), null, { timeout: 4000 }).catch(() => {});
+    await page.evaluate(() => document.querySelector('#mStart').classList.add('hidden'));
+  }
+  await page.evaluate(() => { window.__edit = () => { window.__shotref.addObject('box'); window.__shotref.changed(true); }; });
   return { app, page, errors, userData };
 }
 /* stub the native dialogs: each call takes the next answer from the queue and counts calls */
@@ -105,13 +108,71 @@ const ok = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
 
   await check('a file passed on the command line opens (object count matches)', async () => {
     ok(fs.existsSync(file1), 'needs file from earlier check');
-    const { app, page } = await launch([file1]);
-    /* the page asks before replacing the starter scene: that is the normal flow, so confirm it */
-    await page.waitForSelector('#mConfirm:not(.hidden)', { timeout: 10000 }); ok(/Open this file/.test(await page.textContent('#cfTitle')), 'expected the replace prompt');
-    await page.click('#cfOk');
+    const { app, page } = await launch([file1], { raw: true }); /* fresh profile, nothing hidden by the test */
     await page.waitForFunction(n => window.__shotref.state.objects.length === n, savedObjects, { timeout: 15000 });
     const t = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getTitle());
     ok(/one\.shotref/.test(t), 'title: ' + t);
+    await sleep(1500); /* longer than the 400 ms starter timer */
+    const open = await page.evaluate(() => [...document.querySelectorAll('.modal:not(.hidden)')].map(m => m.id));
+    ok(!open.length, 'a dialog is open over the opened file: ' + open.join(','));
+    await kill(app);
+  });
+
+  await check('a second launch with a file opens it in the existing window (asks first when there are unsaved changes)', async () => {
+    const userData = path.join(tmp, 'shared-profile');
+    const { app, page } = await launch([], { userData });
+    await page.evaluate(() => window.__edit()); /* unsaved changes */
+    const child = require('child_process').spawn(require('electron'), [ROOT, '--user-data-dir=' + userData, file1], { stdio: 'ignore' });
+    const code = await new Promise((res, rej) => { child.once('exit', res); setTimeout(() => { child.kill(); rej(new Error('second process did not exit')); }, 20000); });
+    ok(typeof code === 'number', 'second process exit');
+    await page.waitForSelector('#mConfirm:not(.hidden)', { timeout: 10000 });
+    ok(/Save changes first/.test(await page.textContent('#cfTitle')), 'expected the save-first prompt');
+    await page.click('#cfAlt'); /* Don't save */
+    await page.waitForFunction(n => window.__shotref.state.objects.length === n, savedObjects, { timeout: 10000 });
+    ok((await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)) === 1, 'a second window appeared');
+    await kill(app);
+  });
+
+  await check('a failed save leaves the previous file intact (atomic write) and keeps the unsaved mark and a message', async () => {
+    const dir = fs.mkdtempSync(path.join(tmp, 'atomic-'));
+    const target = path.join(dir, 'keep.shotref');
+    const { app, page } = await launch();
+    await stubDialogs(app, [target]);
+    await page.click('#bSave'); await page.waitForFunction(() => /Saved/.test(document.querySelector('#toast').textContent), null, { timeout: 8000 });
+    const before = fs.readFileSync(target, 'utf8');
+    fs.chmodSync(target, 0o444); /* the final rename over a read-only file fails on Windows */
+    await page.evaluate(() => window.__edit());
+    await page.click('#bSave'); await sleep(1200);
+    const t = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getTitle());
+    ok(t.startsWith('•'), 'dirty mark lost: ' + t);
+    ok(fs.readFileSync(target, 'utf8') === before, 'previous file was changed');
+    ok(!fs.readdirSync(dir).some(n => n.includes('.tmp-')), 'temp file left behind: ' + fs.readdirSync(dir));
+    const msg = await page.textContent('#toast'); ok(msg && !/Saved/.test(msg), 'no failure message: ' + msg);
+    fs.chmodSync(target, 0o666);
+    await kill(app);
+  });
+
+  await check('Copy frame works in the desktop app', async () => {
+    const { app, page } = await launch();
+    await app.evaluate(async ({ clipboard }) => { globalThis.__clipText = String(await clipboard.readText()); await clipboard.clear(); });
+    try {
+      await page.click('#bCopy');
+      await page.waitForFunction(() => /Frame copied/.test(document.querySelector('#toast').textContent), null, { timeout: 15000 });
+      ok(!(await page.evaluate(() => document.querySelector('#mCopy').classList.contains('hidden') === false)), 'fell back to the right-click dialog');
+    } finally { await app.evaluate(async ({ clipboard }) => { if (globalThis.__clipText) await clipboard.writeText(globalThis.__clipText); /* an image on the clipboard before the test cannot be restored */ }); }
+    await kill(app);
+  });
+
+  await check('import dialog remembers its own folder; Help > Quick start opens the page guide', async () => {
+    const { app, page, userData } = await launch();
+    const f = path.join(tmp, 'pic.png');
+    fs.writeFileSync(f, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==', 'base64'));
+    await stubDialogs(app, [], [f]);
+    const r = await page.evaluate(async () => { const x = await window.shotrefDesktop.pickFile('import', [{ name: 'Images', extensions: ['png'] }]); return x && [x.name, x.type, x.data.byteLength]; });
+    ok(r && r[0] === 'pic.png' && r[1] === 'image/png' && r[2] > 10, 'pickFile: ' + JSON.stringify(r));
+    ok(JSON.parse(fs.readFileSync(path.join(userData, 'shotref-settings.json'), 'utf8')).folders.import === tmp, 'import folder not remembered');
+    await app.evaluate(({ Menu }) => { const help = Menu.getApplicationMenu().items.find(i => i.label === 'Help'); help.submenu.items.find(i => i.label === 'Quick start').click(); });
+    await page.waitForSelector('#mHelp:not(.hidden)', { timeout: 5000 });
     await kill(app);
   });
 

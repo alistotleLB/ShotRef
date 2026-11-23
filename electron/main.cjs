@@ -11,6 +11,8 @@ const isProjectFile = p => /\.(shotref|json)$/i.test(p);
 
 let win = null;
 let closeAllowed = false;
+let pageReady = false; /* the page registered its menu callback, so it can answer a close request */
+let pendingFile = null; /* a file that arrived before the window existed */
 const allowedPaths = new Set(); /* paths the page may write to: only ones that came from a dialog, argv or the recent list */
 
 /* ---------- small settings file: last folder per kind + recent list ---------- */
@@ -54,7 +56,15 @@ function plainError(e) {
 const cleanName = (n, fallback) => (typeof n === 'string' && n.trim() ? n.trim() : fallback).replace(/[\\/:*?"<>|]/g, '_').slice(0, 120);
 const cleanFilters = f => (Array.isArray(f) ? f : [])
   .filter(x => x && typeof x.name === 'string' && Array.isArray(x.extensions)).slice(0, 6)
-  .map(x => ({ name: x.name.slice(0, 60), extensions: x.extensions.filter(e => typeof e === 'string' && /^[\w.]{1,12}$/.test(e)).slice(0, 8) }));
+  .map(x => ({ name: x.name.slice(0, 60), extensions: x.extensions.filter(e => typeof e === 'string' && /^[\w.]{1,12}$/.test(e)).slice(0, 8) }))
+  .filter(x => x.extensions.length);
+
+/* I2: write to a temp file next to the target, then rename over it, so a failed write never damages the existing file */
+async function writeAtomic(file, data, enc) {
+  const tmp = file + '.tmp-' + process.pid;
+  try { await fs.promises.writeFile(tmp, data, enc); await fs.promises.rename(tmp, file); }
+  catch (e) { await fs.promises.unlink(tmp).catch(() => {}); throw e; }
+}
 
 async function readProject(file) {
   const text = await fs.promises.readFile(file, 'utf8');
@@ -63,7 +73,10 @@ async function readProject(file) {
 }
 async function openPath(file) { /* argv, second launch, recent menu */
   try { send('shotref:open-file', await readProject(file)); }
-  catch (e) { dialog.showMessageBox(win, { type: 'error', message: 'Could not open that file.', detail: String((e && e.message) || e) }); }
+  catch (e) {
+    if (e && e.code === 'ENOENT') { settings.recent = settings.recent.filter(p => p !== file); saveSettings(); buildMenu(); }
+    dialog.showMessageBox(win, { type: 'error', message: 'Could not open that file.', detail: String((e && e.message) || e) });
+  }
 }
 const fileFromArgs = args => args.slice(1).find(a => typeof a === 'string' && !a.startsWith('-') && isProjectFile(a) && fs.existsSync(a));
 
@@ -74,7 +87,7 @@ ipcMain.handle('shotref:save-blob', async (e, name, data, filters) => {
     const r = await dialog.showSaveDialog(win, { defaultPath: path.join(folderFor('export'), cleanName(name, 'shotref-export')), filters: cleanFilters(filters) });
     if (r.canceled || !r.filePath) return { ok: false, canceled: true };
     const buf = data instanceof ArrayBuffer ? Buffer.from(data) : Buffer.from(data.buffer, data.byteOffset, data.byteLength);
-    await fs.promises.writeFile(r.filePath, buf);
+    await writeAtomic(r.filePath, buf);
     rememberFolder('export', r.filePath);
     return { ok: true, name: path.basename(r.filePath) };
   } catch (err) { console.error('ShotRef: save failed', err); return { ok: false, error: plainError(err) }; }
@@ -94,7 +107,7 @@ ipcMain.handle('shotref:save-project', async (e, text, opts) => {
       if (r.canceled || !r.filePath) return { ok: false, canceled: true };
       file = r.filePath;
     }
-    await fs.promises.writeFile(file, text, 'utf8');
+    await writeAtomic(file, text, 'utf8');
     allowedPaths.add(file); rememberFolder('project', file); addRecent(file);
     return { ok: true, name: path.basename(file), path: file };
   } catch (err) { console.error('ShotRef: project save failed', err); return { ok: false, error: plainError(err) }; }
@@ -112,6 +125,19 @@ ipcMain.handle('shotref:open-project', async () => {
   }
 });
 
+const IMPORT_TYPES = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif', glb: 'model/gltf-binary', gltf: 'model/gltf+json' };
+ipcMain.handle('shotref:pick-file', async (e, kind, filters) => {
+  try {
+    const r = await dialog.showOpenDialog(win, { defaultPath: folderFor('import'), properties: ['openFile'], filters: cleanFilters(filters) });
+    if (r.canceled || !r.filePaths[0]) return null;
+    const file = r.filePaths[0];
+    const data = await fs.promises.readFile(file);
+    rememberFolder('import', file);
+    return { name: path.basename(file), type: IMPORT_TYPES[path.extname(file).slice(1).toLowerCase()] || '', data: data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) };
+  } catch (err) { console.error('ShotRef: pick failed', err); return null; }
+});
+
+ipcMain.on('shotref:page-ready', () => { pageReady = true; });
 ipcMain.on('shotref:set-title', (e, t) => { if (typeof t === 'string' && win && !win.isDestroyed()) win.setTitle(t.slice(0, 200)); });
 ipcMain.on('shotref:close-ok', () => { closeAllowed = true; if (win && !win.isDestroyed()) win.close(); });
 ipcMain.on('shotref:version-sync', e => { e.returnValue = app.getVersion(); });
@@ -132,9 +158,7 @@ function buildMenu() {
       { label: 'Exit', click: () => { if (win && !win.isDestroyed()) win.close(); else app.quit(); } },
     ] },
     { label: 'Help', submenu: [
-      { label: 'Quick start', click: () => dialog.showMessageBox(win, {
-        type: 'info', title: 'Quick start', message: 'Quick start',
-        detail: 'Pick a starter scene, place people and props, then set camera keyframes. Press Play to preview, then export a video or frames for your AI model.\n\nSave with Ctrl+S. Open with Ctrl+O, or double-click a .shotref file.' }) },
+      { label: 'Quick start', click: () => send('shotref:menu', 'help') },
       { label: 'About ShotRef', click: () => dialog.showMessageBox(win, {
         type: 'info', title: 'About ShotRef', message: 'ShotRef', detail: 'Version ' + app.getVersion() + '\nBlocking and camera moves for AI video reference.' }) },
     ] },
@@ -145,7 +169,9 @@ function buildMenu() {
 /* ---------- window ---------- */
 function hardenSession(ses) {
   ses.webRequest.onBeforeRequest((d, cb) => cb({ cancel: !/^(file|data|devtools|chrome-extension):/i.test(d.url) })); /* no network of any kind */
-  ses.setPermissionRequestHandler((wc, perm, cb) => cb(false));
+  /* the only thing the page may ask for is writing a copied frame to the clipboard */
+  ses.setPermissionRequestHandler((wc, perm, cb) => cb(perm === 'clipboard-sanitized-write'));
+  ses.setPermissionCheckHandler((wc, perm) => perm === 'clipboard-sanitized-write');
 }
 function createWindow(startFile) {
   win = new BrowserWindow({
@@ -158,23 +184,26 @@ function createWindow(startFile) {
   wc.on('will-navigate', e => e.preventDefault());
   wc.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.on('close', e => {
-    if (closeAllowed || wc.isCrashed()) return;
+    if (closeAllowed || !pageReady || wc.isCrashed()) return; /* a page that never started cannot ask, so do not trap the window */
     e.preventDefault(); send('shotref:menu', 'close-request'); /* the page asks about unsaved work and calls closeOk() */
   });
-  win.on('closed', () => { win = null; });
+  win.on('closed', () => { win = null; pageReady = false; });
+  startFile = startFile || pendingFile; pendingFile = null;
   if (startFile) wc.once('did-finish-load', () => openPath(startFile)); /* the preload queues it until the page listens */
   win.loadFile(PAGE);
 }
 
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
-  app.on('second-instance', (e, argv) => {
-    if (!win) return;
+  app.on('second-instance', (e, argv, cwd) => {
+    const f = fileFromArgs(argv.map((a, i) => i && typeof a === 'string' && !path.isAbsolute(a) && !a.startsWith('-') ? path.resolve(cwd, a) : a));
+    if (!win) { pendingFile = f || pendingFile; return; }
     if (win.isMinimized()) win.restore();
     win.focus();
-    const f = fileFromArgs(argv); if (f) openPath(f);
+    if (f) openPath(f);
   });
   app.whenReady().then(() => {
+    app.setAppUserModelId('app.shotref.desktop');
     loadSettings(); hardenSession(session.defaultSession); buildMenu();
     createWindow(fileFromArgs(process.argv));
   });

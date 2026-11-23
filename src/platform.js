@@ -11,6 +11,7 @@
  *                                            file, else it shows the Save dialog (name = suggested file name)
  *                                            -> Promise<{ ok, name, path, canceled?, error? }>
  *   openProject()                            native Open dialog -> Promise<{ text, name, path } | null>
+ *   pickFile(kind, filters)                  native Open dialog for imports ('import' has its own remembered folder) -> Promise<{ name, type, data: ArrayBuffer } | null>
  *   setTitle(str)                            window title
  *   onMenu(cb)                               cb(cmd) for menu clicks: 'new' | 'open' | 'save' | 'save-as' | 'close-request'
  *   onOpenFile(cb)                           cb({ text, name, path }): a file passed on launch, double-clicked or picked from Recent
@@ -80,9 +81,16 @@ async function openProject(webInput) {
   catch (e) { console.error('ShotRef: could not open', e); return null; }
 }
 
+/* Desktop: pick a file to import (native dialog, remembers the folder) as a File. null = cancelled. undefined = not desktop: use the page's own file input. */
+async function pickFile(filters) {
+  if (!desk || typeof desk.pickFile !== 'function') return undefined;
+  try { const r = await desk.pickFile('import', filters || []); return r && r.data ? new File([r.data], r.name, { type: r.type || '' }) : null; }
+  catch (e) { console.error('ShotRef: could not pick a file', e); return null; }
+}
+
 export const platform = {
   kind, version: desk ? desk.version : null,
-  saveBlob, saveProject, openProject,
+  saveBlob, saveProject, openProject, pickFile,
   currentName: () => cur.name,
   currentPath: () => cur.path,
   getDoc: () => cur.doc,

@@ -1469,8 +1469,8 @@ function buildAddPanel() {
   }
   area.append(h('div', { class: 'addcat' }, 'Import'));
   area.append(h('div', { class: 'addgrid' },
-    h('button', { class: 'tile', title: 'Import a photo or drawing as a flat card (backdrop, poster, reference)', onclick: () => $('#fImage').click() }, h('span', { html: svgI('image') }), 'Image'),
-    h('button', { class: 'tile', title: 'Import a 3D model (.glb)', onclick: () => $('#fModel').click() }, h('span', { html: svgI('model') }), 'Model .glb'),
+    h('button', { class: 'tile', title: 'Import a photo or drawing as a flat card (backdrop, poster, reference)', onclick: () => pickImport('#fImage', importImage, IMG_FILTER) }, h('span', { html: svgI('image') }), 'Image'),
+    h('button', { class: 'tile', title: 'Import a 3D model (.glb)', onclick: () => pickImport('#fModel', importModel, MODEL_FILTER) }, h('span', { html: svgI('model') }), 'Model .glb'),
   ));
 }
 function iconFor(o) { return svgI(o.type); }
@@ -2437,7 +2437,8 @@ const projectDefaults = () => ({ settings: DEFAULT_SETTINGS, camera: defaultStat
 const BAD_FILE = "This isn't a ShotRef project, or the file is damaged.";
 /* Open a .shotref / .json project (Open button, Ctrl+O, drag-drop and the desktop app's file events all come here). Asks first if the scene has anything in it.
    `file` is { name, path } when the desktop app knows where it came from. */
-function loadProjectText(txt, file) {
+let launchFile = false; /* a file came from the desktop shell (launch, double-click, Recent): the starter sets must not open over it */
+function loadProjectText(txt, file, fromShell = false) {
   if (exporting) { toast('Wait for the export to finish.'); return; }
   let d;
   try { d = normalizeProject(JSON.parse(txt), projectDefaults()); }
@@ -2447,10 +2448,16 @@ function loadProjectText(txt, file) {
     catch (e) { console.error('ShotRef: could not open the project', e); toast(BAD_FILE, 4000); }
   };
   if (platform.kind === 'desktop' && platform.isDirty()) guardUnsaved(go);
-  else if (state.objects.length || state.plate) confirmBox('Open this file?', 'It will replace the current scene. You can undo this with Ctrl+Z.', go, 'Open file');
+  else if (!fromShell && (state.objects.length || state.plate)) confirmBox('Open this file?', 'It will replace the current scene. You can undo this with Ctrl+Z.', go, 'Open file');
   else go();
 }
 function readFile(file, as) { return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; if (as === 'text') r.readAsText(file); else r.readAsArrayBuffer(file); }); }
+const IMG_FILTER = [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp', 'gif'] }], PLATE_FILTER = [{ name: 'Photos', extensions: ['jpg', 'jpeg', 'png', 'webp'] }], MODEL_FILTER = [{ name: '3D models', extensions: ['glb', 'gltf'] }];
+/* desktop: native dialog that remembers the import folder; web: the hidden file input */
+async function pickImport(sel, handler, filters) {
+  const f = await platform.pickFile(filters);
+  if (f === undefined) $(sel).click(); else if (f) handler(f);
+}
 async function importModel(file) {
   const buf = await readFile(file, 'buf');
   if (/\.gltf$/i.test(file.name)) { const txt = new TextDecoder().decode(buf); if (/"uri"\s*:\s*"(?!data:)/.test(txt)) { toast('This .gltf uses separate files. Please export it as a single .glb.', 4000); return; } }
@@ -2478,7 +2485,7 @@ function plateSection() {
   const pl = state.plate, a = plateAsset();
   if (!pl || !a) return sec('Location photo',
     h('p', { class: 'note', style: 'margin:0 0 8px' }, 'Put a still of the real or AI-generated location behind the scene. Then block people and the camera on top of it.'),
-    h('button', { class: 'primary', style: 'width:100%', onclick: () => $('#fPlate').click() }, 'Load location photo…'));
+    h('button', { class: 'primary', style: 'width:100%', onclick: () => pickImport('#fPlate', importPlate, PLATE_FILTER) }, 'Load location photo…'));
   const fa = arOf(state.settings.aspect), ia = a.aspect || 1.5;
   const close = ASPECTS.reduce((b, x) => Math.abs(Math.log(x[1] / ia)) < Math.abs(Math.log(b[1] / ia)) ? x : b);
   const thumb = h('img', { src: assetURL(pl.asset), style: 'width:100%;border-radius:6px;display:block;border:1px solid var(--line2)' });
@@ -2488,7 +2495,7 @@ function plateSection() {
     selectRow('Ground', [['shadow', 'Shadows only (blend with photo)'], ['hide', 'Hidden'], ['solid', 'Solid 3D ground']], () => pl.ground || 'shadow', v => { pl.ground = v; changed(true); }),
     check('Include the photo in exports', () => pl.export !== false, v => { pl.export = v; changed(true); }),
     Math.abs(Math.log(fa / ia)) > 0.04 ? h('div', { class: 'row' }, h('span', { class: 'note', style: 'margin:0;flex:1' }, `The photo is ${close[0]}-ish; the frame is ${state.settings.aspect}, so the photo is cropped to fill it.`), h('button', { onclick: () => { state.settings.aspect = close[0]; changed(true, true); syncTopUI(); } }, 'Use ' + close[0])) : null,
-    h('div', { class: 'btns' }, h('button', { onclick: () => $('#fPlate').click() }, 'Replace…'), h('button', { style: 'color:#ff9c9c', onclick: () => { state.plate = null; changed(true, true); toast('Location photo removed'); } }, 'Remove')),
+    h('div', { class: 'btns' }, h('button', { onclick: () => pickImport('#fPlate', importPlate, PLATE_FILTER) }, 'Replace…'), h('button', { style: 'color:#ff9c9c', onclick: () => { state.plate = null; changed(true, true); toast('Location photo removed'); } }, 'Remove')),
     h('p', { class: 'note' }, 'How to match it: set the lens to roughly what the photo was shot with, and the camera at eye height (about 1.6 m) unless it was high or low. Then raise See-through and adjust until the 3D grid floor sits on the photo floor. Depth and Normals exports leave the photo out.'));
 }
 const NOT_IMAGE = "That file isn't an image. Use a JPG, PNG or WebP.";
@@ -2749,6 +2756,7 @@ function onDesktopMenu(cmd) {
   else if (cmd === 'open') openDialog();
   else if (cmd === 'save') saveProject(false);
   else if (cmd === 'save-as') saveProject(true);
+  else if (cmd === 'help') openModal('mHelp');
 }
 
 /* ============================== wiring ============================== */
@@ -2807,7 +2815,7 @@ function wire() {
   $('#fModel').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (f) importModel(f); };
   $('#fImage').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (f) importImage(f); };
   $('#fPlate').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (f) importPlate(f); };
-  $('#cbPlate').onclick = () => { if (plateAsset()) { select('camera'); toast('Location photo settings are in the Camera panel'); } else $('#fPlate').click(); };
+  $('#cbPlate').onclick = () => { if (plateAsset()) { select('camera'); toast('Location photo settings are in the Camera panel'); } else pickImport('#fPlate', importPlate, PLATE_FILTER); };
   // drag & drop
   const drop = $('#drop');
   vpEl.addEventListener('dragover', e => { e.preventDefault(); drop.style.display = 'flex'; });
@@ -2830,7 +2838,7 @@ function wire() {
   $('#cfOk').onclick = () => { closeModal($('#cfOk')); cfCb && cfCb(); };
   $('#cfAlt').onclick = () => { closeModal($('#cfAlt')); cfAltCb && cfAltCb(); };
   platform.onMenu(onDesktopMenu);
-  platform.onOpenFile(f => { if (f && typeof f.text === 'string') loadProjectText(f.text, f); });
+  platform.onOpenFile(f => { if (f && typeof f.text === 'string') { launchFile = true; closeModal($('#mStart')); loadProjectText(f.text, f, true); } });
   $('#exAspect').append(...ASPECTS.map(a => h('option', { value: a[0] }, a[2])));
   $('#exSize').append(...SIZES.map(s => h('option', { value: s[0] }, s[1])));
   $('#exAspect').onchange = e => { state.settings.aspect = e.target.value; changed(true, true); renderExportDialog(); };
@@ -3036,7 +3044,7 @@ function boot() {
   let seen = false; try { seen = localStorage.getItem('shotref.seenHelp'); localStorage.setItem('shotref.seenHelp', '1'); } catch (e) { }
   if (autosaveOff) toast(NO_AUTOSAVE, 6000); /* starter sets still open below on a first visit */
   if (broken) toast("Your last session couldn't be restored, so ShotRef started a fresh scene.", 5000);
-  else if (!restored && !seen) setTimeout(() => { if (!openModals().length) openStarters(true); }, 400);
+  else if (!restored && !seen) setTimeout(() => { if (!openModals().length && !launchFile) openStarters(true); }, 400);
   /* photos and models come from IndexedDB (async); legacy autosaves carry them inline */
   if (broken) idb.noPrune = true; /* the broken autosave's files may live only in IndexedDB */
   /* while a broken autosave is kept aside, never prune the files it lists (C4) */

@@ -1597,9 +1597,9 @@ check('desktop: menu commands, opened-file events and exports go through the bri
   st.objects = st.objects.slice(0, 2);
   const text = JSON.stringify({ app: 'ShotRef', version: 2, state: st, assets: {} });
   await p.evaluate(t => window.__dsk.openCb({ text: t, name: 'dbl.shotref', path: 'E:/dbl.shotref' }), text);
-  await p.waitForSelector('#mConfirm:not(.hidden)');
-  await p.click('#cfOk');
+  /* a file from the shell (launch, double-click, Recent) opens without a replace prompt when nothing is unsaved */
   await p.waitForFunction(() => window.__shotref.state.objects.length === 2);
+  ok(!(await isOpen(p, 'mConfirm')), 'replace prompt shown for a shell-opened file');
   await p.evaluate(() => window.__dsk.menu('save-as'));
   await p.waitForFunction(() => window.__dsk.calls.length === 1);
   const c = await p.evaluate(() => window.__dsk.calls[0]);

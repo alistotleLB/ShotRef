@@ -33,7 +33,7 @@
       "output": "release"
     },
     "files": [
-      "electron/**/*",
+      "electron/**/*", "!node_modules/**/*",
       "dist/ShotRef.html",
       "branding/shotref.ico",
       "package.json"
