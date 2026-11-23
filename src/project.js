@@ -216,8 +216,19 @@ export function describeChange(beforeJSON, afterJSON) {
   }
   if (!same(a.groups, b.groups)) return 'rename group';
   if (!same(a.meta, b.meta)) return 'rename project';
-  if (!same(a.camera, b.camera)) return 'camera change';
-  if (!same(a.settings, b.settings)) return 'settings change';
+  if (!same(a.camera, b.camera)) {
+    if (!same(a.camera && a.camera.dof, b.camera && b.camera.dof)) return 'blur or focus change';
+    if (same(a.camera && a.camera.base, b.camera && b.camera.base) && !same(a.camera && a.camera.keys, b.camera && b.camera.keys)) return 'camera move';
+    return 'camera change';
+  }
+  if (!same(a.settings, b.settings)) {
+    const sa = a.settings || {}, sb = b.settings || {}, diff = k => !same(sa[k], sb[k]);
+    if (diff('tod')) return 'time of day';
+    if (diff('shadows') || diff('shadowSoft')) return 'shadows';
+    const sun = ['sunAz', 'sunEl', 'sunInt', 'sunColor'].some(diff), rest = Object.keys({ ...sa, ...sb }).some(k => !['sunAz', 'sunEl', 'sunInt', 'sunColor', 'ambInt', 'tod', 'shadows', 'shadowSoft'].includes(k) && diff(k));
+    if (sun && !rest) return 'sun';
+    return 'settings change';
+  }
   if (!same(a.plate, b.plate)) return 'location photo change';
   return '';
 }

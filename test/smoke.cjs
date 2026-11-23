@@ -1045,7 +1045,7 @@ check('outliner and timeline rows work from the keyboard', async ({ open }) => {
   await p.waitForTimeout(200);
   const rows = await p.evaluate(() => [...document.querySelectorAll('#outliner .ol, #tlRows .lab')].every(r => r.tabIndex === 0));
   ok(rows, 'outliner rows or timeline labels are not focusable');
-  await p.focus('#outliner .ol:nth-child(3)');
+  await p.focus('#outliner .ol:nth-child(4)'); /* camera, sun, then the objects */
   await p.keyboard.press('Enter');
   ok(await p.evaluate(() => window.__shotref.selected) === id, 'Enter on an outliner row did not select it');
   await p.waitForTimeout(100);
@@ -1068,12 +1068,14 @@ check('shortcut letters do not change a focused dropdown', async ({ open }) => {
   await goAdvanced(p);
   await p.waitForTimeout(300);
   const g0 = await p.evaluate(() => window.__shotref.state.settings.guides);
+  await p.evaluate(() => { window.__shotref.setPref('camTab', 'output'); window.__shotref.select(null); window.__shotref.select('camera'); }); await p.waitForTimeout(300); /* the camera panel is tabbed (batch F): Guides is on the Output tab */
   ok(await focusPropSelect(p, 'Guides') !== null, 'setup: no Guides dropdown in the camera panel');
   await p.keyboard.press('c');
   await p.waitForTimeout(200);
   const s = await p.evaluate(() => ({ g: window.__shotref.state.settings.guides, view: window.__shotref.view }));
   ok(s.view === 'camera', 'C did not switch to camera view (view ' + s.view + ')');
   ok(s.g === g0, 'pressing C changed Guides from ' + g0 + ' to ' + s.g);
+  await p.evaluate(() => { window.__shotref.setPref('camTab', 'shot'); window.__shotref.select(null); window.__shotref.select('camera'); }); await p.waitForTimeout(300); /* Look at is on the Shot tab */
   const v0 = await focusPropSelect(p, 'Look at');
   ok(v0 !== null, 'setup: no Look at dropdown in the camera panel');
   await p.keyboard.press('p');
@@ -3008,6 +3010,7 @@ check('ground: the green lift arrow raises a floating item; a grounded item has 
 check('mount: the camera rides on an object; its own moves apply on top; unmounting keeps the framing; deleting the object frees it', async ({ open }) => {
   const p = await open(); await settle(p, 300);
   const car = await mkObj(p, 'car', [0, 0, 0]);
+  await p.evaluate(i => { const S = window.__shotref; S.state.objects = S.state.objects.filter(x => x.id === i); S.state.objects[0].opts.free = true; S.changed(true, true); }, car); /* flaky before (also at the previous commit): the ground rule settled the car's height a moment after the keys were set */
   await p.evaluate(i => { const S = window.__shotref, o = S.state.objects.find(x => x.id === i); o.keys = [{ t: 0, p: [0, 0, 0], r: [0, 0, 0], s: [1, 1, 1] }, { t: 4, p: [6, 0, 0], r: [0, 0, 0], s: [1, 1, 1] }]; S.state.camera.base = { p: [3, 1.6, 6], tg: [0, 1, 0], f: 35, roll: 0, fd: 7 }; S.state.camera.keys = []; S.changed(true, true); S.setT(0); }, car);
   const c0 = await p.evaluate(() => window.__shotref.evalCam(0));
   await p.evaluate(i => window.__shotref.setMount(i), car);
@@ -3018,7 +3021,7 @@ check('mount: the camera rides on an object; its own moves apply on top; unmount
   await p.evaluate(() => { const S = window.__shotref; S.setT(2); S.writeCam({ p: [5, 3, 6] }, true); });
   const st = await stateOf(p);
   ok(near(st.camera.base.p, [2, 3, 6], 0.05), 'a world position written to the camera is stored relative to the car: ' + JSON.stringify(st.camera.base.p));
-  ok(near(await p.evaluate(() => window.__shotref.evalCam(2).p), [5, 3, 6], 0.05), 'and it shows where it was put');
+  { const w = await p.evaluate(() => ({ p: window.__shotref.evalCam(2).p, T: window.__shotref.T, base: window.__shotref.state.camera.base.p })); ok(near(w.p, [5, 3, 6], 0.05), 'and it shows where it was put: ' + JSON.stringify(w)); }
   const here = await p.evaluate(() => window.__shotref.evalCam(window.__shotref.T));
   await p.evaluate(() => window.__shotref.setMount(null));
   ok((await stateOf(p)).camera.mount === null && near(await p.evaluate(() => window.__shotref.evalCam(window.__shotref.T).p), here.p), 'unmounting leaves the camera where it is');
@@ -3031,7 +3034,7 @@ check('mount: the camera rides on an object; its own moves apply on top; unmount
 check('mount: the Camera panel has Mount on; the object menu can mount the camera too', async ({ open }) => {
   const p = await open(); await settle(p, 300);
   const car = await mkObj(p, 'car', [0, 0, 0], { name: 'Taxi' });
-  await p.evaluate(() => window.__shotref.select('camera')); await settle(p, 300);
+  await p.evaluate(() => { window.__shotref.setPref('camTab', 'shot'); window.__shotref.select('camera'); }); await settle(p, 300); /* Mount is on the Shot tab (batch F) */
   ok(/Mount/.test(await p.textContent('#props')), 'the camera panel has a Mount section');
   await p.selectOption('#props select[data-role="mount"]', car); await settle(p, 300);
   ok((await stateOf(p)).camera.mount === car, 'Mount on Taxi');
@@ -3270,6 +3273,458 @@ check('timing: settling 123 objects after an edit takes under 20 ms', async ({ o
   const ts = []; for (let i = 0; i < 5; i++) ts.push(await p.evaluate(() => window.__shotref.settleTime()));
   console.log('   settle time for ' + (await p.evaluate(() => window.__shotref.state.objects.length)) + ' objects (ms): ' + ts.map(t => t.toFixed(1)).join(', '));
   ok(Math.min(...ts) < 20, 'settle took ' + Math.min(...ts).toFixed(1) + ' ms');
+  noErrors(p);
+});
+
+/* ---------------- Batch F: camera UX (shot description, move detection, tabs and move card, blur strength, path points) and light (time of day, shadows, sun) ---------------- */
+const camSet = (p, cam) => p.evaluate(c => { const S = window.__shotref; Object.assign(S.state.camera, c); S.changed(true, true); }, cam);
+const KEY = (t, p, tg, f = 35) => ({ t, p, tg, f, roll: 0, fd: 6 });
+const detect = p => p.evaluate(() => window.__shotref.detectMove());
+const hudText = p => p.evaluate(() => document.querySelector('#hud').textContent);
+const clearScene = p => p.evaluate(() => { const S = window.__shotref; S.state.objects.length = 0; S.changed(true, true); });
+const camTab = async (p, name) => { await p.evaluate(() => window.__shotref.select('camera')); await settle(p, 200); await p.click('#props .tabs button:has-text("' + name + '")'); await settle(p, 250); };
+const setRange = (p, label, v, commit = true) => p.evaluate(a => {
+  const row = [...document.querySelectorAll('#props .row')].find(r => r.querySelector('label') && r.querySelector('label').textContent.trim() === a[0]);
+  if (!row) throw new Error('no slider ' + a[0]); const r = row.querySelector('input[type=range]'); r.value = a[1];
+  r.dispatchEvent(new Event('input', { bubbles: true })); if (a[2]) r.dispatchEvent(new Event('change', { bubbles: true }));
+}, [label, v, commit]);
+const rowText = (p, label) => p.evaluate(l => { const row = [...document.querySelectorAll('#props .row')].find(r => r.querySelector('label') && r.querySelector('label').textContent.trim() === l); return row ? row.textContent : null; }, label);
+const pixDiff = (a, b) => { let d = 0; for (let i = 0; i < a.length; i += 4) d += Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2]); return d; };
+const shot = (p, n) => process.env.SHOTREF_SHOTS ? p.screenshot({ path: path.join(process.env.SHOTREF_SHOTS, n) }) : null;
+const personShot = async (p, cam = {}) => {
+  await clearScene(p);
+  await p.evaluate(() => { window.__shotref.addPerson('man', false, [0, 0, 0]); });
+  await camSet(p, { base: { p: [0, 1.4, 3], tg: [0, 1.2, 0], f: 50, roll: 0, fd: 3 }, keys: [], lookAtId: null, follow: false, ...cam });
+  await p.evaluate(() => window.__shotref.setView('camera')); await settle(p, 400);
+};
+
+check('move detection: names static, dolly, orbit, pan, truck, crane, zoom, dolly zoom and a free move', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const A = [0, 1.6, 8], G = [0, 1, 0];
+  await camSet(p, { keys: [] });
+  ok((await detect(p)).title === 'Static camera', 'no keys: ' + (await detect(p)).title);
+  const cases = [
+    ['Dolly in', [KEY(0, A, G), KEY(5, [0, 1.6, 5], G)]],
+    ['Dolly out', [KEY(0, [0, 1.6, 5], G), KEY(5, A, G)]],
+    ['Orbit', [KEY(0, A, G), KEY(5, [6.5, 1.6, 4.6], G)]],
+    ['Pan', [KEY(0, A, G), KEY(5, A, [3, 1, 0])]],
+    ['Tilt up', [KEY(0, A, [0, 0.5, 0]), KEY(5, A, [0, 2.2, 0])]],
+    ['Truck', [KEY(0, A, G), KEY(5, [3, 1.6, 8], [3, 1, 0])]],
+    ['Crane up', [KEY(0, A, G), KEY(5, [0, 4, 8], G)]],
+    ['Zoom in', [KEY(0, A, G, 35), KEY(5, A, G, 70)]],
+    ['Dolly zoom', [KEY(0, A, G, 50), KEY(5, [0, 1.6, 5], G, 28)]],
+    ['Subtle move', [KEY(0, A, G), KEY(5, [0, 1.62, 8], G)]],
+  ];
+  for (const [want, keys] of cases) {
+    await camSet(p, { keys, base: keys[0] });
+    const t = (await detect(p)).title; ok(t.includes(want), want + ' expected, got "' + t + '"');
+  }
+  const many = Array.from({ length: 12 }, (_, i) => KEY(i * 0.4, [i * 0.3, 1.6, 8 - i * 0.2], G));
+  await camSet(p, { keys: many, base: many[0] });
+  ok((await detect(p)).title.includes('Free / recorded move'), 'more than 8 keys: ' + (await detect(p)).title);
+  await camSet(p, { keys: [KEY(0, A, G), KEY(5, [0, 1.6, 5], G)], feel: 'strong' });
+  ok(/strong ease/.test((await detect(p)).sub) && /2 keys/.test((await detect(p)).sub), 'the sub line names the feel and the keys: ' + (await detect(p)).sub);
+  noErrors(p);
+});
+
+check('shot description: the camera view says shot size, lens, angle and the move', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await personShot(p);
+  let t = await hudText(p);
+  ok(/Medium shot/.test(t) && /50 mm/.test(t) && /eye level/.test(t), 'medium shot at 50 mm, eye level: "' + t + '"');
+  ok(!/dolly|static/i.test(t), 'a static camera adds no move to the line: "' + t + '"');
+  await camSet(p, { base: { p: [0, 0.4, 3], tg: [0, 1.4, 0], f: 50, roll: 0, fd: 3 } }); await settle(p, 300);
+  ok(/low angle/.test(await hudText(p)), 'a camera below looking up says low angle: ' + await hudText(p));
+  await camSet(p, { base: { p: [0, 1.3, 0.8], tg: [0, 1.2, 0], f: 85, roll: 0, fd: 1 } }); await settle(p, 300);
+  ok(/Close-up|Extreme close-up|Medium close-up/.test(await hudText(p)), 'close in: ' + await hudText(p));
+  await camSet(p, { base: { p: [0, 1.4, 14], tg: [0, 1.2, 0], f: 24, roll: 0, fd: 14 } }); await settle(p, 300);
+  ok(/Wide shot|Extreme wide/.test(await hudText(p)), 'far away: ' + await hudText(p));
+  await camSet(p, { base: { p: [0, 1.4, 3], tg: [0, 1.2, 0], f: 50, roll: 8, fd: 3 } }); await settle(p, 300);
+  ok(/dutch angle/.test(await hudText(p)), 'a tilted horizon says dutch angle: ' + await hudText(p));
+  await camSet(p, { base: { p: [0, 1.4, 3], tg: [0, 1.2, 0], f: 50, roll: 0, fd: 3 }, keys: [KEY(0, [0, 1.4, 5], [0, 1.2, 0], 50), KEY(5, [0, 1.4, 3], [0, 1.2, 0], 50)] }); await settle(p, 300);
+  ok(/dolly in/.test(await hudText(p)), 'the move is named in lower case: ' + await hudText(p));
+  ok(await p.evaluate(() => /Medium shot|Full shot|Wide shot/.test(window.__shotref.describeShot())), 'the hook gives the same line');
+  await shot(p, 'f-hud-shot-description.png');
+  noErrors(p);
+});
+
+check('camera panel: tabs Shot, Move, Lens, Photo, Output; the choice is remembered; a dot marks tabs in use', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => window.__shotref.select('camera')); await settle(p, 300);
+  const names = await p.evaluate(() => [...document.querySelectorAll('#props .tabs button')].map(b => b.textContent.trim()));
+  ok(names.join() === 'Shot,Move,Lens,Photo,Output', 'tabs: ' + names);
+  ok(await p.evaluate(() => document.querySelector('#props .tabs button.on').textContent.trim()) === 'Move', 'Move is the first tab to show');
+  ok(await p.evaluate(() => !!document.querySelector('#props .movecard')), 'the Move tab has the Camera move card');
+  await camTab(p, 'Lens');
+  ok(/Focal length/.test(await p.textContent('#props')) && /Depth of field/.test(await p.textContent('#props')) && !/Camera move/.test(await p.textContent('#props')), 'the Lens tab has lens and depth of field only');
+  ok(await p.evaluate(() => window.__shotref.getPref('camTab')) === 'lens', 'the tab is a remembered preference');
+  await p.evaluate(() => { window.__shotref.select(null); window.__shotref.select('camera'); }); await settle(p, 300);
+  ok(await p.evaluate(() => document.querySelector('#props .tabs button.on').textContent.trim()) === 'Lens', 'it comes back on Lens');
+  await camTab(p, 'Shot');
+  ok(/Subject/.test(await p.textContent('#props')) && /Mount on/.test(await p.textContent('#props')), 'the Shot tab has Subject and Mount');
+  await camTab(p, 'Photo'); ok(/Location photo/.test(await p.textContent('#props')), 'the Photo tab has the location photo');
+  await camTab(p, 'Output'); ok(/Aspect/.test(await p.textContent('#props')) && /Guides/.test(await p.textContent('#props')), 'the Output tab has aspect and guides');
+  ok(await p.evaluate(() => !document.querySelector('#props .tabs .tdot')), 'no dot while nothing is in use');
+  await p.evaluate(() => { const S = window.__shotref; S.state.camera.dof.on = true; S.state.camera.keys = [{ t: 0, p: [0, 1.6, 8], tg: [0, 1, 0], f: 35, roll: 0, fd: 6 }, { t: 5, p: [0, 1.6, 5], tg: [0, 1, 0], f: 35, roll: 0, fd: 6 }]; S.changed(true, true); }); await settle(p, 300);
+  const dots = await p.evaluate(() => [...document.querySelectorAll('#props .tabs button')].filter(b => b.querySelector('.tdot')).map(b => b.textContent.trim()));
+  ok(dots.join() === 'Move,Lens', 'dots on Move (keys) and Lens (blur on): ' + dots);
+  noErrors(p);
+});
+
+check('move card: names the move, shows Start and End thumbnails as data: URLs, jump to each frame, Set start / Set end, Play, Make static', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await personShot(p, { keys: [KEY(0, [0, 1.4, 6], [0, 1.2, 0], 50), KEY(5, [0, 1.4, 3], [0, 1.2, 0], 50)] });
+  await p.evaluate(() => { const S = window.__shotref; S.setView('editor'); S.select('camera'); }); await settle(p, 500);
+  ok(await p.textContent('#props .mc-title') === 'Dolly in', 'title: ' + await p.textContent('#props .mc-title'));
+  ok(/5\.0 s/.test(await p.textContent('#props .mc-sub')), 'sub line: ' + await p.textContent('#props .mc-sub'));
+  const src = await p.evaluate(() => [...document.querySelectorAll('#props .mthumb img')].map(i => i.src));
+  ok(src.length === 2 && src.every(s => /^data:image\/jpeg;base64,/.test(s) && s.length > 800), 'two thumbnails as data: URLs: ' + src.map(s => s.slice(0, 30)));
+  ok(src[0] !== src[1], 'start and end frames look different');
+  await p.click('#props .mthumb:nth-child(3)'); await settle(p, 200);
+  ok(Math.abs(await p.evaluate(() => window.__shotref.T) - 5) < 0.05, 'clicking End goes to the last frame: ' + await p.evaluate(() => window.__shotref.T));
+  await p.click('#props .mthumb:nth-child(1)'); await settle(p, 200);
+  ok(await p.evaluate(() => window.__shotref.T) === 0, 'clicking Start goes to 0');
+  ok(await p.evaluate(() => /Set start/.test(document.querySelector('#props .movecard').textContent) && /Set end/.test(document.querySelector('#props .movecard').textContent)), 'Set start and Set end are on the card');
+  const before = await p.evaluate(() => document.querySelector('#props .mthumb img').src);
+  await p.evaluate(() => { const S = window.__shotref; S.state.camera.keys[0].p = [3, 2.5, 7]; S.changed(true, true); }); await settle(p, 500);
+  ok(await p.evaluate(() => document.querySelector('#props .mthumb img').src) !== before, 'the Start thumbnail follows an edit to the first key');
+  await shot(p, 'f-move-card.png');
+  await p.click('#props .movecard button:has-text("Play the move")'); await settle(p, 300);
+  ok(await p.evaluate(() => document.querySelector('#bPlay').classList.contains('on')), 'Play the move plays');
+  await p.keyboard.press('Space'); await settle(p, 200);
+  await p.click('#props .movecard button:has-text("Make static")'); await settle(p, 300);
+  ok(await p.evaluate(() => window.__shotref.state.camera.keys.length) === 0, 'Make static clears the keys');
+  ok(await p.textContent('#props .mc-title') === 'Static camera', 'and the card says Static camera');
+  noErrors(p);
+});
+
+check('blur strength: Lens tab slider and presets, default 3, saved in camera.dof.strength', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => { const S = window.__shotref; S.state.camera.dof.on = true; S.changed(true, true); });
+  await camTab(p, 'Lens');
+  ok(/3\.0×/.test(await rowText(p, 'Strength')), 'default 3.0×: ' + await rowText(p, 'Strength'));
+  await setRange(p, 'Strength', 4.5); await settle(p, 200);
+  ok(await p.evaluate(() => window.__shotref.state.camera.dof.strength) === 4.5, 'slider writes dof.strength');
+  await p.click('#props .chips button:has-text("Soft")'); await settle(p, 200);
+  ok(await p.evaluate(() => window.__shotref.state.camera.dof.strength) === 2, 'preset Soft = 2');
+  await p.click('#props .chips button:has-text("Real lens")'); await settle(p, 200);
+  ok(await p.evaluate(() => window.__shotref.state.camera.dof.strength) === 1, 'preset Real lens = 1');
+  await p.keyboard.press('Control+z'); await settle(p, 200);
+  ok(await p.evaluate(() => window.__shotref.state.camera.dof.strength) === 2, 'one undo step per change');
+  noErrors(p);
+});
+
+check('blur strength: a stronger setting blurs more in the exported frame', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await personShot(p, { base: { p: [0.6, 1.5, 2.2], tg: [0, 1.4, 0], f: 85, roll: 0, fd: 2.2 } });
+  await p.evaluate(() => { const S = window.__shotref; S.state.camera.dof = { on: true, fstop: 2, auto: false, strength: 3 }; S.addObject('box', null, false, [-1.5, 0, -3]); S.addObject('box', null, false, [1.8, 0, -4]); S.changed(true, true); }); await settle(p, 500);
+  const r = await p.evaluate(() => {
+    const S = window.__shotref, c = S.state.camera, grab = () => Array.from(S.shotPixels(0, 240));
+    c.dof.on = false; S.changed(true); const sharp = grab();
+    c.dof.on = true; c.dof.strength = 1; S.changed(true); const s1 = grab();
+    c.dof.strength = 4.5; S.changed(true); const s45 = grab();
+    return { sharp, s1, s45 };
+  });
+  const d1 = pixDiff(r.sharp, r.s1), d45 = pixDiff(r.sharp, r.s45);
+  ok(d45 > d1 * 1.15 && d1 > 0, 'blur at 4.5 (' + d45 + ') is clearly stronger than at 1 (' + d1 + ') compared with the sharp frame');
+  noErrors(p);
+});
+
+check('blur strength: an artifact-made file keeps its strength; a file without one reads as 3', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const mk = dof => JSON.stringify({ app: 'ShotRef', version: 1, state: { v: 1, settings: { duration: 5, fps: 24 }, camera: { base: JSON.parse(CAM_BASE), keys: [], dof }, objects: [] }, assets: {} });
+  await openFile(p, 'a.shotref.json', mk({ on: true, fstop: 2, auto: true, strength: 4.2 }));
+  await camTab(p, 'Lens');
+  ok(/4\.2×/.test(await rowText(p, 'Strength')), 'file strength shows: ' + await rowText(p, 'Strength'));
+  await openFile(p, 'b.shotref.json', mk({ on: true, fstop: 2, auto: true }));
+  await camTab(p, 'Lens');
+  ok(/3\.0×/.test(await rowText(p, 'Strength')), 'missing strength shows 3: ' + await rowText(p, 'Strength'));
+  await openFile(p, 'c.shotref.json', mk({ on: true, fstop: 2, auto: true, strength: 'lots' }));
+  ok(await p.evaluate(() => window.__shotref.state.camera.dof.strength) === 3, 'junk strength reads as 3');
+  noErrors(p);
+});
+
+/* camera path points: three keys so the path bends in the editor */
+const PATH3 = [KEY(0, [-4, 1.6, 6], [0, 1, 0]), KEY(2.5, [0, 2.2, 5], [0, 1, 0]), KEY(5, [4, 1.6, 6], [0, 1, 0])];
+const pathSetup = async p => {
+  await p.evaluate(() => { const S = window.__shotref; S.state.camera.keys = []; S.setView('editor'); });
+  await camSet(p, { keys: PATH3, base: PATH3[0] }); await p.evaluate(() => window.__shotref.select(null)); await settle(p, 500);
+};
+const keyScreen = (p, i) => p.evaluate(i => { const S = window.__shotref; const w = S.camToWorld(S.state.camera.keys[i].p, S.state.camera.keys[i].t); return S.project(w[0], w[1], w[2]); }, i);
+const dragMouse = async (p, [x0, y0], [x1, y1], mods = []) => {
+  for (const m of mods) await p.keyboard.down(m);
+  await p.mouse.move(x0, y0); await p.mouse.down(); await p.mouse.move((x0 + x1) / 2, (y0 + y1) / 2, { steps: 3 }); await p.mouse.move(x1, y1, { steps: 4 }); await p.mouse.up();
+  for (const m of mods) await p.keyboard.up(m);
+  await settle(p, 250);
+};
+const pickScr = (p, [x, y]) => p.evaluate(a => window.__shotref.pickAtScreen(a[0], a[1]), [x, y]);
+
+check('camera path points: drag one along the floor to reshape the move; one undo step', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await pathSetup(p);
+  const [x, y] = await keyScreen(p, 1);
+  ok(await pickScr(p, [x, y]) === 'ck:1', 'the middle point can be picked: ' + await pickScr(p, [x, y]));
+  const h0 = await p.evaluate(() => window.__shotref.history.length), k0 = await p.evaluate(() => JSON.parse(JSON.stringify(window.__shotref.state.camera.keys)));
+  await dragMouse(p, [x, y], [x + 90, y + 30]);
+  const k1 = await p.evaluate(() => JSON.parse(JSON.stringify(window.__shotref.state.camera.keys)));
+  ok(Math.hypot(k1[1].p[0] - k0[1].p[0], k1[1].p[2] - k0[1].p[2]) > 0.3, 'the point moved on the floor: ' + k0[1].p + ' to ' + k1[1].p);
+  ok(Math.abs(k1[1].p[1] - k0[1].p[1]) < 1e-6, 'its height stayed');
+  ok(k1[0].p.join() === k0[0].p.join() && k1[2].p.join() === k0[2].p.join() && k1[1].t === k0[1].t, 'the other points and the time stayed');
+  ok(await p.evaluate(() => window.__shotref.selected) === 'camera', 'the camera is selected');
+  ok(await p.evaluate(() => window.__shotref.history.length) === h0 + 1, 'one undo step');
+  await p.keyboard.press('Control+z'); await settle(p, 250);
+  ok(canon(await p.evaluate(() => window.__shotref.state.camera.keys)) === canon(k0), 'undo puts the point back');
+  noErrors(p);
+});
+
+check('camera path points: Alt-drag raises or lowers a point, keeping its place on the floor', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await pathSetup(p);
+  const [x, y] = await keyScreen(p, 1), k0 = await p.evaluate(() => JSON.parse(JSON.stringify(window.__shotref.state.camera.keys[1])));
+  await dragMouse(p, [x, y], [x, y - 70], ['Alt']);
+  const k1 = await p.evaluate(() => JSON.parse(JSON.stringify(window.__shotref.state.camera.keys[1])));
+  ok(k1.p[1] > k0.p[1] + 0.3, 'dragging up with Alt raised it: ' + k0.p[1] + ' to ' + k1.p[1]);
+  ok(Math.abs(k1.p[0] - k0.p[0]) < 1e-6 && Math.abs(k1.p[2] - k0.p[2]) < 1e-6, 'x and z stayed');
+  noErrors(p);
+});
+
+check('camera path points: with the camera mounted the point is dragged in world space', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const car = await mkObj(p, 'car', [0, 0, 0], { base: { p: [1, 0, 0], r: [0, 90, 0], s: [1, 1, 1] } });
+  await p.evaluate(() => { const S = window.__shotref; S.state.camera.keys = []; S.setView('editor'); });
+  await camSet(p, { keys: PATH3, base: PATH3[0] });
+  await p.evaluate(i => window.__shotref.setMount(i), car); await p.evaluate(() => window.__shotref.select(null)); await settle(p, 500);
+  const [x, y] = await keyScreen(p, 1);
+  const w0 = await p.evaluate(() => { const S = window.__shotref, k = S.state.camera.keys[1]; return S.camToWorld(k.p, k.t); });
+  await dragMouse(p, [x, y], [x + 70, y + 20]);
+  const w1 = await p.evaluate(() => { const S = window.__shotref, k = S.state.camera.keys[1]; return S.camToWorld(k.p, k.t); });
+  ok(Math.hypot(w1[0] - w0[0], w1[2] - w0[2]) > 0.3 && Math.abs(w1[1] - w0[1]) < 1e-3, 'it moved in world space and kept its height: ' + w0 + ' to ' + w1);
+  noErrors(p);
+});
+
+check('camera path points: right-click the path to add a point, right-click a point to go there or delete it', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await pathSetup(p);
+  const mid = await p.evaluate(() => { const S = window.__shotref, c = S.evalCam(1.25).p; return S.project(c[0], c[1], c[2]); });
+  ok(['cpath', 'ck:0', 'ck:1'].includes(await pickScr(p, mid)), 'the path line can be picked: ' + await pickScr(p, mid));
+  await rightClick(p, ...mid); await settle(p, 200);
+  let labels = await menuLabels(p);
+  ok(labels && labels.some(l => /^Add a camera point here \(\d\.\d\d s\)/.test(l)) && labels.some(l => l.startsWith('Go to this moment')), 'path menu: ' + JSON.stringify(labels));
+  await clickItem(p, 'Add a camera point here'); await settle(p, 300);
+  const keys = await p.evaluate(() => window.__shotref.state.camera.keys.map(k => k.t));
+  ok(keys.length === 4 && keys.some(t => t > 0.9 && t < 1.6), 'a point was added near 1.25 s: ' + keys);
+  const [x, y] = await keyScreen(p, 1);
+  await rightClick(p, x, y); await settle(p, 200);
+  labels = await menuLabels(p);
+  ok(labels && labels.some(l => l.startsWith('Go to this moment')) && labels.some(l => l.startsWith('Look through the camera here')) && labels.some(l => l.startsWith('Delete this point')), 'point menu: ' + JSON.stringify(labels));
+  await clickItem(p, 'Go to this moment'); await settle(p, 200);
+  ok(Math.abs(await p.evaluate(() => window.__shotref.T) - keys[1]) < 0.05, 'Go to this moment moves the playhead to the point');
+  await rightClick(p, x, y); await settle(p, 200); await clickItem(p, 'Delete this point'); await settle(p, 300);
+  ok(await p.evaluate(() => window.__shotref.state.camera.keys.length) === 3, 'the point was deleted');
+  const [x2, y2] = await keyScreen(p, 1); /* the points moved up one place */
+  await rightClick(p, x2, y2); await settle(p, 200); await clickItem(p, 'Look through the camera here'); await settle(p, 300);
+  ok(await p.evaluate(() => window.__shotref.view) === 'camera', 'Look through the camera here opens the camera view');
+  noErrors(p);
+});
+
+check('camera path points: hidden in the camera view, and when the preference is off', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await pathSetup(p);
+  const [x, y] = await keyScreen(p, 1);
+  await p.evaluate(() => { window.__shotref.setPref('camPoints', false); window.__shotref.changed(false); }); await settle(p, 300);
+  ok(await pickScr(p, [x, y]) !== 'ck:1', 'the pref off hides the handles');
+  await p.evaluate(() => { window.__shotref.setPref('camPoints', true); window.__shotref.changed(false); }); await settle(p, 300);
+  ok(await pickScr(p, [x, y]) === 'ck:1', 'and back on');
+  await p.evaluate(() => window.__shotref.setView('camera')); await settle(p, 300);
+  ok(!(await p.evaluate(() => window.__shotref.pointsVisible())), 'no handles in the camera view');
+  noErrors(p);
+});
+
+check('camera path: screenshot of the path points', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await pathSetup(p); await p.evaluate(() => window.__shotref.select('camera')); await settle(p, 400);
+  await shot(p, 'f-camera-path-points.png');
+  noErrors(p);
+});
+
+/* ---- light ---- */
+const sunInfo = p => p.evaluate(() => window.__shotref.sunInfo());
+const hasRow = (p, label) => p.evaluate(l => !![...document.querySelectorAll('#props .row')].find(r => r.querySelector('label') && r.querySelector('label').textContent.trim() === l), label);
+
+check('time of day: the slider sets sun height, colour and strength, saved as settings.tod; default 14:00', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => { window.__shotref.select(null); }); await settle(p, 200);
+  ok(/14:00/.test(await rowText(p, 'Time of day')), 'default 14:00: ' + await rowText(p, 'Time of day'));
+  await setRange(p, 'Time of day', 12); await settle(p, 250);
+  let s = await p.evaluate(() => JSON.parse(JSON.stringify(window.__shotref.state.settings)));
+  ok(s.tod === 12 && s.sunEl === 72 && Math.abs(s.sunInt - 2.7) < 0.01 && s.sunColor === '#fff4e2', 'noon: ' + JSON.stringify([s.tod, s.sunEl, s.sunInt, s.sunColor]));
+  ok((await sunInfo(p)).intensity > 2.6 && (await sunInfo(p)).color === '#fff4e2', 'the light in the scene follows');
+  await setRange(p, 'Time of day', 6); await settle(p, 250);
+  s = await p.evaluate(() => JSON.parse(JSON.stringify(window.__shotref.state.settings)));
+  ok(s.sunEl === 2 && s.sunColor === '#ff8a3c' && Math.abs(s.sunInt - 0.9) < 0.01, 'sunrise: ' + JSON.stringify([s.sunEl, s.sunInt, s.sunColor]));
+  ok(/06:00/.test(await rowText(p, 'Time of day')) && /horizon/.test(await p.textContent('#props')), 'shows 06:00 and the description: ' + await p.textContent('#props'));
+  await setRange(p, 'Time of day', 17.5); await settle(p, 250);
+  ok(/Golden hour|Low sun/.test(await p.textContent('#props')) && /17:30/.test(await rowText(p, 'Time of day')), 'late afternoon wording');
+  await blurAll(p); await p.keyboard.press('Control+z'); await settle(p, 250);
+  ok(await p.evaluate(() => window.__shotref.state.settings.tod) === 6, 'one undo step per change');
+  noErrors(p);
+});
+
+check('time of day: renders differently in the exported frame', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => window.__shotref.select(null)); await settle(p, 200);
+  await setRange(p, 'Time of day', 12); await settle(p, 250);
+  const a = await p.evaluate(() => Array.from(window.__shotref.shotPixels(0, 240)));
+  await setRange(p, 'Time of day', 7); await settle(p, 250);
+  const b = await p.evaluate(() => Array.from(window.__shotref.shotPixels(0, 240)));
+  ok(pixDiff(a, b) > 20000, 'noon and early morning exports differ: ' + pixDiff(a, b));
+  noErrors(p);
+});
+
+check('light the shot from: Front, Side left, Side right, Backlight, Top place the sun relative to the camera', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => window.__shotref.select(null)); await settle(p, 200);
+  const az = await p.evaluate(() => { const c = window.__shotref.evalCam(window.__shotref.T); return Math.atan2(c.p[0] - c.tg[0], c.p[2] - c.tg[2]) * 180 / Math.PI; });
+  const wrap = d => ((d % 360) + 360) % 360, near360 = (a, b) => Math.abs(((a - b + 540) % 360) - 180) < 1.01;
+  for (const [label, d, el] of [['Front', 25, 35], ['Side left', -90, 22], ['Side right', 90, 22], ['Backlight', 180, 16], ['Top', 0, 82]]) {
+    await p.click('#props .chips button:text-is("' + label + '")'); await settle(p, 200);
+    const s = await p.evaluate(() => JSON.parse(JSON.stringify(window.__shotref.state.settings)));
+    ok(near360(s.sunAz, wrap(az + d)) && s.sunEl === el, label + ': ' + s.sunAz + ' / ' + s.sunEl + ' expected ' + wrap(az + d) + ' / ' + el);
+  }
+  noErrors(p);
+});
+
+check('shadows: Cast shadows and Softness change the sun in the scene and in the exported frame; Shadow depth maps to the fill light', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => { const S = window.__shotref; S.select(null); S.state.settings.sunEl = 40; S.state.settings.sunAz = 60; S.changed(true, true); }); await settle(p, 300);
+  ok(await p.evaluate(() => document.querySelector('#props').textContent.includes('Cast shadows')), 'Cast shadows is in the Scene panel');
+  ok((await sunInfo(p)).castShadow === true && Math.abs((await sunInfo(p)).radius - 2.8) < 0.01, 'default: shadows on, radius 1 + 0.3 x 6');
+  await setRange(p, 'Softness', 1); await settle(p, 250);
+  ok(Math.abs((await sunInfo(p)).radius - 7) < 0.01 && await p.evaluate(() => window.__shotref.state.settings.shadowSoft) === 1, 'softness 1 gives radius 7');
+  const soft = await p.evaluate(() => Array.from(window.__shotref.shotPixels(0, 240)));
+  await setRange(p, 'Softness', 0); await settle(p, 250);
+  const hard = await p.evaluate(() => Array.from(window.__shotref.shotPixels(0, 240)));
+  ok(pixDiff(soft, hard) > 500, 'hard and soft shadows export differently: ' + pixDiff(soft, hard));
+  await p.click('#props label:has-text("Cast shadows")'); await settle(p, 300);
+  ok(await p.evaluate(() => window.__shotref.state.settings.shadows) === false && (await sunInfo(p)).castShadow === false, 'switched off: the setting and the light');
+  ok(!(await hasRow(p, 'Softness')), 'Softness hides while shadows are off');
+  const off = await p.evaluate(() => Array.from(window.__shotref.shotPixels(0, 240)));
+  ok(pixDiff(off, hard) > 3000, 'shadows off exports differently from shadows on: ' + pixDiff(off, hard));
+  await setRange(p, 'Shadow depth', 0); await settle(p, 250);
+  const e0 = await p.evaluate(() => window.__shotref.state.settings.ambInt);
+  await setRange(p, 'Shadow depth', 1); await settle(p, 250);
+  const e1 = await p.evaluate(() => window.__shotref.state.settings.ambInt);
+  ok(Math.abs(e0 - 2.5) < 0.02 && Math.abs(e1 - 0.2) < 0.02, 'depth 0 = fill 2.5, depth 1 = fill 0.2: ' + e0 + ' / ' + e1);
+  noErrors(p);
+});
+
+check('sun: the Scene list has a Sun row; selecting it opens the Sun panel; the Delete key leaves it alone', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.click('#leftTabs [data-lt="scene"]'); await settle(p, 200);
+  ok(await p.evaluate(() => !!document.querySelector('#outliner .ol[data-id="sun"]')), 'a Sun row is in the Scene list');
+  const n0 = await p.evaluate(() => window.__shotref.state.objects.length);
+  await p.click('#outliner .ol[data-id="sun"]'); await settle(p, 300);
+  ok(await p.evaluate(() => window.__shotref.selected) === 'sun', 'the Sun row selects the sun');
+  ok(await p.evaluate(() => document.querySelector('#props .sec h3').textContent) === 'Sun' && /Light the shot from/.test(await p.textContent('#props')), 'the Sun panel opens');
+  await blurAll(p); await p.keyboard.press('Delete'); await settle(p, 200);
+  ok(await p.evaluate(() => window.__shotref.state.objects.length) === n0 && await p.evaluate(() => window.__shotref.selected) === 'sun', 'nothing was deleted');
+  await p.click('#outliner .ol[data-id="camera"]'); await settle(p, 200);
+  ok(await p.evaluate(() => window.__shotref.selected) === 'camera', 'other rows still select');
+  await p.click('#outliner .ol[data-id="sun"]'); await settle(p, 300);
+  await shot(p, 'f-sun-panel.png');
+  noErrors(p);
+});
+
+check('sun: right-click the Sun row for the light-from presets and the shadows switch', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.click('#leftTabs [data-lt="scene"]'); await settle(p, 200);
+  await p.click('#outliner .ol[data-id="sun"]', { button: 'right' }); await settle(p, 200);
+  const labels = await menuLabels(p);
+  ok(labels && ['Front light', 'Side light from the left', 'Side light from the right', 'Backlight', 'Top light', 'Turn shadows off'].every(l => labels.some(x => x.startsWith(l))), 'sun menu: ' + JSON.stringify(labels));
+  const az = await p.evaluate(() => { const c = window.__shotref.evalCam(window.__shotref.T); return Math.atan2(c.p[0] - c.tg[0], c.p[2] - c.tg[2]) * 180 / Math.PI; });
+  await clickItem(p, 'Backlight'); await settle(p, 250);
+  const s = await p.evaluate(() => JSON.parse(JSON.stringify(window.__shotref.state.settings)));
+  ok(Math.abs(((s.sunAz - az - 180 + 540) % 360) - 180) < 1.01 && s.sunEl === 16, 'Backlight: ' + s.sunAz + ' / ' + s.sunEl);
+  await p.click('#outliner .ol[data-id="sun"]', { button: 'right' }); await settle(p, 200); await clickItem(p, 'Turn shadows off'); await settle(p, 250);
+  ok(await p.evaluate(() => window.__shotref.state.settings.shadows) === false, 'shadows are off');
+  await p.click('#outliner .ol[data-id="sun"]', { button: 'right' }); await settle(p, 200);
+  ok((await menuLabels(p)).some(l => l.startsWith('Turn shadows on')), 'and the menu now offers to turn them on');
+  noErrors(p);
+});
+
+check('sun gizmo: drag the sun in the editor to turn the light; one undo step; redraws; hidden in the camera view and by the preference', async ({ open }) => {
+  const p = await open(); await settle(p, 400);
+  await p.evaluate(() => { const S = window.__shotref; S.select(null); S.setView('editor'); }); await settle(p, 400);
+  const g0 = await p.evaluate(() => window.__shotref.sunInfo().gizmo);
+  ok(g0 && g0.visible, 'the sun gizmo is visible in the editor');
+  const [x, y] = await p.evaluate(g => window.__shotref.project(g.pos[0], g.pos[1], g.pos[2]), g0);
+  ok(await pickScr(p, [x, y]) === 'sun', 'the gizmo can be picked: ' + await pickScr(p, [x, y]));
+  const s0 = await p.evaluate(() => JSON.parse(JSON.stringify(window.__shotref.state.settings))), h0 = await p.evaluate(() => window.__shotref.history.length);
+  const d0 = await p.evaluate(() => window.__shotref.renderStats().draws);
+  await dragMouse(p, [x, y], [x + 140, y + 60]);
+  const s1 = await p.evaluate(() => JSON.parse(JSON.stringify(window.__shotref.state.settings)));
+  ok(s1.sunAz !== s0.sunAz || s1.sunEl !== s0.sunEl, 'the sun moved: ' + [s0.sunAz, s0.sunEl] + ' to ' + [s1.sunAz, s1.sunEl]);
+  ok(s1.sunEl >= 2 && s1.sunEl <= 89 && s1.sunAz >= 0 && s1.sunAz < 360, 'direction stays in range');
+  ok(await p.evaluate(() => window.__shotref.selected) === 'sun', 'the sun is selected');
+  ok(await p.evaluate(() => window.__shotref.history.length) === h0 + 1, 'one undo step');
+  ok(await p.evaluate(() => window.__shotref.renderStats().draws) > d0, 'the view was redrawn');
+  await p.keyboard.press('Control+z'); await settle(p, 300);
+  const s2 = await p.evaluate(() => JSON.parse(JSON.stringify(window.__shotref.state.settings)));
+  ok(s2.sunAz === s0.sunAz && s2.sunEl === s0.sunEl, 'undo puts the sun back');
+  await shot(p, 'f-sun-gizmo.png');
+  await p.evaluate(() => { window.__shotref.setPref('showSun', false); window.__shotref.changed(false); }); await settle(p, 300);
+  ok(!(await p.evaluate(() => window.__shotref.sunInfo().gizmo.visible)), 'the preference hides it');
+  await p.evaluate(() => { window.__shotref.setPref('showSun', true); window.__shotref.setView('camera'); }); await settle(p, 300);
+  ok(!(await p.evaluate(() => window.__shotref.sunInfo().gizmo.visible)), 'hidden in the camera view');
+  noErrors(p);
+});
+
+check('sun gizmo: in the top view dragging turns the direction only', async ({ open }) => {
+  const p = await open(); await settle(p, 400);
+  await p.evaluate(() => { const S = window.__shotref; S.select(null); S.setView('top'); }); await settle(p, 500);
+  const g0 = await p.evaluate(() => window.__shotref.sunInfo().gizmo);
+  ok(g0 && g0.visible, 'visible in the top view');
+  const [x, y] = await p.evaluate(g => window.__shotref.project(g.pos[0], g.pos[1], g.pos[2]), g0);
+  const s0 = await p.evaluate(() => JSON.parse(JSON.stringify(window.__shotref.state.settings)));
+  await dragMouse(p, [x, y], [x + 80, y + 120]);
+  const s1 = await p.evaluate(() => JSON.parse(JSON.stringify(window.__shotref.state.settings)));
+  ok(s1.sunAz !== s0.sunAz && s1.sunEl === s0.sunEl, 'direction changed, height did not: ' + [s0.sunAz, s0.sunEl] + ' to ' + [s1.sunAz, s1.sunEl]);
+  noErrors(p);
+});
+
+check('light: an artifact-made file with time of day and shadow settings opens and renders with them', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const file = { app: 'ShotRef', version: 1, state: { v: 1, settings: { duration: 5, fps: 24, tod: 8, shadows: false, shadowSoft: 0.9, sunEl: 20, sunAz: 100, sunInt: 1.6, sunColor: '#ffcc99' }, camera: { base: JSON.parse(CAM_BASE), keys: [] }, objects: [] }, assets: {} };
+  await openFile(p, 'l.shotref.json', JSON.stringify(file));
+  const s = await sunInfo(p);
+  ok(s.castShadow === false && Math.abs(s.radius - 6.4) < 0.01 && Math.abs(s.intensity - 1.6) < 0.01, 'the sun in the scene uses the file: ' + JSON.stringify(s));
+  await p.evaluate(() => window.__shotref.select(null)); await settle(p, 300);
+  ok(/08:00/.test(await rowText(p, 'Time of day')), 'the panel shows 08:00: ' + await rowText(p, 'Time of day'));
+  const st = await stateOf(p);
+  ok(st.settings.tod === 8 && st.settings.shadows === false && st.settings.shadowSoft === 0.9, 'the fields are kept');
+  const bad = JSON.parse(JSON.stringify(file)); bad.state.settings.tod = 99; bad.state.settings.shadows = 'maybe'; bad.state.settings.shadowSoft = -3;
+  await openFile(p, 'l2.shotref.json', JSON.stringify(bad));
+  const sb = (await stateOf(p)).settings;
+  ok(sb.tod === 20 && !('shadows' in sb && typeof sb.shadows !== 'boolean') && sb.shadowSoft === 0, 'junk values are repaired: ' + JSON.stringify([sb.tod, sb.shadows, sb.shadowSoft]));
+  noErrors(p);
+});
+
+check('light: selecting the sun and undo/redo never move the sun or the camera', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const snap = () => p.evaluate(() => JSON.stringify([window.__shotref.state.settings.sunAz, window.__shotref.state.settings.sunEl, window.__shotref.state.camera]));
+  const before = await snap();
+  await p.evaluate(() => { window.__shotref.select('sun'); }); await settle(p, 300);
+  await blurAll(p); await p.keyboard.press('Control+z'); await p.keyboard.press('Control+y'); await settle(p, 300);
+  ok(await snap() === before, 'selecting the sun and undo/redo changed nothing');
+  noErrors(p);
+});
+
+check('screenshots: the Scene panel with the sun section and the Lens tab with blur strength', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => window.__shotref.select(null)); await settle(p, 400);
+  await shot(p, 'f-scene-sun-shadows.png');
+  await p.evaluate(() => { const S = window.__shotref; S.state.camera.dof.on = true; S.changed(true, true); });
+  await camTab(p, 'Lens'); await shot(p, 'f-lens-blur-strength.png');
   noErrors(p);
 });
 

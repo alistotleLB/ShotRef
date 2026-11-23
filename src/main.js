@@ -9,7 +9,7 @@ import { platform } from './platform.js';
 
 /* ---- shared values: every module-level `let`, what it holds, and what changes it ----
  * state, assets                  the project and its photos/models: restore, buildState, replaceProject, boot
- * T, playing, view, selected,  playhead: setTime; playing: setPlaying; view: setView; selected, selIds: select, sanitizeSel; pipOn: #bPip;
+ * T, playing, view, selected,  playhead: setTime; playing: setPlaying; view: setView; selected ('camera', 'target', 'sun' or an object id), selIds: select, sanitizeSel; pipOn: #bPip;
  *   pipOn, editRev, ...Dirty     editRev counts edits: changed, quietChange; uiDirty/propsDirty ask frame() to rebuild lists/panel
  * hist, hi                       undo snapshots and position: pushHistory, undo, redo, replaceProject
  * toastTimer                   toast hide timer: toast (downloads capability and the open file/unsaved mark live in platform.js)
@@ -157,6 +157,7 @@ const IC = {
   frame: '<path d="M4 8V5h3M17 5h3v3M20 16v3h-3M7 19H4v-3"/><circle cx="12" cy="10" r="2.5"/><path d="M8 17c.5-2.3 2-3.5 4-3.5s3.5 1.2 4 3.5"/>',
   target: '<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>',
   dup: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 00-1-1H5a1 1 0 00-1 1v10a1 1 0 001 1h3"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M18.7 5.3l-2.1 2.1M7.4 16.6l-2.1 2.1"/>',
   trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
 };
 const svgI = k => `<svg viewBox="0 0 24 24">${IC[k] || IC.box}</svg>`;
@@ -207,7 +208,7 @@ const CATALOG = {
 function defaultState() {
   const s = {
     v: FORMAT_VERSION, settings: clone(DEFAULT_SETTINGS),
-    camera: { base: { p: [3.4, 1.6, 6.2], tg: [0, 1.15, 0], f: 35, roll: 0, fd: 7.2 }, keys: [], shake: 0, lookAtId: null, follow: false, feel: 'gentle', dof: { on: false, fstop: 2.8, auto: true } },
+    camera: { base: { p: [3.4, 1.6, 6.2], tg: [0, 1.15, 0], f: 35, roll: 0, fd: 7.2 }, keys: [], shake: 0, lookAtId: null, follow: false, feel: 'gentle', dof: { on: false, fstop: 2.8, auto: true, strength: 3 } },
     objects: [],
   };
   return s;
@@ -305,7 +306,9 @@ function evalCamRaw(t) {
   r.fd = c.keys.every(k => typeof k.fd === 'number') ? Math.max(0.05, sampleField(c.keys, t, 'fd', m)[0]) : dist3(r.p, r.tg);
   return r;
 }
-function ensureDof() { const c = state.camera; if (!c.dof) c.dof = { on: false, fstop: 2.8, auto: true }; return c.dof; }
+function ensureDof() { const c = state.camera; if (!c.dof) c.dof = { on: false, fstop: 2.8, auto: true, strength: 3 }; return c.dof; }
+/* how strong the blur is (1 = a real lens, 3 = cinematic, 4.5 = dreamy); files without one read as 3 */
+const dofStrength = () => { const v = ensureDof().strength; return typeof v === 'number' && v > 0 ? clamp(v, 0.5, 4.5) : 3; };
 function focusDist(cs) { const d = ensureDof(); return d.auto ? Math.max(0.05, dist3(cs.p, cs.tg)) : cs.fd; }
 const subject = () => state.camera.lookAtId ? getObj(state.camera.lookAtId) : null;
 function aimPoint(o, t) {
@@ -566,9 +569,28 @@ function applyEnv() {
   scene.fog = s.fog ? new THREE.FogExp2(skyTex.horizon, s.fogDensity) : null;
   hemi.color.set(s.sky).lerp(new THREE.Color('#ffffff'), 0.35); hemi.groundColor.set(s.groundColor); hemi.intensity = s.ambInt;
   sun.color.set(s.sunColor); sun.intensity = s.sunInt;
+  sun.castShadow = s.shadows !== false; sun.shadow.radius = 1 + (typeof s.shadowSoft === 'number' ? s.shadowSoft : 0.3) * 6; /* softness 0..1 */
   ground.material.color.set(s.groundColor); ground.visible = s.groundOn;
   grid.visible = s.gridOn;
 }
+
+/* ---- time of day and the sun ----
+   settings.tod (5..20 h) drives the sun's height, colour and strength; direction, height, shadows and softness can also be set by hand */
+const todSun = tod => {
+  const e = clamp(Math.sin(Math.PI * (tod - 6) / 12), 0, 1), warm = clamp(e / 0.45, 0, 1);
+  return { el: Math.max(2, Math.round(72 * e)), color: '#' + new THREE.Color('#ff8a3c').lerp(new THREE.Color('#fff4e2'), warm * warm * (3 - 2 * warm)).getHexString(), int: r4(0.9 + 1.8 * clamp(e * 1.6, 0, 1)) };
+};
+const todLabel = t => { const m = Math.round(t % 1 * 60); return String(Math.floor(t)).padStart(2, '0') + ':' + String(m === 60 ? 0 : m).padStart(2, '0'); };
+const sunWording = () => { const e = state.settings.sunEl; return e < 8 ? 'Sun on the horizon, very long shadows' : e < 18 ? 'Golden hour, long shadows' : e < 40 ? 'Low sun, medium shadows' : e < 68 ? 'High sun, short shadows' : 'Overhead, tiny shadows'; };
+const camAzimuth = () => Math.atan2(camState.p[0] - camState.tg[0], camState.p[2] - camState.tg[2]) * R2D;
+/* "light the shot from": the sun placed relative to where the shot camera stands */
+const LIGHT_FROM = { front: [25, 35, 'Front light'], left: [-90, 22, 'Side light from the left'], right: [90, 22, 'Side light from the right'], back: [180, 16, 'Backlight'], top: [0, 82, 'Top light'] };
+function lightFrom(kind) {
+  const d = LIGHT_FROM[kind], s = state.settings; if (!d) return;
+  s.sunAz = Math.round(((camAzimuth() + d[0]) % 360 + 360) % 360); s.sunEl = d[1];
+  applyEnv(); changed(true, true); toast(d[2] + ' (relative to the shot camera)');
+}
+function setShadows(on) { state.settings.shadows = on; applyEnv(); changed(true, true); toast(on ? 'Shadows on' : 'Shadows off'); }
 
 /* ---- materials for render styles ---- */
 const clayMat = new THREE.MeshStandardMaterial({ color: 0xd9d9d9, roughness: 0.9 });
@@ -603,15 +625,19 @@ const dofMat = new THREE.ShaderMaterial({
       float d0 = vdist(vUv), r0 = bg ? 0.0 : coc(d0);
       vec3 acc = c0.rgb; float ws = 1.0;
       if (r0 > 0.6) {
+        /* big blurs read the colour from a smaller (mipmapped) copy, so 80 samples still cover the disc smoothly */
+        float lod = clamp(log2(max(1.0, r0 * 0.11)), 0.0, 3.5);
         float rot = 6.2831853 * fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
         for (int i = 0; i < 80; i++) {
           float fi = float(i) + 0.5;
           float r = sqrt(fi / 80.0) * r0;
           float a = fi * 2.39996323 + rot;
           vec2 uv = vUv + vec2(cos(a), sin(a)) * r / uRes;
-          vec3 c = texture2D(tColor, uv).rgb;
+          vec3 c = texture2D(tColor, uv, lod).rgb;
           float d = vdist(uv), rs = coc(d);
-          float w = d < d0 ? clamp(rs - r + 1.0, 0.0, 1.0) : 1.0;
+          /* nearer samples only count if they are blurry themselves (keeps a sharp subject from smearing, without halos round blurred shapes) */
+          float w = d < d0 ? clamp(max(rs - r + 1.0, rs / max(r, 1.0) * 1.6 - 0.2), 0.0, 1.0) : 1.0;
+          if (d < d0 - 0.25 && rs < 1.5) w = 0.0;
           acc += c * w; ws += w;
         }
       }
@@ -629,7 +655,7 @@ const dofTargets = new WeakMap();
 function dofTarget(rd, w, hh) {
   let rt = dofTargets.get(rd);
   if (!rt) {
-    rt = new THREE.WebGLRenderTarget(w, hh, { type: THREE.HalfFloatType, samples: 4 });
+    rt = new THREE.WebGLRenderTarget(w, hh, { type: THREE.HalfFloatType, samples: 4, generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter });
     rt.depthTexture = new THREE.DepthTexture(w, hh); rt.depthTexture.type = THREE.UnsignedIntType;
     dofTargets.set(rd, rt);
   }
@@ -649,7 +675,8 @@ function shotPass(rd, pxW, pxH) {
   const u = dofMat.uniforms;
   u.tColor.value = rt.texture; u.tDepth.value = rt.depthTexture; u.uRes.value.set(pxW, pxH);
   u.uNear.value = renderCam.near; u.uFar.value = renderCam.far; u.uFocus.value = S;
-  u.uK.value = (f * f) / (N * (Smm - f)) / 36 * longPx; u.uMax.value = 0.025 * longPx; u.uBgRaw.value = plateActive(style) ? 1 : 0;
+  const sg = dofStrength(); /* blur strength: scales how big the blur discs get (and how far they may grow) */
+  u.uK.value = (f * f) / (N * (Smm - f)) / 36 * longPx * sg; u.uMax.value = Math.min(0.075, 0.025 * Math.max(1, sg * 0.8)) * longPx; u.uBgRaw.value = plateActive(style) ? 1 : 0;
   rd.render(dofScene, dofCam);
 }
 
@@ -1213,6 +1240,21 @@ function makePath(color) {
   helpers.add(line, pts); return { line, pts };
 }
 const camPath = makePath(0xffcf5a), objPath = makePath(0x7fc4ff);
+camPath.line.userData.pick = 'cpath'; /* right-click the path to add a point */
+/* a handle on every camera key (drag to reshape the move; Alt-drag for height) */
+const ckGeo = new THREE.SphereGeometry(0.11, 16, 10), ckMat = new THREE.MeshBasicMaterial({ color: 0xffd05a, depthTest: false }), ckHotMat = new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false });
+const ckPts = []; let ckHot = -1;
+/* the sun: a yellow ball with rays, on a dashed line from the spot the camera looks at. Drag it to turn the light (editor and top view). */
+const sunGrp = new THREE.Group(); sunGrp.visible = false; helpers.add(sunGrp);
+const sunBall = mk(new THREE.SphereGeometry(0.42, 24, 16), new THREE.MeshBasicMaterial({ color: 0xffcd4d, depthTest: false }));
+sunBall.renderOrder = 8; sunBall.userData.pick = 'sun';
+const sunRays = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(Array.from({ length: 24 }, (_, i) => { const a = Math.floor(i / 2) / 12 * Math.PI * 2, r = i % 2 ? 0.95 : 0.6; return new THREE.Vector3(Math.cos(a) * r, Math.sin(a) * r, 0); })), new THREE.LineBasicMaterial({ color: 0xffcd4d, depthTest: false }));
+sunRays.renderOrder = 8;
+const sunPick = mk(new THREE.SphereGeometry(1, 10, 8), new THREE.MeshBasicMaterial({ visible: false })); sunPick.userData.pick = 'sun';
+const sunLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]), new THREE.LineDashedMaterial({ color: 0xffcd4d, dashSize: 0.4, gapSize: 0.3, transparent: true, opacity: 0.55, depthTest: false }));
+sunLine.renderOrder = 8; sunLine.visible = false;
+sunGrp.add(sunBall, sunRays, sunPick); helpers.add(sunLine);
+let sunDist = 12, sunDragging = false;
 const selBox = new THREE.BoxHelper(undefined, 0xff9a3c); selBox.visible = false; helpers.add(selBox);
 const selBoxes = []; /* one outline for every further selected item */
 const camProxy = new THREE.Object3D(), tgtProxy = new THREE.Object3D(); scene.add(camProxy, tgtProxy);
@@ -1319,11 +1361,43 @@ function updateHelpers() {
     pathPrev.visible = pathPrevPts.visible = true;
   } else pathPrev.visible = pathPrevPts.visible = false;
   updatePaths();
-  // shadows follow the action
+  updateCamPoints();
+  placeSun(); updateSunGizmo();
+}
+/* the light sits 60 m out in the sun's direction, aimed at the ground under what the camera looks at: shadows follow the action.
+   (Also called before an export frame, so an export never uses a stale sun.) */
+const _sunDir = new THREE.Vector3();
+function placeSun() {
   const az = state.settings.sunAz * D2R, el = state.settings.sunEl * D2R;
-  const c = new THREE.Vector3(camState.tg[0], 0, camState.tg[2]);
-  sun.target.position.copy(c);
-  sun.position.set(c.x + Math.cos(el) * Math.sin(az) * 60, Math.sin(el) * 60, c.z + Math.cos(el) * Math.cos(az) * 60);
+  const c = sun.target.position.set(camState.tg[0], 0, camState.tg[2]);
+  _sunDir.set(Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az));
+  sun.position.copy(c).addScaledVector(_sunDir, 60);
+  sun.updateMatrixWorld(); sun.target.updateMatrixWorld();
+}
+const camPointsOn = () => view !== 'camera' && state.camera.keys.length >= 2 && getPref('camPoints', true) !== false && camPath.line.visible;
+function updateCamPoints() {
+  const keys = state.camera.keys, show = camPointsOn();
+  while (ckPts.length < (show ? keys.length : 0)) { const m = new THREE.Mesh(ckGeo, ckMat); m.renderOrder = 9; helpers.add(m); ckPts.push(m); }
+  const top = view === 'top', cam = top ? topCam : edCam;
+  ckPts.forEach((m, i) => {
+    m.visible = show && i < keys.length; if (!m.visible) return;
+    m.userData.pick = 'ck:' + i; m.position.fromArray(camToWorld(keys[i].p, keys[i].t));
+    m.scale.setScalar(top ? 1.4 / topCam.zoom : clamp(cam.position.distanceTo(m.position) * 0.075, 0.3, 8));
+    m.material = ckHot === i ? ckHotMat : ckMat;
+  });
+  camPath.pts.visible = camPath.line.visible && !show; /* the handles replace the plain dots */
+}
+function updateSunGizmo() {
+  const show = view !== 'camera' && getPref('showSun', true) !== false;
+  sunGrp.visible = sunLine.visible = show; if (!show) return;
+  const top = view === 'top', cam = top ? topCam : edCam, c = sun.target.position;
+  if (!sunDragging) sunDist = top ? 4.2 / topCam.zoom * 1.2 : clamp(cam.position.distanceTo(c) * 0.42, 4, 60);
+  sunGrp.position.copy(c).addScaledVector(_sunDir, sunDist);
+  sunGrp.scale.setScalar(top ? 0.9 / topCam.zoom : clamp(cam.position.distanceTo(sunGrp.position) * 0.035, 0.25, 4));
+  sunRays.quaternion.copy(cam.quaternion); /* the rays face the viewer */
+  sunPick.scale.setScalar(1.4);
+  const q = sunLine.geometry.attributes.position; q.setXYZ(0, c.x, 0.02, c.z); q.setXYZ(1, sunGrp.position.x, sunGrp.position.y, sunGrp.position.z); q.needsUpdate = true; sunLine.computeLineDistances();
+  sunBall.material.color.set(selected === 'sun' ? 0xffe8a8 : 0xffcd4d);
 }
 
 /* ---- the floating toolbar over the selection ---- */
@@ -1760,7 +1834,7 @@ function buildAddPanel() {
 }
 function iconFor(o) { return svgI(o.type === 'person' ? (bodyOf(o) === 'man' ? 'person' : bodyOf(o)) : o.type); }
 /* Shift/Ctrl-click toggles a row in the selection; Alt-click picks one inside a group */
-const rowClick = id => e => select(id, id === 'camera' ? undefined : e.shiftKey || e.ctrlKey || e.metaKey ? 'toggle' : e.altKey ? 'single' : undefined);
+const rowClick = id => e => select(id, id === 'camera' || id === 'sun' ? undefined : e.shiftKey || e.ctrlKey || e.metaKey ? 'toggle' : e.altKey ? 'single' : undefined);
 function renderOutliner() {
   const el = $('#outliner'), fid = focusedRowId(el); el.innerHTML = '';
   const row = (id, icon, name, nk, hidden, onEye, o) => h('div', { class: 'ol' + (selected === id || selIds.includes(id) ? ' sel' : '') + (hidden ? ' hid' : '') + (o && o.grp ? ' ingrp' : ''), tabindex: 0, 'data-id': id, onclick: rowClick(id), onkeydown: rowKeys(id), ondblclick: () => { if (id !== 'camera') renameObj(id); } },
@@ -1771,6 +1845,7 @@ function renderOutliner() {
     o ? h('button', { class: 'eye lockb' + (o.locked ? ' on' : ''), title: o.locked ? 'Locked: click to unlock' : 'Lock (stops it being moved by accident)', 'aria-label': o.locked ? 'Unlock ' + name : 'Lock ' + name, html: svgI(o.locked ? 'lock' : 'unlock'), onclick: e => { e.stopPropagation(); lockObjs([o], !o.locked); } }) : null,
     onEye ? h('button', { class: 'eye', title: hidden ? 'Show' : 'Hide', onclick: e => { e.stopPropagation(); onEye(); } }, hidden ? '◌' : '●') : null);
   el.append(row('camera', svgI('camera'), 'Shot camera', state.camera.keys.length));
+  el.append(row('sun', svgI('sun'), 'Sun', 0));
   for (const o of state.objects) el.append(row(o.id, iconFor(o), o.name, o.keys.length, o.visible === false, () => { o.visible = o.visible === false; syncScene(); updateGizmo(); changed(true); }, o));
   if (!state.objects.length) el.append(h('div', { class: 'note', style: 'padding:6px 8px' }, 'Nothing here yet. Add a person or an object from the Add tab.'));
   putText($('#sceneCnt'), state.objects.length ? String(state.objects.length) : '');
@@ -1796,7 +1871,7 @@ const groupMembers = id => { const o = getObj(id); return o && o.grp ? state.obj
 const groupName = gid => (state.groups && state.groups[gid] && state.groups[gid].name) || 'Group';
 /* mode: undefined = this item (and its whole group), 'single' = just this one, 'toggle' = add or remove (Shift/Ctrl-click) */
 function select(id, mode) {
-  const o = id && id !== 'camera' && id !== 'target' ? getObj(id) : null;
+  const o = id && id !== 'camera' && id !== 'target' && id !== 'sun' ? getObj(id) : null;
   if (o) {
     const set = mode === 'single' ? [id] : groupMembers(id);
     if (mode === 'toggle') {
@@ -1811,9 +1886,9 @@ function select(id, mode) {
 /* after undo, delete, open: forget ids that are gone and keep `selected` and `selIds` in step */
 function sanitizeSel() {
   selIds = selIds.filter(id => getObj(id));
-  if (selected && selected !== 'camera' && selected !== 'target' && !getObj(selected)) selected = selIds[selIds.length - 1] || null;
+  if (selected && selected !== 'camera' && selected !== 'target' && selected !== 'sun' && !getObj(selected)) selected = selIds[selIds.length - 1] || null;
   if (getObj(selected) && !selIds.includes(selected)) selIds.push(selected);
-  if (!getObj(selected) && selected !== 'camera' && selected !== 'target') selected = null;
+  if (!getObj(selected) && selected !== 'camera' && selected !== 'target' && selected !== 'sun') selected = null;
 }
 /* a group left with fewer than two members is dissolved; groups with nobody in them go */
 function pruneGroups() {
@@ -1927,6 +2002,7 @@ function renderProps() {
   live.length = 0;
   const p = $('#props'); p.innerHTML = '';
   /* in Camera view with nothing selected, show the camera tools; the selection stays empty (U3) */
+  if (selected === 'sun') return propsSun(p);
   if (selected === 'camera' || selected === 'target' || (view === 'camera' && !selected)) return propsCamera(p);
   const o = selected && getObj(selected);
   if (o && isMulti()) return propsMulti(p);
@@ -1942,7 +2018,7 @@ function propsScene(p) {
     h('button', { class: 'primary', style: 'width:100%', onclick: () => openStarters() }, 'Browse starter sets…')));
   if (simple) {
     p.append(sec('Ground', check('Show ground', () => s.groundOn, v => set('groundOn', v)), check('Grid in editor', () => s.gridOn, v => { set('gridOn', v); syncTopUI(); }),
-      h('p', { class: 'note' }, 'Sky colours, sun and fog are in Advanced mode (gear menu, top right).')));
+      h('p', { class: 'note' }, 'Sky colours and fog are in Advanced mode (gear menu, top right).')));
   }
   if (!simple) p.append(sec('Sky & ground',
     colorRow('Sky', () => s.sky, (v, c) => { s.env = 'custom'; set('sky', v, c); }),
@@ -1951,12 +2027,7 @@ function propsScene(p) {
     check('Grid in editor', () => s.gridOn, v => { set('gridOn', v); syncTopUI(); }),
     check('Fog / haze', () => s.fog, v => set('fog', v)),
     slider('Fog amount', () => s.fogDensity, (v, c) => set('fogDensity', v, c), { min: 0.002, max: 0.08, step: 0.001, fmt: v => v.toFixed(3) })));
-  if (!simple) p.append(sec('Sun & light',
-    slider('Direction', () => s.sunAz, (v, c) => set('sunAz', v, c), { min: 0, max: 360, step: 1, fmt: v => v.toFixed(0) + '°' }),
-    slider('Height', () => s.sunEl, (v, c) => set('sunEl', v, c), { min: 2, max: 90, step: 1, fmt: v => v.toFixed(0) + '°' }),
-    slider('Sun strength', () => s.sunInt, (v, c) => set('sunInt', v, c), { min: 0, max: 5, step: 0.05 }),
-    colorRow('Sun colour', () => s.sunColor, (v, c) => set('sunColor', v, c)),
-    slider('Fill light', () => s.ambInt, (v, c) => set('ambInt', v, c), { min: 0, max: 3, step: 0.05 })));
+  p.append(sunSection(!simple));
   p.append(sec('Getting started', h('ol', { class: 'steps', style: 'font-size:12px;margin:0' },
     h('li', null, 'Add people and props from the left, then click where they go.'),
     h('li', null, 'Drag them on the floor, turn them with the orange ring, draw walk paths.'),
@@ -1964,78 +2035,193 @@ function propsScene(p) {
     h('li', null, 'Export the video or frames.')),
     h('button', { style: 'margin-top:8px', onclick: () => openModal('mHelp') }, 'Show quick start & shortcuts')));
 }
+/* ---- shot description and move detection (the camera view's top line, the Camera move card) ---- */
+/* "Medium shot · 50 mm · eye level": the size is worked out from the person nearest the middle of the frame */
+function describeShot() {
+  const cs = camState, out = [], ar = arOf(state.settings.aspect), sv = ar >= 1 ? 36 / ar : 36, vfov = 2 * Math.atan(sv / (2 * cs.f));
+  const P = new THREE.Vector3().fromArray(cs.p), o = new THREE.Vector3().fromArray(cs.tg).sub(P).normalize();
+  let best = null, bs = Infinity;
+  for (const u of persons()) {
+    const v = views.get(u.id); if (!v || !v.group.visible) continue;
+    const g = personGeom(u), m = new THREE.Vector3(g.P.x, g.P.y + (g.top - g.P.y) * 0.6, g.P.z), d = m.clone().sub(P), along = d.dot(o);
+    if (along <= 0.2) continue;
+    const off = d.clone().sub(o.clone().multiplyScalar(along)).length() / along;
+    if (off > Math.tan(vfov / 2) * ar * 1.1) continue; /* not in the frame */
+    const score = off + along * 2e-3; if (score < bs) { bs = score; best = { g, along }; }
+  }
+  if (best) {
+    const ratio = 2 * best.along * Math.tan(vfov / 2) / (best.g.top - best.g.P.y); /* how much of the person's height the frame shows */
+    out.push(ratio <= 0.13 ? 'Extreme close-up' : ratio <= 0.3 ? 'Close-up' : ratio <= 0.45 ? 'Medium close-up' : ratio <= 0.75 ? 'Medium shot' : ratio <= 1.35 ? 'Full shot' : ratio <= 3.2 ? 'Wide shot' : 'Extreme wide');
+  }
+  out.push(Math.round(cs.f) + ' mm');
+  const ang = Math.asin(clamp(o.y, -1, 1)) * R2D;
+  out.push(ang < -60 ? 'overhead' : ang < -14 ? 'high angle' : ang > 12 || (cs.p[1] < 0.8 && ang > 3) ? 'low angle' : 'eye level');
+  if (Math.abs(cs.roll || 0) > 3) out.push('dutch angle');
+  const mv = detectMove().title.toLowerCase();
+  if (mv !== 'static camera') out.push(mv);
+  return out.join(' · ');
+}
+/* names the camera move from its first and last key: dolly, truck, crane, orbit, pan, tilt, zoom, dolly zoom */
+function detectMove() {
+  const c = state.camera, subj = subject(), track = c.follow && subj;
+  if (c.keys.length < 2 && !track) return { title: 'Static camera', sub: 'The camera does not move. Set a start and end frame, pick a move, or record one.' };
+  const a = evalCam(c.keys.length ? c.keys[0].t : 0), b = evalCam(c.keys.length ? c.keys[c.keys.length - 1].t : lastT());
+  const P0 = new THREE.Vector3().fromArray(a.p), P1 = new THREE.Vector3().fromArray(b.p), G0 = new THREE.Vector3().fromArray(a.tg), G1 = new THREE.Vector3().fromArray(b.tg);
+  const D = Math.max(0.3, P0.distanceTo(G0)), fwd = G0.clone().sub(P0).normalize(), right = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 1, 0)).normalize();
+  const d = P1.clone().sub(P0), dF = d.dot(fwd), dR = d.dot(right), dY = d.y, aim = G1.distanceTo(G0), parts = [];
+  if (track) parts.push('Tracking ' + subj.name);
+  if (!(track && c.keys.length < 2)) {
+    if (c.keys.length > 8) parts.push('Free / recorded move');
+    else {
+      const zoom = b.f / a.f;
+      if (d.length() < 0.15 * D) { /* the camera stays: it turns */
+        const yaw = Math.atan2(G1.x - P1.x, G1.z - P1.z) - Math.atan2(G0.x - P0.x, G0.z - P0.z), pan = Math.atan2(Math.sin(yaw), Math.cos(yaw)) * R2D;
+        const tilt = (Math.asin(clamp(G1.clone().sub(P1).normalize().y, -1, 1)) - Math.asin(clamp(fwd.y, -1, 1))) * R2D;
+        if (Math.abs(pan) > 4) parts.push(pan > 0 ? 'Pan left' : 'Pan right');
+        if (Math.abs(tilt) > 4) parts.push(tilt > 0 ? 'Tilt up' : 'Tilt down');
+      } else if (aim < 0.35 * D && Math.abs(dR) > 0.3 * D) parts.push(dR > 0 ? 'Orbit right' : 'Orbit left');
+      else {
+        if (Math.abs(dF) > 0.12 * D) parts.push(zoom < 0.85 && dF > 0 ? 'Dolly zoom' : dF > 0 ? 'Dolly in' : 'Dolly out');
+        if (Math.abs(dR) > 0.15 * D) parts.push(dR > 0 ? 'Truck right' : 'Truck left');
+        if (Math.abs(dY) > 0.4) parts.push(dY > 0 ? 'Crane up' : 'Crane down');
+      }
+      if (!parts.includes('Dolly zoom')) { if (zoom > 1.15) parts.push('Zoom in'); else if (zoom < 0.87) parts.push('Zoom out'); }
+      if (!parts.length) parts.push('Subtle move');
+    }
+  }
+  const feel = { constant: 'constant speed', gentle: 'gentle ease', strong: 'strong ease' }[c.feel || 'gentle'];
+  return { title: parts.slice(0, 3).join(' + '), sub: `${state.settings.duration.toFixed(1)} s · ${feel} · ${c.keys.length} key${c.keys.length === 1 ? '' : 's'}` };
+}
+/* the Start and End frames as small JPEG data: URLs (no blob: URLs: the claude.ai sandbox forbids them), cached until the scene or frame changes */
+let thumbCache = { key: '', s: '', e: '' };
+function camThumbs() {
+  const key = editRev + '|' + state.settings.aspect + '|' + state.settings.style + '|' + plateKey;
+  if (thumbCache.key === key || exporting) return thumbCache;
+  try {
+    const w = 240, hh = Math.max(2, Math.round(w / arOf(state.settings.aspect) / 2) * 2), r = getExportRenderer(w, hh);
+    const grab = t => { renderExportFrame(r, t, w, hh); return r.domElement.toDataURL('image/jpeg', 0.8); };
+    thumbCache = { key, s: grab(0), e: grab(lastT()) };
+  } catch (e) { console.error(e); thumbCache = { key, s: '', e: '' }; }
+  applyAll(T); requestRender();
+  return thumbCache;
+}
+function moveCard() {
+  const ends = camEnds(), mv = detectMove(), th = camThumbs(), keyed = state.camera.keys.length > 0;
+  const thumb = (label, src, on, t) => h('button', { class: 'mthumb' + (on ? ' ok' : ''), title: 'Go to the ' + label.toLowerCase() + ' frame', onclick: () => setTime(t) },
+    src ? h('img', { src, alt: label + ' frame' }) : h('div', { class: 'noimg' }), h('span', null, (on ? '✓ ' : '') + label));
+  return sec('Camera move', h('div', { class: 'movecard' },
+    h('div', { class: 'mc-title' }, mv.title), h('div', { class: 'mc-sub' }, mv.sub),
+    h('div', { class: 'mc-thumbs' }, thumb('Start', th.s, ends.s, 0), h('span', { class: 'mc-arrow' }, '→'), thumb('End', th.e, ends.e, lastT())),
+    h('div', { class: 'btns big2' },
+      h('button', { class: ends.s ? 'on' : '', onclick: () => setShotEnd('start'), title: 'Save what the camera sees now as the first frame' }, 'Set start'),
+      h('button', { class: ends.e ? 'on' : '', onclick: () => setShotEnd('end'), title: 'Save what the camera sees now as the last frame' }, 'Set end')),
+    keyed ? h('div', { class: 'btns' }, h('button', { onclick: () => { setTime(0); setPlaying(true); } }, '▶ Play the move'), h('button', { onclick: makeCameraStatic }, 'Make static')) : null,
+    h('p', { class: 'note' }, ends.s && ends.e ? 'Reframe at either end and press Set start or Set end again to change it.' : 'Frame the opening shot → Set start. Frame the closing shot → Set end.')));
+}
+
+/* "Sun & shadows": light the shot from a side, time of day, direction and height, shadows on or off, softness and depth */
+function sunSection(adv) {
+  const s = state.settings, set = (k, v, c = true) => { s[k] = v; applyEnv(); changed(c); };
+  const note = h('span', { class: 'note', style: 'margin:0' }); live.push(() => putText(note, sunWording()));
+  return sec('Sun & shadows',
+    h('div', { class: 'lbl', style: 'width:auto;margin-bottom:4px' }, 'Light the shot from'),
+    h('div', { class: 'chips' }, [['front', 'Front'], ['left', 'Side left'], ['right', 'Side right'], ['back', 'Backlight'], ['top', 'Top']].map(([k, l]) => h('button', { onclick: () => lightFrom(k), title: 'Place the sun relative to where the camera looks' }, l))),
+    slider('Time of day', () => typeof s.tod === 'number' ? s.tod : 14, (v, c) => { const a = todSun(v); s.tod = v; s.sunEl = a.el; s.sunColor = a.color; s.sunInt = a.int; applyEnv(); changed(c); }, { min: 5, max: 20, step: 0.25, fmt: todLabel }),
+    h('div', { class: 'row' }, note),
+    slider('Direction', () => s.sunAz, (v, c) => set('sunAz', v, c), { min: 0, max: 360, step: 1, fmt: v => v.toFixed(0) + '\u00b0' }),
+    slider('Height', () => s.sunEl, (v, c) => set('sunEl', v, c), { min: 2, max: 90, step: 1, fmt: v => v.toFixed(0) + '\u00b0' }),
+    check('Cast shadows', () => s.shadows !== false, v => { s.shadows = v; applyEnv(); changed(true, true); }),
+    s.shadows !== false ? slider('Softness', () => typeof s.shadowSoft === 'number' ? s.shadowSoft : 0.3, (v, c) => set('shadowSoft', v, c), { min: 0, max: 1, step: 0.01, fmt: v => v < 0.15 ? 'hard' : v < 0.5 ? 'medium' : 'soft' }) : null,
+    slider('Shadow depth', () => clamp(1 - (s.ambInt - 0.2) / 2.3, 0, 1), (v, c) => set('ambInt', r4(0.2 + (1 - v) * 2.3), c), { min: 0, max: 1, step: 0.01, fmt: v => v < 0.35 ? 'light' : v < 0.7 ? 'normal' : 'deep' }),
+    slider('Sun strength', () => s.sunInt, (v, c) => set('sunInt', v, c), { min: 0, max: 5, step: 0.05 }),
+    adv ? colorRow('Sun colour', () => s.sunColor, (v, c) => set('sunColor', v, c)) : null,
+    h('p', { class: 'note' }, 'Tip: drag the yellow sun in the editor or top view and watch the shadows move. Shadows follow the area the camera is looking at.'));
+}
+/* the panel for the Sun row (and the sun in the 3D view) */
+function propsSun(p) {
+  const s = state.settings;
+  p.append(sec('Sun', h('p', { class: 'note', style: 'margin:0' }, 'Drag the sun in the 3D view, or use the controls below. It lights the whole scene.')));
+  p.append(sunSection(true));
+  p.append(sec('Environment', h('div', { class: 'chips' }, Object.entries(ENV).map(([k, e]) => h('button', { class: s.env === k ? 'on' : '', onclick: () => { Object.assign(s, e, { env: k }); applyEnv(); changed(true, true); } }, e.label))),
+    h('p', { class: 'note' }, 'Presets change the sky, sun and fill light together.')));
+}
+/* ---- the camera panel: Shot | Move | Lens | Photo | Output ---- */
+const CAM_TABS = [['shot', 'Shot'], ['move', 'Move'], ['lens', 'Lens'], ['photo', 'Photo'], ['output', 'Output']];
 function propsCamera(p) {
-  const c = state.camera, s = state.settings;
+  const c = state.camera, s = state.settings, dof = ensureDof();
   p.append(sec('Shot camera',
     h('div', { class: 'btns' },
       h('button', { class: view === 'camera' ? 'on' : '', onclick: () => setView(view === 'camera' ? 'editor' : 'camera') }, view === 'camera' ? 'Back to editor' : 'Look through camera'),
       view === 'editor' ? h('button', { onclick: camToEditorView, title: 'Place the camera where the editor view is' }, 'Camera to editor view') : null),
   ));
-  const ends = camEnds();
-  p.append(sec('Start & end frames',
-    h('div', { class: 'btns big2' },
-      h('button', { class: ends.s ? 'on' : '', onclick: () => setShotEnd('start'), title: 'Save the current framing as the first frame' }, (ends.s ? '✓ ' : '') + 'Set start'),
-      h('button', { class: ends.e ? 'on' : '', onclick: () => setShotEnd('end'), title: 'Save the current framing as the last frame' }, (ends.e ? '✓ ' : '') + 'Set end')),
-    h('div', { class: 'btns' },
-      h('button', { onclick: () => setTime(0), disabled: !ends.s }, '⏮ Go to start'),
-      h('button', { onclick: () => setTime(lastT()), disabled: !ends.e }, 'Go to end ⏭')),
-    h('p', { class: 'note' }, 'Frame the opening shot and press Set start. Then frame the closing shot and press Set end. The move in between is made for you.')));
-  const ps = persons();
-  if (ps.length) {
-    if (!shotPerson || !getObj(shotPerson)) shotPerson = defaultShotPerson();
-    p.append(sec('Frame a person',
-      ps.length > 1 ? selectRow('Person', ps.map(x => [x.id, x.name]), () => shotPerson, v => { shotPerson = v; }) : null,
-      shotGrid(() => shotPerson),
-      h('p', { class: 'note' }, 'Uses the current lens. Try: Wide → Set start, Close-up → Set end.')));
+  const tab = CAM_TABS.some(t => t[0] === getPref('camTab')) ? getPref('camTab') : 'move';
+  const inUse = { photo: !!state.plate, move: c.keys.length > 0, lens: !!dof.on };
+  p.append(h('div', { class: 'tabs', role: 'tablist' }, CAM_TABS.map(([k, l]) =>
+    h('button', { role: 'tab', 'aria-selected': String(tab === k), class: tab === k ? 'on' : '', onclick: () => { setPref('camTab', k); propsDirty = true; } }, l, inUse[k] ? h('i', { class: 'tdot' }) : null))));
+  if (tab === 'shot') {
+    const ps = persons();
+    if (ps.length) {
+      if (!shotPerson || !getObj(shotPerson)) shotPerson = defaultShotPerson();
+      p.append(sec('Frame a person',
+        ps.length > 1 ? selectRow('Person', ps.map(x => [x.id, x.name]), () => shotPerson, v => { shotPerson = v; }) : null,
+        shotGrid(() => shotPerson),
+        h('p', { class: 'note' }, 'Uses the current lens. Try: Wide → Set start, Close-up → Set end.')));
+    } else p.append(sec('Frame a person', h('p', { class: 'note' }, 'Add a person to use one-click shot sizes (wide, medium, close-up…).')));
+    const subjOpts = [['', 'None (use the target point)'], ...state.objects.map(o => [o.id, o.name])];
+    p.append(sec('Subject',
+      selectRow('Look at', subjOpts, () => c.lookAtId || '', v => { if (v && !c.lookAtId) { c.base.tg = evalCam(T).tg; } c.lookAtId = v || null; if (!v) c.follow = false; updateGizmo(); changed(true, true); }),
+      c.lookAtId ? check('Follow the subject (camera travels with it)', () => c.follow, v => { const cur = evalCam(T).p; c.follow = v; writeCam({ p: cur }, true); propsDirty = true; }) : null,
+      h('p', { class: 'note' }, c.lookAtId ? 'The camera keeps aiming at the subject while it moves.' : 'Pick a person or object to keep it centred automatically.')));
+    const mountSel = selectRow('Mount on', [['', 'Nothing (tripod or free)'], ...state.objects.filter(o => o.type !== 'mark').map(o => [o.id, o.name])], () => c.mount || '', v => mountCamera(v || null));
+    mountSel.querySelector('select').dataset.role = 'mount';
+    p.append(sec('Mount', mountSel, h('p', { class: 'note' }, 'The camera rides with it, like a car mount or a camera on a moving cart. Your camera moves still work on top.')));
+  } else if (tab === 'move') {
+    p.append(moveCard());
+    const mg = h('div', { class: 'movegrid' }, MOVES.map(([k, ic, l]) => h('button', { onclick: () => applyMove(k), title: 'Animate the camera: ' + l.toLowerCase() + ', from the current framing' }, h('b', null, ic), l)));
+    p.append(sec('One-click camera moves',
+      slider('Strength', () => moveAmt, v => { moveAmt = v; }, { min: 0.25, max: 2.5, step: 0.05, fmt: v => v.toFixed(2) + '×' }),
+      mg, h('p', { class: 'note' }, 'Starts from the current framing and runs for the whole shot.')));
+    p.append(sec('Record a move live',
+      h('div', { class: 'btns' }, h('button', { class: 'recbtn', onclick: startRecord }, '● Record camera')),
+      h('p', { class: 'note' }, 'After a 3 s countdown the shot plays and you operate the camera: drag to orbit, right-drag to pan, scroll to dolly, W A S D Q E to fly. Your move is smoothed into keyframes.')));
+    p.append(sec('Motion feel', feelSeg(), h('p', { class: 'note' }, 'How the camera starts and stops across the whole move.')));
+    p.append(keySection('camera'));
+  } else if (tab === 'lens') {
+    const fr = slider('Focal length', () => camState.f, (v, cm) => writeCam({ f: v }, cm), { min: 10, max: 200, step: 1, fmt: v => v.toFixed(0) + ' mm' });
+    p.append(sec('Lens', fr,
+      h('div', { class: 'chips' }, [14, 18, 24, 35, 50, 85, 135].map(f => h('button', { onclick: () => writeCam({ f }, true), title: f < 24 ? 'Ultra wide' : f < 35 ? 'Wide' : f < 60 ? 'Normal' : 'Telephoto' }, f + 'mm'))),
+      simple ? null : slider('Dutch roll', () => camState.roll || 0, (v, cm) => writeCam({ roll: v }, cm), { min: -45, max: 45, step: 0.5, fmt: v => v.toFixed(1) + '°' }),
+      slider('Handheld', () => c.shake || 0, (v, cm) => { c.shake = v; changed(cm); }, { min: 0, max: 2, step: 0.05, fmt: v => v ? v.toFixed(2) : 'off' })));
+    const fstops = [1.4, 2, 2.8, 4, 5.6, 8, 11, 16];
+    p.append(sec('Depth of field',
+      check('Blur what is out of focus', () => dof.on, v => { dof.on = v; changed(true, true); }),
+      dof.on ? h('div', null,
+        slider('Aperture', () => dof.fstop, (v, cm) => { dof.fstop = v; changed(cm); }, { min: 1, max: 22, step: 0.1, fmt: v => 'f/' + v.toFixed(1) }),
+        h('div', { class: 'chips' }, fstops.map(n => h('button', { class: Math.abs(dof.fstop - n) < 0.05 ? 'on' : '', onclick: () => { dof.fstop = n; changed(true, true); } }, 'f/' + n))),
+        slider('Strength', dofStrength, (v, cm) => { dof.strength = v; changed(cm); }, { min: 1, max: 4.5, step: 0.1, fmt: v => v.toFixed(1) + '×' }),
+        h('div', { class: 'chips' }, [[1, 'Real lens'], [2, 'Soft'], [3, 'Cinematic'], [4.5, 'Dreamy']].map(([n, l]) => h('button', { class: Math.abs(dofStrength() - n) < 0.05 ? 'on' : '', title: 'Blur strength ' + n + '×', onclick: () => { dof.strength = n; changed(true, true); } }, l))),
+        selectRow('Focus', [['auto', 'Auto: on the subject / aim point'], ['manual', 'Manual distance (for focus pulls)']], () => dof.auto ? 'auto' : 'manual', v => {
+          const cur = focusDist(camState); dof.auto = v === 'auto';
+          if (!dof.auto) writeCam({ fd: cur }, true); else changed(true, true);
+        }),
+        dof.auto ? (() => { const sp = h('span', { class: 'note', style: 'margin:0' }); live.push(() => { sp.textContent = focusDist(camState).toFixed(2) + ' m (auto)'; }); return h('div', { class: 'row' }, h('label', null, 'Distance'), sp); })() : slider('Distance', () => camState.fd, (v, cm) => writeCam({ fd: v }, cm), { min: 0.2, max: 60, step: 0.05, fmt: v => v.toFixed(2) + ' m' }),
+        h('div', { class: 'btns', style: 'margin-top:6px' }, h('button', { onclick: startFocusPick, title: 'Then click on anything in the camera view' }, 'Pick focus point')),
+        h('p', { class: 'note' }, dof.auto
+          ? 'Focus stays on the aim point or subject, even while it moves.'
+          : 'Set keys on the distance to rack focus between subjects.'),
+        h('p', { class: 'note' }, 'Lower f-numbers and longer lenses give more blur. Not used in the Depth and Normals styles.')) : h('p', { class: 'note' }, 'Simulates a real lens: focal length, f-stop and focus distance.')));
+  } else if (tab === 'photo') {
+    p.append(plateSection());
+  } else {
+    p.append(sec('Frame',
+      selectRow('Aspect', ASPECTS.map(a => [a[0], a[2]]), () => s.aspect, v => { s.aspect = v; changed(true, true); syncTopUI(); }),
+      selectRow('Size', SIZES, () => String(s.size), v => { s.size = +v; changed(true); }),
+      selectRow('Guides', [['thirds', 'Rule of thirds'], ['center', 'Centre cross'], ['safe', 'Safe areas'], ['none', 'None']], () => s.guides, v => { s.guides = v; drawGuides(); changed(true); }),
+      selectRow('View style', STYLES.map(x => [x[0], x[1]]), () => s.style, v => { s.style = v; changed(true); syncTopUI(); })));
+    if (!simple) p.append(sec('Placement',
+      vecRow('Position', () => camState.p, (v, cm) => writeCam({ p: v }, cm), { step: 0.02 }),
+      c.lookAtId ? null : vecRow('Aims at', () => camState.tg, (v, cm) => writeCam({ tg: v }, cm), { step: 0.02 })));
   }
-  p.append(plateSection());
-  p.append(sec('Record a move live',
-    h('div', { class: 'btns' }, h('button', { class: 'recbtn', onclick: startRecord }, '● Record camera')),
-    h('p', { class: 'note' }, 'After a 3 s countdown the shot plays and you operate the camera: drag to orbit, right-drag to pan, scroll to dolly, W A S D Q E to fly. Your move is smoothed into keyframes.')));
-  const fr = slider('Focal length', () => camState.f, (v, cm) => writeCam({ f: v }, cm), { min: 10, max: 200, step: 1, fmt: v => v.toFixed(0) + ' mm' });
-  p.append(sec('Lens', fr,
-    h('div', { class: 'chips' }, [14, 18, 24, 35, 50, 85, 135].map(f => h('button', { onclick: () => writeCam({ f }, true), title: f < 24 ? 'Ultra wide' : f < 35 ? 'Wide' : f < 60 ? 'Normal' : 'Telephoto' }, f + 'mm'))),
-    simple ? null : slider('Dutch roll', () => camState.roll || 0, (v, cm) => writeCam({ roll: v }, cm), { min: -45, max: 45, step: 0.5, fmt: v => v.toFixed(1) + '°' }),
-    slider('Handheld', () => c.shake || 0, (v, cm) => { c.shake = v; changed(cm); }, { min: 0, max: 2, step: 0.05, fmt: v => v ? v.toFixed(2) : 'off' })));
-  const subjOpts = [['', 'None (use the target point)'], ...state.objects.map(o => [o.id, o.name])];
-  p.append(sec('Subject',
-    selectRow('Look at', subjOpts, () => c.lookAtId || '', v => { if (v && !c.lookAtId) { c.base.tg = evalCam(T).tg; } c.lookAtId = v || null; if (!v) c.follow = false; updateGizmo(); changed(true, true); }),
-    c.lookAtId ? check('Follow the subject (camera travels with it)', () => c.follow, v => { const cur = evalCam(T).p; c.follow = v; writeCam({ p: cur }, true); propsDirty = true; }) : null,
-    h('p', { class: 'note' }, c.lookAtId ? 'The camera keeps aiming at the subject while it moves.' : 'Pick a person or object to keep it centred automatically.')));
-  const mountSel = selectRow('Mount on', [['', 'Nothing (tripod or free)'], ...state.objects.filter(o => o.type !== 'mark').map(o => [o.id, o.name])], () => c.mount || '', v => mountCamera(v || null));
-  mountSel.querySelector('select').dataset.role = 'mount';
-  p.append(sec('Mount', mountSel, h('p', { class: 'note' }, 'The camera rides with it, like a car mount or a camera on a moving cart. Your camera moves still work on top.')));
-  const mg = h('div', { class: 'movegrid' }, MOVES.map(([k, ic, l]) => h('button', { onclick: () => applyMove(k), title: 'Animate the camera: ' + l.toLowerCase() + ', from the current framing' }, h('b', null, ic), l)));
-  p.append(sec('One-click camera moves',
-    slider('Strength', () => moveAmt, v => { moveAmt = v; }, { min: 0.25, max: 2.5, step: 0.05, fmt: v => v.toFixed(2) + '×' }),
-    mg, h('p', { class: 'note' }, 'Starts from the current framing and runs for the whole shot.')));
-  p.append(sec('Motion feel', feelSeg(), h('p', { class: 'note' }, 'How the camera starts and stops across the whole move.')));
-  const dof = ensureDof();
-  const fstops = [1.4, 2, 2.8, 4, 5.6, 8, 11, 16];
-  p.append(sec('Depth of field',
-    check('Blur what is out of focus', () => dof.on, v => { dof.on = v; changed(true, true); }),
-    dof.on ? h('div', null,
-      slider('Aperture', () => dof.fstop, (v, cm) => { dof.fstop = v; changed(cm); }, { min: 1, max: 22, step: 0.1, fmt: v => 'f/' + v.toFixed(1) }),
-      h('div', { class: 'chips' }, fstops.map(n => h('button', { class: Math.abs(dof.fstop - n) < 0.05 ? 'on' : '', onclick: () => { dof.fstop = n; changed(true, true); } }, 'f/' + n))),
-      selectRow('Focus', [['auto', 'Auto: on the subject / aim point'], ['manual', 'Manual distance (for focus pulls)']], () => dof.auto ? 'auto' : 'manual', v => {
-        const cur = focusDist(camState); dof.auto = v === 'auto';
-        if (!dof.auto) writeCam({ fd: cur }, true); else changed(true, true);
-      }),
-      dof.auto ? (() => { const sp = h('span', { class: 'note', style: 'margin:0' }); live.push(() => { sp.textContent = focusDist(camState).toFixed(2) + ' m (auto)'; }); return h('div', { class: 'row' }, h('label', null, 'Distance'), sp); })() : slider('Distance', () => camState.fd, (v, cm) => writeCam({ fd: v }, cm), { min: 0.2, max: 60, step: 0.05, fmt: v => v.toFixed(2) + ' m' }),
-      h('div', { class: 'btns', style: 'margin-top:6px' }, h('button', { onclick: startFocusPick, title: 'Then click on anything in the camera view' }, 'Pick focus point')),
-      h('p', { class: 'note' }, dof.auto
-        ? 'Focus stays on the aim point or subject, even while it moves.'
-        : 'Set keys on the distance to rack focus between subjects.'),
-      h('p', { class: 'note' }, 'Lower f-numbers and longer lenses give more blur. Not used in the Depth and Normals styles.')) : h('p', { class: 'note' }, 'Simulates a real lens: focal length, f-stop and focus distance.')));
-  p.append(keySection('camera'));
-  if (!simple) p.append(sec('Placement',
-    vecRow('Position', () => camState.p, (v, cm) => writeCam({ p: v }, cm), { step: 0.02 }),
-    c.lookAtId ? null : vecRow('Aims at', () => camState.tg, (v, cm) => writeCam({ tg: v }, cm), { step: 0.02 })));
-  p.append(sec('Frame',
-    selectRow('Aspect', ASPECTS.map(a => [a[0], a[2]]), () => s.aspect, v => { s.aspect = v; changed(true, true); syncTopUI(); }),
-    selectRow('Size', SIZES, () => String(s.size), v => { s.size = +v; changed(true); }),
-    selectRow('Guides', [['thirds', 'Rule of thirds'], ['center', 'Centre cross'], ['safe', 'Safe areas'], ['none', 'None']], () => s.guides, v => { s.guides = v; drawGuides(); changed(true); }),
-    selectRow('View style', STYLES.map(x => [x[0], x[1]]), () => s.style, v => { s.style = v; changed(true); syncTopUI(); })));
 }
 function shotGrid(pid) { return h('div', { class: 'posegrid' }, SHOTS.map(([k, l]) => h('button', { onclick: () => frameShot(k, pid()) }, l))); }
 function feelSeg() {
@@ -2298,6 +2484,7 @@ function actDrag(tag, o, act, laneEl) {
 function selKeysTarget() {
   if (view === 'camera') return 'camera';
   if (selected === 'target') return 'camera';
+  if (selected === 'sun') return null;
   return selected || (view === 'camera' ? 'camera' : null);
 }
 function addKeySel() {
@@ -2372,8 +2559,7 @@ function tickUI() {
   for (const f of live) f();
   const hint = $('#hint');
   if (view === 'camera') {
-    const sz = exportSize();
-    putHTML($('#hud'), `<span><b>CAMERA</b></span><span>${camState.f.toFixed(0)} mm</span><span>${state.settings.aspect}</span><span>${sz.w}×${sz.h}</span><span>${(STYLES.find(s => s[0] === state.settings.style) || STYLES[0])[1]}</span>${dofActive() ? `<span>f/${ensureDof().fstop.toFixed(1)} · focus ${focusDist(camState).toFixed(2)} m</span>` : ''}${focusPick ? '<span class="rec">Click to set focus</span>' : ''}${playing ? '<span class="rec">● PLAY</span>' : ''}`);
+    putHTML($('#hud'), `<span><b>CAMERA</b></span><span class="shotdesc">${describeShot()}</span>${dofActive() ? `<span>f/${ensureDof().fstop.toFixed(1)} · focus ${focusDist(camState).toFixed(2)} m</span>` : ''}${focusPick ? '<span class="rec">Click to set focus</span>' : ''}${playing ? '<span class="rec">● PLAY</span>' : ''}`);
     putStyle($('#hud'), 'display', 'flex');
     putHTML(hint, rec ? (rec.phase === 'rec' ? '<b style="color:#ff6b6b">● Recording</b> · steer the camera · <kbd>Esc</kbd> cancel' : 'Get ready… position the camera now')
       : 'Drag: orbit · Right-drag: pan · Scroll: dolly · <kbd>Alt</kbd>+scroll: lens · <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> <kbd>Q</kbd><kbd>E</kbd> fly · <kbd>K</kbd> key camera');
@@ -2382,6 +2568,7 @@ function tickUI() {
     const nav = view === 'top' ? 'Drag empty space: pan · Scroll: zoom' : 'Drag empty space: orbit · Right-drag: pan · Scroll: zoom';
     putHTML(hint, placing || pathMode ? '<kbd>Esc</kbd> cancel' + (pathMode ? ' · <kbd>Enter</kbd> done · right-click removes the last point' : '')
       : isMulti() ? 'Drag any of them to move them all · drag the orange ring to turn them together · <kbd>Shift</kbd> click adds or removes · <kbd>Ctrl</kbd><kbd>G</kbd> group · <kbd>Ctrl</kbd><kbd>L</kbd> lock'
+      : selected === 'sun' ? 'Drag the yellow sun to turn the light and the shadows · right-click it for light-from presets · or use the panel'
       : selected && selected !== 'camera' && selected !== 'target'
         ? 'Drag it on the floor to move · drag the orange ring to turn · right-click for more · <kbd>K</kbd> key · <kbd>Del</kbd> delete'
         : selected ? 'Drag the camera or its aim point on the floor · or use the panel'
@@ -2493,6 +2680,12 @@ function wireMenu() {
 }
 
 /* ---- right-click menu on the 3D view ---- */
+/* a new camera point on the path at time t, with the camera exactly as it is there (the shape of the move stays) */
+function addCamPoint(t) {
+  t = snapT(clamp(t, 0, lastT()));
+  setKey(state.camera.keys, t, clone(evalCamRaw(t)));
+  changed(true, true); toast('Camera point added at ' + t.toFixed(2) + ' s. Drag it to reshape the path.', 3500);
+}
 function makeCameraStatic() {
   const c = state.camera; c.base = clone(evalCamRaw(T)); c.keys = []; changed(true, true); toast('Camera move cleared: it now stays where it is');
 }
@@ -2520,6 +2713,20 @@ function ctxItems(hit, floor) {
     items.push({ head: 'Shot camera' }, { label: 'Look through camera', fn: () => setView('camera'), key: 'C' }, { label: 'Set start frame', fn: () => setShotEnd('start') }, { label: 'Set end frame', fn: () => setShotEnd('end') });
     if (state.camera.keys.length) items.push({ label: 'Make static (clear move)', fn: makeCameraStatic });
     return items;
+  }
+  if (hit && hit.id.startsWith('ck:')) {
+    const i = +hit.id.slice(3), k = state.camera.keys[i]; select('camera');
+    return k ? [{ head: 'Camera point at ' + k.t.toFixed(2) + ' s' }, { label: 'Go to this moment', fn: () => setTime(k.t) }, { label: 'Look through the camera here', fn: () => { setTime(k.t); setView('camera'); } }, '-',
+      { label: 'Delete this point', danger: true, disabled: state.camera.keys.length < 2, fn: () => removeKey('camera', i) }] : [];
+  }
+  if (hit && hit.id === 'cpath') {
+    const t = snapT(clamp((hit.index || 0) / 140 * lastT(), 0, lastT())); select('camera');
+    return [{ head: 'Camera path' }, { label: 'Add a camera point here (' + t.toFixed(2) + ' s)', fn: () => addCamPoint(t) }, { label: 'Go to this moment', fn: () => setTime(t) }];
+  }
+  if (hit && hit.id === 'sun') {
+    select('sun');
+    return [{ head: 'Sun' }, ...Object.entries(LIGHT_FROM).map(([k, d]) => ({ label: d[2], fn: () => lightFrom(k) })), '-',
+      { label: state.settings.shadows === false ? 'Turn shadows on' : 'Turn shadows off', fn: () => setShadows(state.settings.shadows === false) }];
   }
   const o = hit && getObj(hit.id);
   if (o) {
@@ -2602,11 +2809,24 @@ function rayFromEvent(e) {
 function planeHit(rc, y = 0) { const pt = new THREE.Vector3(); return rc.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -y), pt) ? pt : null; }
 function pickAt(rc, noRing = false) {
   const targets = [...views.values()].filter(v => v.group.visible && !(view === 'camera' && v.isMark)).map(v => v.group);
-  if (view !== 'camera') { targets.push(camBody); if (targetMarker.visible) targets.push(targetMarker); if (ringGrp.visible && !noRing) targets.push(ringPick, ringKnob); if (liftGrp.visible && !noRing) targets.push(liftPick); }
+  if (view !== 'camera') {
+    /* the camera's path points and the sun win over what is behind them */
+    const hs = [...ckPts.filter(m => m.visible), ...(sunGrp.visible ? [sunPick, sunBall] : [])];
+    const hh = hs.length ? rc.intersectObjects(hs, false) : [];
+    if (hh.length) return { id: hh[0].object.userData.pick, point: hh[0].point };
+    targets.push(camBody); if (targetMarker.visible) targets.push(targetMarker); if (ringGrp.visible && !noRing) targets.push(ringPick, ringKnob); if (liftGrp.visible && !noRing) targets.push(liftPick);
+  }
   const hits = rc.intersectObjects(targets, true);
   for (const hit of hits) {
     let ob = hit.object;
     while (ob) { if (ob.userData.pick) return { id: ob.userData.pick, point: hit.point }; if (ob.userData.objId) return { id: ob.userData.objId, point: hit.point }; ob = ob.parent; }
+  }
+  /* nothing solid: the camera's path line (right-click it to add a point) */
+  if (view !== 'camera' && camPath.line.visible && !noRing) {
+    const L = rc.params.Line, old = L.threshold;
+    L.threshold = view === 'top' ? 0.16 / topCam.zoom : clamp(edCam.position.distanceTo(edControls.target) * 0.012, 0.09, 0.6);
+    const lh = rc.intersectObject(camPath.line, false); L.threshold = old;
+    if (lh.length) return { id: 'cpath', point: lh[0].point, index: lh[0].index };
   }
   return null;
 }
@@ -3414,7 +3634,7 @@ function getExportRenderer(w, hh) {
   return exRenderer;
 }
 function renderExportFrame(r, t, w, hh) {
-  applyAll(t); prepRenderCam(t);
+  applyAll(t); prepRenderCam(t); placeSun();
   r.setViewport(0, 0, w, hh); r.setScissorTest(false);
   exportingRender = true;
   try { shotPass(r, w, hh); } finally { exportingRender = false; }
@@ -3768,6 +3988,7 @@ function wire() {
       if (e.shiftKey) { e.stopImmediatePropagation(); box = { x0: e.clientX, y0: e.clientY, x1: null, y1: null }; dragActive = true; pdown = null; try { canvas.setPointerCapture(e.pointerId); } catch (_) { } }
       return;
     }
+    if (hit.id === 'cpath') return; /* the path line: a click selects the camera (on release); a press-drag still orbits */
     const ho = getObj(hit.id);
     /* Shift/Ctrl-click adds or removes one item; it never starts a drag */
     if (ho && (e.shiftKey || e.ctrlKey || e.metaKey)) { e.stopImmediatePropagation(); select(hit.id, 'toggle'); pdown = null; return; }
@@ -3776,7 +3997,16 @@ function wire() {
     if (ho && ho.locked) { if (selected !== hit.id && !selIds.includes(hit.id)) select(hit.id); return; }
     e.stopImmediatePropagation();
     if (playing) setPlaying(false);
-    if (hit.id === 'ring') {
+    if (hit.id.startsWith('ck:')) {
+      /* a camera path point: drag along the floor (Alt: up and down) */
+      const k = state.camera.keys[+hit.id.slice(3)]; if (!k) return;
+      select('camera'); setTime(k.t);
+      const cur = camToWorld(k.p, k.t), g = planeHit(rc, cur[1]);
+      drag = { kind: 'ck', id: 'camera', i: +hit.id.slice(3), cur, ox: g ? g.x - cur[0] : 0, oz: g ? g.z - cur[2] : 0, items: [] }; ckHot = drag.i;
+    } else if (hit.id === 'sun') {
+      select('sun'); sunDragging = true;
+      drag = { kind: 'sun', id: 'sun', items: [] };
+    } else if (hit.id === 'ring') {
       const o = getObj(selected), v = views.get(selected); if (!o || !v) return;
       const y = ringGrp.position.y, g = planeHit(rc, y) || hit.point;
       drag = { kind: 'rot', id: selected, multi: isMulti(), items: dragItems(), py: y, cx: ringGrp.position.x, cz: ringGrp.position.z, a0: Math.atan2(g.x - ringGrp.position.x, g.z - ringGrp.position.z), yaw0: v.group.rotation.y * R2D };
@@ -3814,6 +4044,31 @@ function wire() {
         for (const it of drag.items) { const q = getObj(it.id), cur = clone(it.tr); cur.p[1] = r4(Math.max(-20, it.tr.p[1] + d)); writeObj(q, cur, false); }
         const f = getObj(drag.id);
         showModeBar(drag.items.length > 1 ? 'Raised ' + (d >= 0 ? '+' : '') + d.toFixed(2) + ' m' : f.name + ': ' + (drag.y0 + d).toFixed(2) + ' m above the floor', []);
+        return;
+      }
+      if (drag.kind === 'ck') {
+        const k = state.camera.keys[drag.i]; if (!k) return;
+        let d;
+        if (e.altKey && view !== 'top') {
+          /* Alt: up and down, on a vertical plane facing the viewer through the point */
+          const n = new THREE.Vector3(edCam.position.x - drag.cur[0], 0, edCam.position.z - drag.cur[2]).normalize(), u = new THREE.Vector3();
+          if (!rc.ray.intersectPlane(new THREE.Plane().setFromNormalAndCoplanarPoint(n, new THREE.Vector3().fromArray(drag.cur)), u)) return;
+          d = [drag.cur[0], r4(Math.max(0.1, u.y)), drag.cur[2]];
+        } else {
+          const g = planeHit(rc, drag.cur[1]); if (!g) return;
+          d = [snapV(g.x - drag.ox), drag.cur[1], snapV(g.z - drag.oz)];
+        }
+        drag.cur = d; k.p = camToLocal(d, k.t).map(r4); quietChange(false);
+        showModeBar('Camera point at ' + k.t.toFixed(2) + ' s · ' + d[1].toFixed(2) + ' m high' + (view !== 'top' ? ' · hold Alt to raise or lower' : ''), []);
+        return;
+      }
+      if (drag.kind === 'sun') {
+        const s = state.settings, c = sun.target.position, u = new THREE.Vector3();
+        if (view !== 'top' && rc.ray.intersectSphere(new THREE.Sphere(c, sunDist), u)) { u.sub(c).normalize(); s.sunAz = (Math.atan2(u.x, u.z) * R2D % 360 + 360) % 360; s.sunEl = clamp(Math.asin(clamp(u.y, -1, 1)) * R2D, 2, 89); }
+        else { const g = planeHit(rc, 0); if (g) s.sunAz = (Math.atan2(g.x - c.x, g.z - c.z) * R2D % 360 + 360) % 360; }
+        s.sunAz = Math.round(s.sunAz) % 360; s.sunEl = Math.round(s.sunEl);
+        quietChange(false);
+        showModeBar('Sun: ' + s.sunAz + '° around, ' + s.sunEl + '° high · ' + sunWording(), []);
         return;
       }
       const g = planeHit(rc, drag.py); if (!g) return;
@@ -3877,14 +4132,14 @@ function wire() {
     if (!e.buttons && view !== 'camera' && !focusPick && performance.now() - hoverT > 50) {
       hoverT = performance.now();
       const rc = rayFromEvent(e), hit = rc && !gizmo.axis && pickAt(rc);
-      canvas.style.cursor = hit ? (hit.id === 'ring' ? 'ew-resize' : hit.id === 'lift' ? 'ns-resize' : 'grab') : '';
+      canvas.style.cursor = hit ? (hit.id === 'ring' ? 'ew-resize' : hit.id === 'lift' ? 'ns-resize' : hit.id === 'sun' || hit.id.startsWith('ck:') ? 'move' : hit.id === 'cpath' ? 'pointer' : (getObj(hit.id) || {}).locked ? '' : 'grab') : '';
     }
   });
   /* a drag ends on mouse-up, or when the browser cuts it off (pointercancel, lost capture): either way it is saved (K2) */
   const endDrag = e => {
-    const d = drag; drag = null; dragActive = false; gizmo.enabled = true; canvas.style.cursor = '';
+    const d = drag; drag = null; dragActive = false; gizmo.enabled = true; canvas.style.cursor = ''; sunDragging = false; ckHot = -1;
     try { canvas.releasePointerCapture(e.pointerId); } catch (_) { }
-    if (/^(Release|On top|Raised)|above the floor$/.test($('#modeBar').textContent)) hideModeBar();
+    if (/^(Release|On top|Raised|Camera point at|Sun:)|above the floor$/.test($('#modeBar').textContent)) hideModeBar();
     /* a click that did not drag narrows the selection to what was clicked (its group, or just it with Alt) */
     if (!d.moved && d.kind === 'move' && getObj(d.id)) select(d.id, d.alt ? 'single' : undefined);
     if (d.moved && d.kind === 'move' && getObj(d.id) && getObj(d.id).type === 'person' && d.items.length <= 1) {
@@ -3936,6 +4191,7 @@ function wire() {
     const rc = rayFromEvent(e); if (!rc) return;
     const hit = pickAt(rc);
     if (!hit) { if (!e.shiftKey) select(null); }
+    else if (hit.id === 'cpath') { if (selected !== 'camera') select('camera'); }
     else if (hit.id !== 'ring' && hit.id !== 'lift' && (getObj(hit.id) || selected !== hit.id)) select(hit.id, e.altKey && getObj(hit.id) ? 'single' : undefined);
   });
   canvas.addEventListener('dblclick', e => {
@@ -4110,6 +4366,10 @@ function boot() {
   window.__shotref = { get selection() { return selIds; }, pickAtScreen: (x, y) => { const rc = rayFromEvent({ clientX: x, clientY: y }); const h = rc && pickAt(rc); return h ? h.id : null; }, settleTime: () => { const t0 = performance.now(); solveGround(); return performance.now() - t0; }, groundMigrate: () => groundMigrate.size, liftKnob: () => { if (!liftGrp.visible) return null; const q = liftPick.getWorldPosition(new THREE.Vector3()); return window.__shotref.project(q.x, q.y, q.z); }, attachTo, setMount, writeCam, shownObj: (id, t) => shownObj(getObj(id), t), viewOf: id => { const v = views.get(id); if (!v) return null; v.group.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(v.group), sz = bb.getSize(new THREE.Vector3()); return { p: v.group.position.toArray(), yaw: v.group.rotation.y * R2D, s: v.group.scale.toArray(), size: sz.toArray(), wheels: v.wheels ? v.wheels.list.map(w => ({ spin: w.spin.rotation.x, steer: w.piv.rotation.y, front: w.front })) : null }; }, ringKnob: () => ringGrp.visible ? ringKnob.getWorldPosition(new THREE.Vector3()).toArray() : null, getPref, setPref, showMenu, menuButton, hideMenu, project: (x, y, z) => { const r = canvas.getBoundingClientRect(); let cam = view === 'top' ? topCam : edCam, rr = { x: 0, y: 0, w: r.width, h: r.height }; if (view === 'camera') { cam = renderCam; rr = camRect(r.width, r.height); } const v = new THREE.Vector3(x, y, z).project(cam); return [r.left + rr.x + (v.x * 0.5 + 0.5) * rr.w, r.top + rr.y + (-v.y * 0.5 + 0.5) * rr.h]; }, get view() { return view; }, get selected() { return selected; }, get state() { return state; }, get assets() { return assets; }, setT: t => setTime(t, false), applyMove, addObject, select, setView, evalCam, exportVideo, exportPNG, pickCodec, _exportCanvas: () => exRenderer ? exRenderer.domElement : null, changed, writeObj, evalObj, setKey, get T() { return T; },
     get rebuilds() { return rebuilds; }, urlCacheIds: () => [...urlCache.keys()],
     get history() { return { at: hi, length: hist.length }; },
+    /* batch F (camera UX and light) hooks for the smoke test */
+    detectMove, describeShot, camToWorld, pointsVisible: () => ckPts.some(m => m.visible),
+    sunInfo: () => ({ castShadow: sun.castShadow, radius: sun.shadow.radius, intensity: sun.intensity, color: '#' + sun.color.getHexString(), gizmo: { visible: sunGrp.visible, pos: sunGrp.position.toArray() } }),
+    shotPixels: (t, w = 240) => { const hh = Math.max(2, Math.round(w / arOf(state.settings.aspect))), r = getExportRenderer(w, hh); renderExportFrame(r, t, w, hh); const c = document.createElement('canvas'); c.width = w; c.height = hh; const g = c.getContext('2d'); g.drawImage(r.domElement, 0, 0); const d = g.getImageData(0, 0, w, hh).data; applyAll(T); return d; },
     /* batch D (people) hooks for the smoke test */
     addPerson, sitPerson, standPerson, setLookAt, setPoseAt, nearestSeat, freeSeat, actLayer, poseAt, applyAll: t => applyAll(t),
     rig: id => { const v = views.get(id), P = v && v.person; if (!P) return null; const r = j => [j.rotation.x, j.rotation.y, j.rotation.z]; return { H: P.H, neck: r(P.neck), spine: r(P.spine), head: r(P.head), lSh: r(P.lSh), rSh: r(P.rSh), lEl: r(P.lEl), rEl: r(P.rEl), lHip: r(P.lHip), rHip: r(P.rHip), lKnee: r(P.lKnee), rKnee: r(P.rKnee), shoulderX: P.lSh.position.x, hipX: P.lHip.position.x, headScale: P.head.scale.x, headParts: P.head.children.length, pelvisY: P.pelvis.position.y, group: { p: v.group.position.toArray(), yaw: v.group.rotation.y } }; },
