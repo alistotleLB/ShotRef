@@ -38,7 +38,7 @@ ShotRef is a "very dumbed-down Blender" for **blocking and camera moves only**. 
 - `src/project.js`: pure. `normalizeProject(raw, defaults)` is the **only loader** for project files and autosaves: it checks, repairs and fills in missing fields. `describeChange()` names an undo step. `FORMAT_VERSION` is 2.
 - `src/keys.js`: pure keyframe maths (`sampleField`, `tangent`, `setKey`, `keyIndexAt`, `neighborKey`). The frame rate is passed in; `main.js` has small wrappers.
 
-`state` is the single source of truth: plain JSON, saved as `.shotref.json`, and snapshotted for undo. Three.js objects are rebuilt from it.
+`state` is the single source of truth: plain JSON, saved as `.shotref`, and snapshotted for undo. Three.js objects are rebuilt from it.
 
 - **`state.settings`**: duration, fps, aspect, export size, environment and lighting, render `style`, guides, depth range.
 - **`state.camera`**:

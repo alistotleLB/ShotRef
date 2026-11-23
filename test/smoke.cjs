@@ -1645,4 +1645,56 @@ check('desktop: closing asks about unsaved changes (Save / Dont save / Cancel)',
   ok((await closed()) === 3, 'failed save must not close');
 });
 
+check('desktop: opening a file or starter over unsaved changes offers to save first', async ({ freshContext }) => {
+  const p = await desktopPage(freshContext);
+  const st = await stateOf(p);
+  st.objects = st.objects.slice(0, 1);
+  const text = JSON.stringify({ app: 'ShotRef', version: 2, state: st, assets: {} });
+  const labels = () => p.evaluate(() => ({ t: document.querySelector('#cfTitle').textContent, b: [...document.querySelectorAll('#mConfirm .btns button')].filter(x => x.offsetParent).map(x => x.textContent) }));
+  await dirtyEdit(p);
+  const n0 = await p.evaluate(() => window.__shotref.state.objects.length);
+  await p.evaluate(t => window.__dsk.openCb({ text: t, name: 'b.shotref', path: 'D:/b.shotref' }), text);
+  await p.waitForSelector('#mConfirm:not(.hidden)');
+  let l = await labels();
+  ok(/save changes/i.test(l.t) && l.b.join('|') === "Cancel|Don't save|Save", 'open dialog ' + JSON.stringify(l));
+  await p.click('#mConfirm [data-close]');
+  ok((await p.evaluate(() => window.__shotref.state.objects.length)) === n0, 'Cancel must keep the scene');
+  await p.evaluate(t => window.__dsk.openCb({ text: t, name: 'b.shotref', path: 'D:/b.shotref' }), text);
+  await p.waitForSelector('#mConfirm:not(.hidden)');
+  await p.click('#cfOk'); /* Save first, then open */
+  await p.waitForFunction(() => window.__shotref.state.objects.length === 1);
+  ok((await p.evaluate(() => window.__dsk.calls.filter(c => c.k === 'proj').length)) === 1, 'Save first must write once');
+  await dirtyEdit(p);
+  await p.evaluate(() => window.__dsk.menu('new'));
+  await p.waitForSelector('#mStart:not(.hidden)');
+  await p.click('#mStart .card');
+  await p.waitForSelector('#mConfirm:not(.hidden)');
+  l = await labels();
+  ok(/save changes/i.test(l.t) && l.b.includes("Don't save"), 'starter dialog ' + JSON.stringify(l));
+});
+
+check('desktop: undo back past an Open does not let Save overwrite the opened file', async ({ freshContext }) => {
+  const p = await desktopPage(freshContext);
+  const st = await stateOf(p);
+  st.objects = st.objects.slice(0, 1);
+  const text = JSON.stringify({ app: 'ShotRef', version: 2, state: st, assets: {} });
+  await p.evaluate(t => { window.__dsk.nextOpen = { text: t, name: 'b.shotref', path: 'D:/b.shotref' }; }, text);
+  await p.keyboard.press('Control+O');
+  await p.waitForSelector('#mConfirm:not(.hidden)');
+  await p.click('#cfOk');
+  await p.waitForFunction(() => window.__shotref.state.objects.length === 1);
+  await p.keyboard.press('Control+Z');
+  await p.waitForFunction(() => window.__shotref.state.objects.length === 3);
+  await p.click('#bSave');
+  await p.waitForFunction(() => window.__dsk.calls.length === 1);
+  let c = await p.evaluate(() => window.__dsk.calls[0]);
+  ok(!c.o.path, 'Save after undoing the Open must ask for a file, got path ' + c.o.path);
+  await p.keyboard.press('Control+Y'); /* redo: B again, and Save writes to B */
+  await p.waitForFunction(() => window.__shotref.state.objects.length === 1);
+  await p.click('#bSave');
+  await p.waitForFunction(() => window.__dsk.calls.length === 2);
+  c = await p.evaluate(() => window.__dsk.calls[1]);
+  ok(c.o.path === 'D:/b.shotref', 'redo should bring B back with its path, got ' + c.o.path);
+});
+
 main().catch(e => { console.error(e && e.stack || e); process.exit(2); });

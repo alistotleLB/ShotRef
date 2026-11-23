@@ -253,12 +253,14 @@ function evalCam(t) {
 
 /* ---- history ---- */
 let hist = [], hi = -1;
+let histFile = []; /* the open file ({name, path}) for each history step, so undo across an Open can't make Save overwrite that file */
 function snapshot() { return JSON.stringify(state); }
 function pushHistory() {
   const s = snapshot();
   if (hist[hi] === s) return;
   hist = hist.slice(0, hi + 1); hist.push(s);
-  if (hist.length > 100) hist.shift();
+  histFile = histFile.slice(0, hi + 1); histFile.push(platform.getFile());
+  if (hist.length > 100) { hist.shift(); histFile.shift(); }
   hi = hist.length - 1;
   platform.setDirty(true);
   autosave();
@@ -271,8 +273,8 @@ function restore(s) {
 }
 /* undo/redo autosave too, so an undone delete puts its photo or model back in the autosave */
 const changeLabel = (word, before, after) => { const d = describeChange(before, after); return d ? word + ': ' + d : word; };
-function undo() { if (exporting) return; if (hi > 0) { hi--; restore(hist[hi]); platform.setDirty(true); autosave(); toast(changeLabel('Undo', hist[hi], hist[hi + 1])); } }
-function redo() { if (exporting) return; if (hi < hist.length - 1) { hi++; restore(hist[hi]); platform.setDirty(true); autosave(); toast(changeLabel('Redo', hist[hi - 1], hist[hi])); } }
+function undo() { if (exporting) return; if (hi > 0) { hi--; restore(hist[hi]); platform.restoreFile(histFile[hi]); platform.setDirty(true); autosave(); toast(changeLabel('Undo', hist[hi], hist[hi + 1])); } }
+function redo() { if (exporting) return; if (hi < hist.length - 1) { hi++; restore(hist[hi]); platform.restoreFile(histFile[hi]); platform.setDirty(true); autosave(); toast(changeLabel('Redo', hist[hi - 1], hist[hi])); } }
 /* ---- autosave ----
    localStorage 'shotref.autosave' = { state, assets: {}, assetIds: [...], v: 2 } (small).
    Photos and models go to IndexedDB (db 'shotref', store 'assets', key = asset id).
@@ -2296,7 +2298,8 @@ function openStarters(firstLaunch = false) {
   for (const [k, t, d] of STARTERS) g.append(h('button', { class: 'card', onclick: () => {
     closeModal(g);
     /* on first launch the scene is our sample, not the user's work: no replace question */
-    if (!firstLaunch && (state.objects.length || state.plate)) confirmBox('Replace the current scene?', 'Start from "' + t + '". You can undo this with Ctrl+Z.', () => loadStarter(k), 'Replace scene');
+    if (!firstLaunch && platform.kind === 'desktop' && platform.isDirty()) guardUnsaved(() => loadStarter(k));
+    else if (!firstLaunch && (state.objects.length || state.plate)) confirmBox('Replace the current scene?', 'Start from "' + t + '". You can undo this with Ctrl+Z.', () => loadStarter(k), 'Replace scene');
     else loadStarter(k);
   } }, h('b', null, t), h('small', null, d)));
   openModal('mStart');
@@ -2310,7 +2313,7 @@ function buildState(fill) {
 /* The one way to swap the whole scene. Keeps undo (pushes a step) and keeps old files in memory so undo can rebuild them.
    On any error the previous scene is put back and the error is rethrown. */
 function replaceProject(newState, newAssets = {}, label) {
-  const prev = { state, assets, selected, T, hist: hist.slice(), hi };
+  const prev = { state, assets, selected, T, hist: hist.slice(), histFile: histFile.slice(), hi };
   try {
     for (const [id, a] of Object.entries(newAssets)) if (assets[id] && assets[id].b64 !== (a && a.b64)) dropModel(id);
     assets = { ...assets, ...newAssets };
@@ -2318,7 +2321,7 @@ function replaceProject(newState, newAssets = {}, label) {
     restore(snapshot()); pushHistory(); resetEditorCam();
     if (label) toast(label);
   } catch (e) {
-    state = prev.state; assets = prev.assets; selected = prev.selected; setTime(prev.T); hist = prev.hist; hi = prev.hi;
+    state = prev.state; assets = prev.assets; selected = prev.selected; setTime(prev.T); hist = prev.hist; histFile = prev.histFile; hi = prev.hi;
     try { restore(snapshot()); } catch (e2) { console.error('ShotRef: could not put the previous scene back', e2); }
     throw e;
   }
@@ -2327,7 +2330,7 @@ function loadStarter(kind) {
   let sel = null;
   const built = buildState(() => fillStarter(kind, id => { sel = id; }));
   replaceProject(built, {}, (STARTERS.find(x => x[0] === kind) || [, kind])[1] + ' ready');
-  platform.newProject();
+  platform.newProject(); histFile[hi] = platform.getFile();
   if (sel) { selected = sel; propsDirty = true; updateGizmo(); }
 }
 function fillStarter(kind, selectId) {
@@ -2407,7 +2410,13 @@ function seedScene() {
 }
 function resetEditorCam() { edCam.position.set(7, 5, 10); edControls.target.set(0, 1, 0); }
 /* Save (or Save as). On the web both download a new file; the desktop app writes back to the open file unless saveAs. */
+let saving = false;
 async function saveProject(saveAs = false) {
+  if (saving) return { ok: false, busy: true };
+  saving = true;
+  try { return await doSaveProject(saveAs); } finally { saving = false; }
+}
+async function doSaveProject(saveAs) {
   /* only the files this scene uses (memory also keeps older ones for undo) */
   const used = {};
   for (const id of usedAssetIds(state)) if (assets[id]) used[id] = assets[id];
@@ -2433,10 +2442,11 @@ function loadProjectText(txt, file) {
   try { d = normalizeProject(JSON.parse(txt), projectDefaults()); }
   catch (e) { console.error('ShotRef: could not read the project file', e); toast(BAD_FILE, 4000); return; }
   const go = () => {
-    try { replaceProject(d.state, d.assets, 'Project opened'); platform.setCurrent(file && file.name, file && file.path); }
+    try { replaceProject(d.state, d.assets, 'Project opened'); platform.setCurrent(file && file.name, file && file.path); histFile[hi] = platform.getFile(); }
     catch (e) { console.error('ShotRef: could not open the project', e); toast(BAD_FILE, 4000); }
   };
-  if (state.objects.length || state.plate) confirmBox('Open this file?', 'It will replace the current scene. You can undo this with Ctrl+Z.', go, 'Open file');
+  if (platform.kind === 'desktop' && platform.isDirty()) guardUnsaved(go);
+  else if (state.objects.length || state.plate) confirmBox('Open this file?', 'It will replace the current scene. You can undo this with Ctrl+Z.', go, 'Open file');
   else go();
 }
 function readFile(file, as) { return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; if (as === 'text') r.readAsText(file); else r.readAsArrayBuffer(file); }); }
@@ -2703,6 +2713,12 @@ function trapTab(e) {
 }
 let cfCb = null;
 let cfAltCb = null;
+/* desktop: before replacing the project, offer to save unsaved changes (Save / Don't save / Cancel) */
+function guardUnsaved(go) {
+  const nm = platform.currentName();
+  confirmBox('Save changes first?', (nm ? '"' + nm + '" has' : 'This project has') + ' changes that are not saved. Opening something else replaces it.',
+    async () => { const r = await saveProject(false); if (r.ok) go(); }, 'Save', { label: "Don't save", cb: go });
+}
 /* alt = { label, cb } adds a middle button (used for "Don't save") */
 function confirmBox(title, text, cb, okLabel = 'OK', alt = null) {
   $('#cfTitle').textContent = title; $('#cfText').textContent = text; $('#cfOk').textContent = okLabel; cfCb = cb;
