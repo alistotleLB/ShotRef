@@ -47,7 +47,7 @@ ShotRef is a "very dumbed-down Blender" for **blocking and camera moves only**. 
   - `base` pose `{p, tg, f, roll, fd}` (position, aim target, focal length in mm, dutch roll, focus distance).
   - `keys[]` with the same fields plus `t`.
   - `feel` (`constant | gentle | strong`), `shake`, `lookAtId` and `follow`.
-  - `dof {on, fstop, auto, strength}` (strength 1 to 4.5, default 3; files without one read as 3).
+  - `dof {on, fstop, auto, strength}` (strength 1 to 4.5, default 3; files made before it existed read as 1, the old look).
 - **Selection**: `selected` is the main item (an object id, `'camera'` or `'target'`); `selIds` holds every selected object, and a whole group is selected at once. Always go through `select(id, mode)` (`'single'` / `'toggle'`) and `sanitizeSel()`. `obj.locked` and `obj.grp` + `state.groups[gid] = {name}` are saved fields. Drags and the turn ring move every unlocked selected item through `writeObj`, so keys land at the playhead for keyed items.
 - **`state.objects[]`**: `{id, type, name, color, opts, base:{p, r(deg), s}, keys[], visible}`. People are `type:'person'`, with `opts.pose`, height and colours. Floor marks are `type:'mark'`; they're hidden in every shot render.
 - **`state.plate`**: the location photo `{asset, overlay, export, ground}`.

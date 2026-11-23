@@ -29,7 +29,9 @@ function cleanDof(v, d) {
   const x = isObj(v) ? v : {};
   const bool = (a, b) => (typeof a === 'boolean' ? a : b);
   const out = { ...copy(d), ...x, on: bool(x.on, bool(d.on, false)), auto: bool(x.auto, bool(d.auto, true)), fstop: num(x.fstop, 0) > 0 ? x.fstop : (num(d.fstop, 0) > 0 ? d.fstop : 2.8) };
-  if ('strength' in out) out.strength = num(out.strength, 0) > 0 ? out.strength : 3; /* blur strength, default 3 (artifact files) */
+  /* blur strength: a new scene gets 3. A file that has depth of field settings but no strength was made before it existed, so it keeps its old look (1 = the old blur). */
+  if (isObj(v)) out.strength = num(x.strength, 0) > 0 ? x.strength : 1;
+  else if ('strength' in out) out.strength = num(out.strength, 0) > 0 ? out.strength : 3;
   return out;
 }
 
@@ -164,7 +166,8 @@ export function normalizeProject(raw, defaults = {}) {
   /* sun and shadows */
   const ss = st.settings;
   if ('shadows' in ss && typeof ss.shadows !== 'boolean') delete ss.shadows;
-  if ('shadowSoft' in ss) ss.shadowSoft = clampN(ss.shadowSoft, 0, 1, 0.3);
+  /* a file without softness keeps the old shadow edge (radius 2 = 1/6); a new scene uses 0.3 */
+  ss.shadowSoft = clampN(isObj(src.settings) ? src.settings.shadowSoft : undefined, 0, 1, 1 / 6); /* read from the raw file: the defaults would fill in 0.3 */
   if ('tod' in ss) ss.tod = clampN(ss.tod, 5, 20, 14);
 
   /* location photo */

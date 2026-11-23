@@ -114,7 +114,7 @@ const ENV = {
 const DEFAULT_SETTINGS = {
   duration: 5, fps: 24, aspect: '16:9', size: 1920, interp: 'smooth', loop: true,
   env: 'day', ...ENV.day, groundOn: true, gridOn: true, fogDensity: 0.018,
-  style: 'shaded', exportGrid: false, guides: 'thirds', depthAuto: true, depthNear: 0.5, depthFar: 25,
+  style: 'shaded', exportGrid: false, guides: 'thirds', depthAuto: true, depthNear: 0.5, depthFar: 25, shadowSoft: 0.3,
 };
 
 /* shape icons (24x24 line art) */
@@ -307,7 +307,7 @@ function evalCamRaw(t) {
   return r;
 }
 function ensureDof() { const c = state.camera; if (!c.dof) c.dof = { on: false, fstop: 2.8, auto: true, strength: 3 }; return c.dof; }
-/* how strong the blur is (1 = a real lens, 3 = cinematic, 4.5 = dreamy); files without one read as 3 */
+/* how strong the blur is (1 = a real lens and the look before this setting, 3 = cinematic, 4.5 = dreamy); project.js gives older files 1 */
 const dofStrength = () => { const v = ensureDof().strength; return typeof v === 'number' && v > 0 ? clamp(v, 0.5, 4.5) : 3; };
 function focusDist(cs) { const d = ensureDof(); return d.auto ? Math.max(0.05, dist3(cs.p, cs.tg)) : cs.fd; }
 const subject = () => state.camera.lookAtId ? getObj(state.camera.lookAtId) : null;
@@ -2811,9 +2811,10 @@ function pickAt(rc, noRing = false) {
   const targets = [...views.values()].filter(v => v.group.visible && !(view === 'camera' && v.isMark)).map(v => v.group);
   if (view !== 'camera') {
     /* the camera's path points and the sun win over what is behind them */
-    const hs = [...ckPts.filter(m => m.visible), ...(sunGrp.visible ? [sunPick, sunBall] : [])];
+    const hs = ckPts.filter(m => m.visible);
     const hh = hs.length ? rc.intersectObjects(hs, false) : [];
     if (hh.length) return { id: hh[0].object.userData.pick, point: hh[0].point };
+    if (sunGrp.visible) targets.push(sunBall); /* the sun is picked by distance like everything else, so an object in front of it wins */
     targets.push(camBody); if (targetMarker.visible) targets.push(targetMarker); if (ringGrp.visible && !noRing) targets.push(ringPick, ringKnob); if (liftGrp.visible && !noRing) targets.push(liftPick);
   }
   const hits = rc.intersectObjects(targets, true);
@@ -3059,8 +3060,12 @@ const isGrounded = o => !!o && o.type !== 'mark' && groundOn() && !o.parent && !
 function restOffset(v, r, s) {
   if (!v || v.person || v.isMark) return 0;
   const g = v.group, p0 = g.position.clone(), q0 = g.quaternion.clone(), s0 = g.scale.clone();
+  /* measured with the wheels straight and not turning: the height must not depend on where the playhead was */
+  const wl = v.wheels ? v.wheels.list.map(w => [w, w.spin.rotation.x, w.piv.rotation.y]) : [];
+  for (const [w] of wl) { w.spin.rotation.x = 0; w.piv.rotation.y = 0; }
   g.position.set(0, 0, 0); g.rotation.set(r[0] * D2R, r[1] * D2R, r[2] * D2R, 'YXZ'); g.scale.fromArray(s); g.updateMatrixWorld(true);
   _gb.setFromObject(g); const m = _gb.isEmpty() ? 0 : Math.min(0, _gb.min.y);
+  for (const [w, sp, st] of wl) { w.spin.rotation.x = sp; w.piv.rotation.y = st; }
   g.position.copy(p0); g.quaternion.copy(q0); g.scale.copy(s0); g.updateMatrixWorld(true);
   return m;
 }
@@ -4367,7 +4372,7 @@ function boot() {
     get rebuilds() { return rebuilds; }, urlCacheIds: () => [...urlCache.keys()],
     get history() { return { at: hi, length: hist.length }; },
     /* batch F (camera UX and light) hooks for the smoke test */
-    detectMove, describeShot, camToWorld, pointsVisible: () => ckPts.some(m => m.visible),
+    editCamPos: () => edCam.position.toArray(), detectMove, describeShot, camToWorld, pointsVisible: () => ckPts.some(m => m.visible),
     sunInfo: () => ({ castShadow: sun.castShadow, radius: sun.shadow.radius, intensity: sun.intensity, color: '#' + sun.color.getHexString(), gizmo: { visible: sunGrp.visible, pos: sunGrp.position.toArray() } }),
     shotPixels: (t, w = 240) => { const hh = Math.max(2, Math.round(w / arOf(state.settings.aspect))), r = getExportRenderer(w, hh); renderExportFrame(r, t, w, hh); const c = document.createElement('canvas'); c.width = w; c.height = hh; const g = c.getContext('2d'); g.drawImage(r.domElement, 0, 0); const d = g.getImageData(0, 0, w, hh).data; applyAll(T); return d; },
     /* batch D (people) hooks for the smoke test */

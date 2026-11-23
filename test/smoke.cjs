@@ -1755,7 +1755,7 @@ check('artifact-format fields survive opening; dangling references are dropped',
   ok(by('p1').acts.length === 2 && by('p1').acts[0].t === 1 && by('p1').acts[0].at.yaw === 90, 'acts not sorted/cleaned: ' + JSON.stringify(by('p1').acts));
   ok(by('b1').parent === null && by('b1').opts.seated === null && !('lookAt' in by('b1').opts) && !('body' in by('b1').opts) && !('convertible' in by('b1').opts) && !('acts' in by('b1')), 'dangling/bad box fields kept: ' + JSON.stringify(by('b1')));
   ok(!(by('x1').parent && by('x2').parent), 'a parent loop was kept');
-  ok(s.camera.mount === null && s.camera.dof.strength === 3, 'camera mount/blur strength: ' + JSON.stringify([s.camera.mount, s.camera.dof]));
+  ok(s.camera.mount === null && s.camera.dof.strength === 1, 'camera mount/blur strength (junk strength in a file with depth of field reads as 1, the old look): ' + JSON.stringify([s.camera.mount, s.camera.dof]));
   ok(s.shots.length === 1 && s.shots[0].camera.lookAtId === null && s.shotId === 's1', 'shots not repaired');
   ok(s.takes.length === 2 && s.takes[1].snap === null && s.takeId === 't1', 'takes not repaired');
   ok(!('shadows' in s.settings) && s.settings.shadowSoft === 1 && s.settings.tod === 5 && s.settings.interp === 'natural', 'sun settings: ' + JSON.stringify(s.settings));
@@ -3010,7 +3010,6 @@ check('ground: the green lift arrow raises a floating item; a grounded item has 
 check('mount: the camera rides on an object; its own moves apply on top; unmounting keeps the framing; deleting the object frees it', async ({ open }) => {
   const p = await open(); await settle(p, 300);
   const car = await mkObj(p, 'car', [0, 0, 0]);
-  await p.evaluate(i => { const S = window.__shotref; S.state.objects = S.state.objects.filter(x => x.id === i); S.state.objects[0].opts.free = true; S.changed(true, true); }, car); /* flaky before (also at the previous commit): the ground rule settled the car's height a moment after the keys were set */
   await p.evaluate(i => { const S = window.__shotref, o = S.state.objects.find(x => x.id === i); o.keys = [{ t: 0, p: [0, 0, 0], r: [0, 0, 0], s: [1, 1, 1] }, { t: 4, p: [6, 0, 0], r: [0, 0, 0], s: [1, 1, 1] }]; S.state.camera.base = { p: [3, 1.6, 6], tg: [0, 1, 0], f: 35, roll: 0, fd: 7 }; S.state.camera.keys = []; S.changed(true, true); S.setT(0); }, car);
   const c0 = await p.evaluate(() => window.__shotref.evalCam(0));
   await p.evaluate(i => window.__shotref.setMount(i), car);
@@ -3430,7 +3429,7 @@ check('blur strength: a stronger setting blurs more in the exported frame', asyn
   noErrors(p);
 });
 
-check('blur strength: an artifact-made file keeps its strength; a file without one reads as 3', async ({ open }) => {
+check('blur strength: an artifact-made file keeps its strength; a file without one reads as 1 (the old look)', async ({ open }) => {
   const p = await open(); await settle(p, 300);
   const mk = dof => JSON.stringify({ app: 'ShotRef', version: 1, state: { v: 1, settings: { duration: 5, fps: 24 }, camera: { base: JSON.parse(CAM_BASE), keys: [], dof }, objects: [] }, assets: {} });
   await openFile(p, 'a.shotref.json', mk({ on: true, fstop: 2, auto: true, strength: 4.2 }));
@@ -3438,9 +3437,9 @@ check('blur strength: an artifact-made file keeps its strength; a file without o
   ok(/4\.2×/.test(await rowText(p, 'Strength')), 'file strength shows: ' + await rowText(p, 'Strength'));
   await openFile(p, 'b.shotref.json', mk({ on: true, fstop: 2, auto: true }));
   await camTab(p, 'Lens');
-  ok(/3\.0×/.test(await rowText(p, 'Strength')), 'missing strength shows 3: ' + await rowText(p, 'Strength'));
+  ok(/1\.0×/.test(await rowText(p, 'Strength')), 'missing strength shows 1 (the look before blur strength existed): ' + await rowText(p, 'Strength'));
   await openFile(p, 'c.shotref.json', mk({ on: true, fstop: 2, auto: true, strength: 'lots' }));
-  ok(await p.evaluate(() => window.__shotref.state.camera.dof.strength) === 3, 'junk strength reads as 3');
+  ok(await p.evaluate(() => window.__shotref.state.camera.dof.strength) === 1, 'junk strength in a file that has depth of field reads as 1');
   noErrors(p);
 });
 
@@ -3725,6 +3724,67 @@ check('screenshots: the Scene panel with the sun section and the Lens tab with b
   await shot(p, 'f-scene-sun-shadows.png');
   await p.evaluate(() => { const S = window.__shotref; S.state.camera.dof.on = true; S.changed(true, true); });
   await camTab(p, 'Lens'); await shot(p, 'f-lens-blur-strength.png');
+  noErrors(p);
+});
+
+
+/* ---- Batch F fix round 1 ---- */
+const fileWith = (camera, settings, extra = {}) => JSON.stringify({ app: 'ShotRef', version: 2, state: { v: 2, settings: { duration: 5, fps: 24, ...settings }, camera: { base: JSON.parse(CAM_BASE), keys: [], ...camera }, objects: [], ...extra }, assets: {} });
+
+check('old files: no dof.strength opens at 1, in the file, in shots and in an autosave; a new scene gets 3; no dof at all reads as the default', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  ok(await p.evaluate(() => window.__shotref.state.camera.dof.strength) === 3, 'a new scene has strength 3');
+  await openFile(p, 'o.shotref', fileWith({ dof: { on: true, fstop: 2, auto: true } }, {}));
+  ok(await p.evaluate(() => window.__shotref.state.camera.dof.strength) === 1, 'a file with depth of field but no strength: 1');
+  await openFile(p, 'o2.shotref', fileWith({ dof: { on: true, fstop: 2, auto: true, strength: 2.5 } }, {}));
+  ok(await p.evaluate(() => window.__shotref.state.camera.dof.strength) === 2.5, 'a stored strength is kept');
+  await openFile(p, 'o3.shotref', fileWith({}, {}));
+  ok(await p.evaluate(() => window.__shotref.state.camera.dof.strength) === 3, 'a file with no depth of field at all reads as the default 3');
+  const shots = [{ id: 's1', name: 'A', duration: 5, camera: { base: JSON.parse(CAM_BASE), keys: [], dof: { on: true, fstop: 2, auto: true } } }];
+  await openFile(p, 'o4.shotref', fileWith({}, {}, { shots, shotId: 's1' }));
+  ok(await p.evaluate(() => window.__shotref.state.shots[0].camera.dof.strength) === 1, 'a shot camera without strength: 1');
+  const old = JSON.parse(fileWith({ dof: { on: true, fstop: 2, auto: true } }, {})).state;
+  await p.evaluate(s => localStorage.setItem('shotref.autosave', JSON.stringify({ state: s, assets: {}, assetIds: [], v: 2 })), old);
+  await p.reload(); await p.waitForFunction(() => window.__shotref && window.__shotref.state); await settle(p, 800);
+  ok(await p.evaluate(() => window.__shotref.state.camera.dof.strength) === 1, 'an autosave without strength: 1');
+  noErrors(p);
+});
+
+check('old files: no shadowSoft keeps the old shadow radius (2); a new scene uses the new default', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  ok(Math.abs((await sunInfo(p)).radius - 2.8) < 0.01, 'a new scene: 2.8');
+  await openFile(p, 'o5.shotref', fileWith({}, {}));
+  ok(Math.abs((await sunInfo(p)).radius - 2) < 0.01, 'a file without shadowSoft: radius 2, was ' + (await sunInfo(p)).radius);
+  await openFile(p, 'o6.shotref', fileWith({}, { shadowSoft: 0.5 }));
+  ok(Math.abs((await sunInfo(p)).radius - 4) < 0.01, 'a stored softness is kept');
+  noErrors(p);
+});
+
+check('ground: settling a keyed car writes the same heights at any playhead (wheels do not change the rest height)', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => { const S = window.__shotref; S.state.objects.length = 0; S.changed(true, true); });
+  const run = async t => {
+    const id = await mkObj(p, 'car', [0, 0, 0]);
+    await p.evaluate(a => { const S = window.__shotref, o = S.state.objects.find(x => x.id === a[0]); o.keys = [{ t: 0, p: [0, 0, 0], r: [0, 0, 0], s: [1, 1, 1] }, { t: 4, p: [12, 0, 0], r: [0, 0, 0], s: [1, 1, 1] }]; S.setT(a[1]); S.changed(true, true); }, [id, t]);
+    await settle(p, 700);
+    const ys = (await objOf(p, id)).keys.map(k => k.p[1]);
+    await p.evaluate(a => { const S = window.__shotref; S.state.objects = S.state.objects.filter(x => x.id !== a); S.changed(true, true); }, id); await settle(p, 200);
+    return ys;
+  };
+  const a = await run(0.3), b = await run(2.7), c = await run(1.4);
+  ok(a.every((y, i) => Math.abs(y - b[i]) < 1e-4 && Math.abs(y - c[i]) < 1e-4), 'heights differ by playhead: ' + JSON.stringify([a, b, c]));
+  noErrors(p);
+});
+
+check('sun gizmo: an object in front of the sun is picked first; the sun still picks where nothing is in front', async ({ open }) => {
+  const p = await open(); await settle(p, 400);
+  await p.evaluate(() => { const S = window.__shotref; S.state.objects.length = 0; S.select(null); S.setView('editor'); S.changed(true, true); }); await settle(p, 400);
+  const g = await p.evaluate(() => window.__shotref.sunInfo().gizmo), [x, y] = await p.evaluate(g => window.__shotref.project(g.pos[0], g.pos[1], g.pos[2]), g);
+  ok(await pickScr(p, [x, y]) === 'sun', 'nothing in front: the sun');
+  /* a big wall right in front of the sun, between it and the editor camera */
+  const id = await p.evaluate(g => { const S = window.__shotref, c = S.evalCam(0), cam = S.editCamPos(); const o = S.addObject('box', null, false, [0, 0, 0]); const m = [cam[0] + (g.pos[0] - cam[0]) * 0.5, cam[1] + (g.pos[1] - cam[1]) * 0.5, cam[2] + (g.pos[2] - cam[2]) * 0.5]; o.base = { p: [m[0], m[1] - 0.5, m[2]], r: [0, 0, 0], s: [6, 6, 6] }; o.opts.free = true; S.changed(true, true); return o.id; }, g);
+  await settle(p, 500);
+  ok(await pickScr(p, [x, y]) === id, 'an object in front wins: ' + await pickScr(p, [x, y]));
   noErrors(p);
 });
 
