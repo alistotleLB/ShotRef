@@ -1,0 +1,23 @@
+{
+  "name": "shotref",
+  "version": "1.0.0",
+  "description": "ShotRef: simple 3D blocking and camera-move tool that exports reference videos and frames for AI video models",
+  "scripts": {
+    "build": "node build.mjs",
+    "build:debug": "node build.mjs --debug",
+    "test": "node test/smoke.cjs",
+    "dev": "node build.mjs && echo Open dist/ShotRef.html in Chrome or Edge"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "mp4-muxer": "^5.2.2",
+    "three": "^0.187.0"
+  },
+  "private": true,
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "playwright-core": "1.65.1"
+  }
+}

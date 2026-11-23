@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" role="img" aria-label="ShotRef project">
+  <path d="M6 2h14l7 7v20a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" fill="#F4F3EF" stroke="#141518" stroke-width="1.2"/>
+  <path d="M20 2v7h7" fill="#D9D7D0" stroke="#141518" stroke-width="1.2" stroke-linejoin="round"/>
+  <rect x="8" y="13" width="16" height="16" rx="3.5" fill="#FF9A3C"/>
+  <g transform="translate(8 13) scale(0.5)">
+    <path d="M5 13V5h8M19 27h8v-8" fill="none" stroke="#141518" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M9 22L23 10" stroke="#FFFFFF" stroke-width="3.6" stroke-linecap="round"/>
+  </g>
+</svg>

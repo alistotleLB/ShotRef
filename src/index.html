@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ShotRef</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMiIgaGVpZ2h0PSIzMiIgdmlld0JveD0iMCAwIDMyIDMyIiByb2xlPSJpbWciIGFyaWEtbGFiZWw9IlNob3RSZWYiPgogIDxyZWN0IHdpZHRoPSIzMiIgaGVpZ2h0PSIzMiIgcng9IjciIGZpbGw9IiNGRjlBM0MiLz4KICA8cGF0aCBkPSJNNSAxMlY1aDdNMjAgMjdoN3YtNyIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjMTQxNTE4IiBzdHJva2Utd2lkdGg9IjIuNiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+CiAgPHBhdGggZD0iTTggMjNDMTMgMTUgMTkgMjIgMjQgOSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjRkZGRkZGIiBzdHJva2Utd2lkdGg9IjIuNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+CiAgPGNpcmNsZSBjeD0iOCIgY3k9IjIzIiByPSIyLjQiIGZpbGw9IiNGRkZGRkYiLz48Y2lyY2xlIGN4PSIyNCIgY3k9IjkiIHI9IjIuNCIgZmlsbD0iI0ZGRkZGRiIvPgo8L3N2Zz4K">
+<link rel="icon" type="image/png" sizes="32x32" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAB5klEQVR4nMxXvU7DMBA+hyysbAwIys/SDTogUSEQYujQgVcAFZAYmOABGNiYGJAQFX0H1IEBsaAiMRSYygQFIdSBB+hEgs+pmzSJnT8n7SdFcRxb33e+s8+ngwNmdWUa/rQDIFCmn3lQixaYUIcx44JUHr94J+mTX65WgJhXkDYIlWGQPbL/ULU+syR3wiS7KIKwZTe1NtXFxDTaXem8Ym4clEEzZvSez/uu2Kr+BM77PZ0HJaDcei/gGIKsVw7KrYMg2o83JqA4613uSC6Y27Te73eiEXld9AfJE/m7dAYwtWy1F0oAt0e+wzRIA2g5J0dgm69GJgIiIB0Bbp9/PwnjQBgDibC0bbfvT2RBKBaQKAALO9a7eS0l9whA0sSHTPncbndeA4erdQEu/eSi1UbrOy+BU9QIQNKCi/y5FmpqMgFuYgRaHZI8ngA/Uo4IlkcXICNGq5u1UD6PJwCDi2+tGKSYZXmad+8yuQA8v3Pr9Fmz++qHsSx1inGeMWIBzmyGQFIkVwx/Ae5shni7gTQwotkQz2/MYBySbJYU4hjAG0zwlcoDv3tl46MrFdACURUUkTjMjdqFlsbKpQwxkOYpt1WYGNonKELowgZLNGLkhl6asV3ACkXawVRlSM64B/qHUJ7/AwAA//84sIp7AAAABklEQVQDAAFUsOwoEoqMAAAAAElFTkSuQmCC">
+<meta name="theme-color" content="#141518">
+<style>
+/*
+VOICE: a calm, professional tool, like a colour suite: dark, precise, quiet.
+IDEA: a camera operator's monitor plus a minimal 3D stage.
+PICTURE: the live 3D viewport is the picture; everything else frames it.
+COLOUR and TYPE: graphite panels, one warm "tally light" amber accent for the camera and keys; system UI type.
+LAYOUT: add/scene list left, viewport centre, properties right, timeline across the bottom.
+*/
+:root{
+  --bg:#141518;--panel:#1b1d21;--panel2:#222429;--line:#30333a;--line2:#3a3e46;
+  --ink:#e7e9ec;--mute:#8f959e;--dim:#62676f;--acc:#ff9a3c;--acc2:#ffb870;--accd:#5a3a1c;
+  --blue:#5aa2ff;--red:#ff5d5d;--ok:#59d18a;
+  color-scheme:dark;
+}
+*{box-sizing:border-box;min-width:0}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:13px/1.4 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif;overflow:hidden}
+button,select,input{font:inherit;color:inherit}
+button{background:var(--panel2);border:1px solid var(--line2);border-radius:6px;padding:5px 10px;cursor:pointer;white-space:nowrap;transition:background .12s,border-color .12s}
+button:hover{background:#2b2e34;border-color:#4a4f58}
+button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
+button.primary{background:var(--acc);border-color:var(--acc);color:#1b1206;font-weight:600}
+button.primary:hover{background:var(--acc2)}
+button.on{background:var(--accd);border-color:var(--acc);color:var(--acc2)}
+button.ghost{background:transparent}
+button:disabled{opacity:.4;cursor:default}
+select,input[type=text],input[type=number]{background:#15161a;border:1px solid var(--line2);border-radius:5px;padding:4px 6px}
+input[type=color]{width:34px;height:24px;padding:0;border:1px solid var(--line2);border-radius:5px;background:none;cursor:pointer}
+input[type=range]{accent-color:var(--acc);width:100%}
+#app{display:grid;height:100vh;grid-template-columns:236px minmax(0,1fr) 300px;grid-template-rows:46px minmax(0,1fr) auto;grid-template-areas:"top top top" "left vp right" "tl tl tl"}
+#top{grid-area:top;display:flex;align-items:center;gap:10px;padding:0 10px;background:var(--panel);border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:8px;font-weight:600;font-size:15px;letter-spacing:-.2px;margin-right:6px}
+.brand .mark{width:20px;height:20px;flex:none}.brand .r{color:var(--acc)}
+.starthead{display:flex;align-items:center;gap:12px;margin:0 0 14px}.starthead .mark{width:40px;height:40px;flex:none}.starthead b{display:block;font-size:20px;font-weight:600;letter-spacing:-.3px}.starthead b span{color:var(--acc)}.starthead small{color:var(--mute);font-size:13px}
+.brand small{font-weight:400;color:var(--mute);font-size:12px}
+.grp{display:flex;gap:4px}
+.seg{display:flex;border:1px solid var(--line2);border-radius:7px;overflow:hidden}
+.seg button{border:0;border-radius:0;background:transparent;padding:5px 12px}
+.seg button+button{border-left:1px solid var(--line2)}
+.seg button.on{background:var(--accd);color:var(--acc2)}
+.spacer{flex:1}
+aside{background:var(--panel);overflow:auto}
+#left{grid-area:left;border-right:1px solid var(--line)}
+#right{grid-area:right;border-left:1px solid var(--line)}
+.ph{font-size:11px;color:var(--mute);padding:10px 12px 6px;display:flex;justify-content:space-between;align-items:center;font-weight:600}
+.addcat{font-size:11px;color:var(--mute);padding:6px 12px 3px}
+.addgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;padding:0 8px}
+.tile{display:flex;flex-direction:column;align-items:center;gap:3px;padding:7px 2px 6px;font-size:11px;color:#cfd3d8;background:var(--panel2);border:1px solid var(--line);border-radius:7px}
+.tile svg{width:24px;height:24px;stroke:#cfd3d8;fill:none;stroke-width:1.5;stroke-linejoin:round;stroke-linecap:round}
+.tile:hover svg{stroke:var(--acc2)}
+.tile.big{grid-column:span 3;flex-direction:row;justify-content:center;gap:8px;font-size:12px;padding:8px}
+#outliner{padding:2px 6px 12px}
+.ol{display:flex;align-items:center;gap:7px;padding:5px 8px;border-radius:6px;cursor:pointer;color:#d3d6db}
+.ol:hover{background:var(--panel2)}
+.ol.sel{background:var(--accd);color:#ffe3c6}
+.ol .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ol .kd{color:var(--acc);font-size:10px}
+.ol .eye{opacity:.55;padding:0 3px;border:0;background:none}
+.ol .eye:hover{opacity:1}
+.ol.hid .nm{opacity:.45}
+.ol svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.6;flex:none}
+#vp{grid-area:vp;position:relative;overflow:hidden;background:#0e0f11}
+#c{position:absolute;inset:0;width:100%;height:100%;display:block;outline:none}
+.ov{position:absolute;pointer-events:none}
+#vpTools{top:10px;left:10px;display:flex;gap:4px;pointer-events:auto}
+#vpRight{top:10px;right:10px;display:flex;gap:4px;pointer-events:auto}
+#vpTools button,#vpRight button{background:rgba(25,27,31,.85);backdrop-filter:blur(6px);padding:5px 9px}
+#vpTools button.on,#vpRight button.on{background:rgba(90,58,28,.92)}
+#pipFrame{border:1.5px solid var(--acc);border-radius:3px;pointer-events:auto;cursor:pointer;box-shadow:0 4px 22px rgba(0,0,0,.5)}
+#pipFrame span{position:absolute;left:6px;top:4px;font-size:10px;font-weight:700;color:var(--acc2);text-shadow:0 1px 2px #000;letter-spacing:.5px}
+#camFrame{border:1px solid rgba(255,255,255,.25)}
+#camFrame svg{position:absolute;inset:0;width:100%;height:100%}
+.plateImg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;pointer-events:none;display:none}
+#pipFrame span{z-index:1}
+#hud{left:0;right:0;top:46px;display:flex;justify-content:center;gap:14px;font-size:11.5px;color:#d9dce0;text-shadow:0 1px 2px #000}
+#hud b{color:var(--acc2);font-weight:600}
+#hud .rec{color:var(--red)}
+#hint{left:12px;bottom:10px;font-size:12px;color:#aab0b8;background:rgba(15,16,19,.7);padding:5px 9px;border-radius:6px;max-width:60%}
+#hint kbd,.kbd{font:11px ui-monospace,Consolas,monospace;background:#2a2d33;border:1px solid #444;border-bottom-width:2px;border-radius:4px;padding:0 4px;color:#e2e2e2}
+#props{padding-bottom:20px}
+.sec{border-bottom:1px solid var(--line);padding:10px 12px}
+.sec h3{margin:0 0 8px;font-size:11px;font-weight:600;color:var(--mute);display:flex;justify-content:space-between;align-items:center}
+.row{display:flex;align-items:center;gap:6px;margin:5px 0}
+.row>label,.lbl{width:78px;flex:none;color:#b8bdc4}
+.row .grow{flex:1}
+.vec{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;flex:1}
+.nf{display:flex;align-items:stretch;background:#15161a;border:1px solid var(--line2);border-radius:5px;overflow:hidden}
+.nf-l{padding:3px 5px;color:var(--mute);cursor:ew-resize;user-select:none;background:#1f2126;font-size:11px;display:flex;align-items:center}
+.nf-l.x{color:#ff7b7b}.nf-l.y{color:#7ddc7d}.nf-l.z{color:#76a8ff}
+.nf input{border:0;background:transparent;width:100%;padding:3px 4px;text-align:right;font-variant-numeric:tabular-nums}
+.nf input:focus{outline:none;background:#101114}
+.chips{display:flex;flex-wrap:wrap;gap:4px}
+.chips button{padding:3px 8px;font-size:12px}
+.posegrid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
+.posegrid button{padding:6px 2px;font-size:12px}
+.posegrid button i{display:block;font-style:normal;font-size:9px;color:var(--mute)}
+.movegrid{display:grid;grid-template-columns:1fr 1fr;gap:4px}
+.movegrid button{text-align:left;padding:5px 7px;font-size:12px;display:flex;gap:6px;align-items:center}
+.movegrid button b{color:var(--acc2);font-weight:600;width:14px;text-align:center}
+.btns{display:flex;flex-wrap:wrap;gap:4px}
+.btns button{flex:1 1 auto}
+.note{font-size:11.5px;color:var(--mute);margin:6px 0 0}
+.keyline{display:flex;align-items:center;gap:6px;font-size:12px;color:#c9cdd3;margin-bottom:6px}
+.keyline .kdia{color:var(--acc)}
+.sval{width:62px;text-align:right;color:#cdd1d6;font-variant-numeric:tabular-nums}
+/* timeline */
+#tl{grid-area:tl;background:var(--panel);border-top:1px solid var(--line);display:flex;flex-direction:column;min-height:90px;max-height:182px}
+#tlBar{display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--line)}
+#tlBar label{display:flex;align-items:center;gap:5px;color:var(--mute)}
+#tlBar input[type=number]{width:58px}
+.tp{display:flex;gap:3px}
+.tp button{padding:4px 8px;min-width:32px}
+#bPlay{min-width:44px}
+#tcode{font:600 16px ui-monospace,Consolas,monospace;color:var(--acc2);min-width:92px;text-align:center}
+#tframe{color:var(--mute);font-variant-numeric:tabular-nums;min-width:60px}
+/* room for the ruler, the camera row and one more, so selecting an un-keyed object does not resize the view (K4) */
+#tlBody{position:relative;flex:1;min-height:70px;overflow-y:auto;overflow-x:hidden}
+.tlr{display:flex;height:24px;align-items:stretch}
+.tlr .lab{width:160px;flex:none;display:flex;align-items:center;gap:6px;padding:0 10px;color:#c6cad0;border-right:1px solid var(--line);cursor:pointer;overflow:hidden;white-space:nowrap}
+.tlr .lab .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tlr .lab:focus-visible,.ol:focus-visible{outline:2px solid var(--acc);outline-offset:-2px}
+.tlr.sel .lab{color:var(--acc2);background:#24201b}
+.tlr .lane{position:relative;flex:1;margin:0 14px 0 8px;border-bottom:1px solid #24262b;cursor:pointer}
+.tlr.sel .lane{background:rgba(255,154,60,.05)}
+#tlRuler{height:22px;position:sticky;top:0;z-index:2;background:var(--panel)}
+#tlRuler .lane{border-bottom:1px solid var(--line)}
+.tick{position:absolute;bottom:0;width:1px;background:#4a4e56;height:5px}
+.tick.maj{height:10px;background:#6a707a}
+.tick span{position:absolute;bottom:9px;left:3px;font-size:10px;color:var(--mute)}
+.dia{position:absolute;top:50%;width:11px;height:11px;margin:-6px 0 0 -6px;background:var(--acc);transform:rotate(45deg);border:1px solid #2b1a08;cursor:grab;z-index:1}
+.dia:hover{background:#ffd2a3}
+.dia.cam{background:#ffcf5a}
+#tlHead{position:absolute;top:0;bottom:0;width:2px;background:var(--red);pointer-events:none;z-index:3}
+#tlHead::before{content:"";position:absolute;top:0;left:-5px;border:6px solid transparent;border-top:8px solid var(--red)}
+#tlEnd{position:absolute;top:0;bottom:0;right:0;background:rgba(0,0,0,.25);pointer-events:none}
+/* modal */
+.modal{position:fixed;inset:0;background:rgba(5,6,8,.6);display:flex;align-items:center;justify-content:center;z-index:50}
+.modal.hidden{display:none}
+.dlg{position:relative;background:var(--panel);border:1px solid var(--line2);border-radius:12px;padding:20px 22px;width:min(560px,94vw);max-height:90vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+.dlg h2{margin:0 0 4px;font-size:18px}
+.dlg .x{position:absolute;right:12px;top:12px;border:0;background:none;font-size:20px;color:var(--mute);z-index:1}
+.dlg.scroll{display:flex;flex-direction:column;overflow:hidden;padding-right:8px}
+.dlg.scroll .dlgBody{overflow:auto;min-height:0;padding-right:14px}
+.styles{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:8px 0}
+.styles button{display:flex;flex-direction:column;gap:5px;padding:7px;text-align:left;white-space:normal}
+.styles .sw{height:38px;border-radius:5px}
+.styles small{color:var(--mute);font-size:10.5px;line-height:1.25}
+.exacts{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px}
+.exacts .primary{grid-column:span 2;padding:10px;font-size:14px}
+.prog{margin-top:14px}
+.bar{height:8px;background:#101114;border-radius:5px;overflow:hidden;border:1px solid var(--line)}
+.bar i{display:block;height:100%;width:0;background:var(--acc)}
+.sum{color:var(--mute);margin:2px 0 10px}
+.sum b{color:var(--ink);font-weight:600}
+.help-grid{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin-top:10px}
+.help-grid div:nth-child(odd){text-align:right;white-space:nowrap}
+.steps{margin:10px 0 0;padding-left:20px;color:#cfd3d8}
+.steps li{margin:6px 0}
+#toast{position:fixed;left:50%;bottom:200px;transform:translateX(-50%);background:#2a2d33;border:1px solid var(--line2);padding:8px 14px;border-radius:8px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:60;box-shadow:0 8px 30px rgba(0,0,0,.4)}
+#toast.show{opacity:1}
+#toast.top{top:16px;bottom:auto}
+.drop{position:absolute;inset:0;border:3px dashed var(--acc);background:rgba(255,154,60,.08);display:none;align-items:center;justify-content:center;font-size:18px;color:var(--acc2)}
+#camBar{top:10px;left:10px;display:none;gap:4px;pointer-events:auto}
+#camBar button{background:rgba(25,27,31,.88);backdrop-filter:blur(6px);padding:6px 12px;font-weight:600}
+#camBar button.on{background:rgba(90,58,28,.95);border-color:var(--acc);color:var(--acc2)}
+.recbtn{color:#ff8080}
+.recbtn.on{background:#5a1c1c!important;border-color:#ff5d5d!important;color:#ffd0d0!important}
+#modeBar{bottom:46px;left:50%;transform:translateX(-50%);display:none;align-items:center;gap:8px;pointer-events:auto;z-index:5;width:max-content;background:rgba(20,22,26,.94);border:1px solid var(--acc);border-radius:10px;padding:7px 8px 7px 14px;box-shadow:0 8px 30px rgba(0,0,0,.45);max-width:92%}
+#modeBar span{color:#ffe3c6;font-size:12.5px;flex:1 1 auto;white-space:normal}
+#modeBar button{padding:4px 10px;flex:none}
+#countdown{left:0;right:0;top:40%;text-align:center;font:700 120px/1 system-ui,sans-serif;color:rgba(255,255,255,.9);text-shadow:0 4px 30px rgba(0,0,0,.6)}
+#labels{inset:0;overflow:hidden}
+.lbl3d{position:absolute;left:0;top:0;font-size:11px;background:rgba(15,16,19,.72);color:#dfe3e8;padding:1px 6px;border-radius:4px;white-space:nowrap;will-change:transform}
+.lbl3d.sel{background:var(--acc);color:#1b1206;font-weight:600}
+.lenset{display:flex;align-items:center;gap:3px;color:var(--mute)}
+.lenset span{margin-right:3px}
+.lenset button{padding:3px 8px}
+.lenset input{width:54px;margin-left:3px}
+.feelbar button{padding:4px 9px}
+.seg.feel{width:100%}
+.seg.feel button{flex:1}
+.btns.big2 button{padding:9px 6px;font-weight:600;font-size:13px}
+.btns + .btns{margin-top:4px}
+.bi svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.8;vertical-align:-3px;margin-right:5px}
+.startgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;margin-top:12px}
+.startgrid .card{display:flex;flex-direction:column;gap:4px;text-align:left;padding:12px;white-space:normal;min-height:84px}
+.startgrid .card b{font-size:13.5px}
+.startgrid .card small{color:var(--mute);font-size:11.5px;line-height:1.35}
+.startgrid .card:hover{border-color:var(--acc)}
+body.simple #vpTools [data-g]{display:none}
+@media (max-width:1400px){.brand small{display:none}}
+@media (max-width:1250px){#tlBar{flex-wrap:wrap}}
+@media (max-width:1100px){.brand .name{display:none}}
+@media (max-width:900px){#app{grid-template-columns:190px minmax(0,1fr) 250px}.brand small{display:none}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div id="app">
+  <header id="top">
+    <div class="brand" title="ShotRef"><svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M5 12V5h7M20 27h7v-7" fill="none" stroke="#E7E9EC" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 23C13 15 19 22 24 9" fill="none" stroke="#FF9A3C" stroke-width="2.4" stroke-linecap="round"/><circle cx="8" cy="23" r="2.4" fill="#FF9A3C"/><circle cx="24" cy="9" r="2.4" fill="#FF9A3C"/></svg><span class="name">Shot<span class="r">Ref</span></span> <small>Camera moves for AI video</small></div>
+    <div class="grp">
+      <button id="bNew" title="Start a new project">New</button>
+      <button id="bOpen" title="Open a saved project (Ctrl+O)">Open</button>
+      <button id="bSave" title="Save project file (Ctrl+S)">Save</button>
+    </div>
+    <div class="grp">
+      <button id="bUndo" title="Undo (Ctrl+Z)">↶ Undo</button>
+      <button id="bRedo" title="Redo (Ctrl+Y)">↷</button>
+    </div>
+    <div class="seg" id="viewSeg">
+      <button data-v="editor" title="Free 3D view to build the scene">Editor</button>
+      <button data-v="top" title="Overhead floor-plan view for blocking (T)">Top view</button>
+      <button data-v="camera" title="Look through the shot camera (C)">Camera view</button>
+    </div>
+    <div class="seg" id="modeSeg" title="Simple mode hides the number fields and lighting details">
+      <button data-m="simple">Simple</button><button data-m="advanced">Advanced</button>
+    </div>
+    <div class="spacer"></div>
+    <button id="bHelp" class="ghost" title="Quick start and shortcuts">? Help</button>
+    <button id="bCopy" title="Copy the current camera frame to the clipboard as an image (Ctrl+C)">Copy frame</button>
+    <button id="bSnap" title="Save the current frame as PNG (P)">Frame PNG</button>
+    <button id="bExport" class="primary" title="Export video or images">Export…</button>
+  </header>
+
+  <aside id="left">
+    <div class="ph">Add to scene</div>
+    <div id="addArea"></div>
+    <div class="ph">In the scene</div>
+    <div id="outliner"></div>
+  </aside>
+
+  <main id="vp">
+    <canvas id="c" tabindex="0"></canvas>
+    <div id="vpTools" class="ov">
+      <button data-g="translate" title="Move (W)">Move</button>
+      <button data-g="rotate" title="Rotate (E)">Rotate</button>
+      <button data-g="scale" title="Scale (R)">Scale</button>
+      <button id="bSnapGrid" title="Snap to 0.25 m and 15°">Snap</button>
+      <button id="bFocus" title="Frame selected object (F)">Focus</button>
+    </div>
+    <div id="vpRight" class="ov">
+      <button id="bCamHere" title="Put the shot camera where you are looking now">Camera to this view</button>
+      <button id="bPip" title="Camera preview picture-in-picture">Preview</button>
+      <button id="bGrid" title="Show grid">Grid</button>
+    </div>
+    <div id="camBar" class="ov">
+      <button id="cbStart" title="Save this framing as the first frame">Set start</button>
+      <button id="cbEnd" title="Save this framing as the last frame">Set end</button>
+      <button id="cbRec" class="recbtn" title="Operate the camera live while the shot plays">● Record</button>
+      <button id="cbPlate" title="Put a photo of the location behind the scene">Location photo</button>
+      <button id="cbCopy" title="Copy this frame to the clipboard (Ctrl+C)">Copy frame</button>
+    </div>
+    <div id="labels" class="ov"></div>
+    <div id="modeBar" class="ov"></div>
+    <div id="countdown" class="ov"></div>
+    <div id="pipFrame" class="ov"><img class="plateImg" alt=""><span>CAMERA</span></div>
+    <div id="camFrame" class="ov"><img class="plateImg" alt=""><svg id="guides" preserveAspectRatio="none" viewBox="0 0 100 100"></svg></div>
+    <div id="hud" class="ov"></div>
+    <div id="hint" class="ov"></div>
+    <div id="drop" class="drop">Drop a .glb model, an image (in Camera view: a location photo), or a ShotRef project</div>
+  </main>
+
+  <aside id="right"><div id="props"></div></aside>
+
+  <footer id="tl">
+    <div id="tlBar">
+      <div class="tp">
+        <button id="bStart" title="Go to start (Home)">⏮</button>
+        <button id="bPrevKey" title="Previous keyframe">◆◀</button>
+        <button id="bPlay" title="Play / pause (Space)">▶</button>
+        <button id="bNextKey" title="Next keyframe">▶◆</button>
+        <button id="bEnd" title="Go to end (End)">⏭</button>
+      </div>
+      <div id="tcode">00:00.00</div>
+      <div id="tframe">frame 1</div>
+      <button id="bKey" title="Add a keyframe for the selected item at the playhead (K)">◆ Add key</button>
+      <button id="bUnkey" title="Remove the selected item's keyframe at the playhead">◇ Remove key</button>
+      <div class="spacer"></div>
+      <div id="lenSet" class="lenset" title="Shot length. Common AI video lengths; the animation stretches to fit.">
+        <span>Length</span><button data-len="5">5 s</button><button data-len="8">8 s</button><button data-len="10">10 s</button>
+        <input id="inDur" type="number" min="1" max="120" step="0.5" title="Custom length (seconds)">
+      </div>
+      <label>FPS <select id="inFps"><option>24</option><option>25</option><option>30</option><option>50</option><option>60</option></select></label>
+      <div class="seg feelbar" id="feelBar" title="Camera motion feel: how the move starts and stops">
+        <button data-feel="constant">Constant</button><button data-feel="gentle">Gentle</button><button data-feel="strong">Strong</button>
+      </div>
+      <button id="bLoop" title="Loop playback">⟲ Loop</button>
+    </div>
+    <div id="tlBody">
+      <div class="tlr" id="tlRuler"><div class="lab" style="cursor:default;color:var(--mute)">Tracks</div><div class="lane" id="rulerLane"></div></div>
+      <div id="tlRows"></div>
+      <div id="tlHead"></div>
+    </div>
+  </footer>
+</div>
+
+<input type="file" id="fOpen" accept=".json,application/json" hidden>
+<input type="file" id="fModel" accept=".glb,.gltf" hidden>
+<input type="file" id="fImage" accept="image/*" hidden>
+<input type="file" id="fPlate" accept="image/jpeg,image/png,image/webp" hidden>
+
+<div id="mExport" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mExportT"><div class="dlg">
+  <button class="x" data-close aria-label="Close">×</button>
+  <h2 id="mExportT">Export</h2>
+  <div class="sum" id="exSum"></div>
+  <div class="row"><label>Aspect</label><select id="exAspect" class="grow"></select></div>
+  <div class="row"><label>Size</label><select id="exSize" class="grow"></select></div>
+  <div class="lbl" style="margin-top:10px;width:auto">Render style</div>
+  <div class="styles" id="exStyles"></div>
+  <div class="row" id="exDepthRow"></div>
+  <label class="row" style="gap:8px"><input type="checkbox" id="exGrid"> Show the grid on the floor in the export</label>
+  <div class="exacts">
+    <button id="exVideo" class="primary">Render video (MP4)</button>
+    <button id="exFrame">Current frame (PNG)</button>
+    <button id="exEnds">Start + end frames (PNG)</button>
+    <button id="exCopy" style="grid-column:span 2">Copy current frame to clipboard</button>
+  </div>
+  <div class="prog" id="exProg" hidden>
+    <div class="bar"><i id="exBar"></i></div>
+    <div class="row" style="justify-content:space-between"><span id="exTxt" class="note"></span><button id="exCancel">Cancel</button></div>
+  </div>
+  <p class="note">Video renders frame by frame, so it is always smooth at the chosen FPS, whatever your PC's speed. Helpers like the camera icon and paths are never included.</p>
+</div></div>
+
+<div id="mHelp" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mHelpT"><div class="dlg scroll">
+  <button class="x" data-close aria-label="Close">×</button>
+  <div class="dlgBody">
+  <h2 id="mHelpT">Quick start</h2>
+  <ol class="steps">
+    <li><b>Start from a set</b> (the New button), or click items on the left and then click on the floor to place them.</li>
+    <li><b>Block it.</b> Drag people and props across the floor; drag the orange ring to turn them. <b>Top view</b> (<span class="kbd">T</span>) works like a floor plan.</li>
+    <li><b>Move people.</b> Select a person, press <b>Draw walk path</b> and click points on the floor, or send them to a floor mark with an arrival time.</li>
+    <li><b>Frame the shot.</b> In <b>Camera view</b> (<span class="kbd">C</span>) drag to orbit, right-drag to pan, scroll to dolly, <span class="kbd">W A S D Q E</span> to fly. Or use a shot size: Wide, Medium, Close-up…</li>
+    <li><b>Make the move.</b> Press <b>Set start</b>, reframe, press <b>Set end</b>. Or pick a one-click move, or <b>● Record</b> and operate the camera live.</li>
+    <li><b>Export</b> an MP4, the current frame, or start + end frames for image-to-video models.</li>
+  </ol>
+  <h2 style="margin-top:16px">Shortcuts</h2>
+  <div class="help-grid">
+    <div><span class="kbd">Space</span></div><div>Play / pause</div>
+    <div><span class="kbd">C</span> · <span class="kbd">T</span></div><div>Camera view · Top view</div>
+    <div><span class="kbd">Enter</span> · <span class="kbd">Esc</span></div><div>Finish a path · cancel placing, a path or a recording</div>
+    <div><span class="kbd">W</span> <span class="kbd">E</span> <span class="kbd">R</span></div><div>Move / Rotate / Scale arrows (Advanced mode)</div>
+    <div><span class="kbd">K</span></div><div>Add key for the selection (camera in Camera view)</div>
+    <div><span class="kbd">←</span> <span class="kbd">→</span></div><div>Step one frame (Shift: 10 frames)</div>
+    <div><span class="kbd">Home</span> <span class="kbd">End</span></div><div>Go to start / end</div>
+    <div><span class="kbd">F</span></div><div>Focus the selection</div>
+    <div><span class="kbd">Ctrl D</span> · <span class="kbd">Del</span></div><div>Duplicate · Delete</div>
+    <div><span class="kbd">Ctrl Z</span> · <span class="kbd">Ctrl Y</span></div><div>Undo · Redo</div>
+    <div><span class="kbd">Ctrl S</span> · <span class="kbd">Ctrl O</span></div><div>Save · Open project</div>
+    <div><span class="kbd">P</span> · <span class="kbd">Ctrl C</span></div><div>Save current frame as PNG · copy it to the clipboard</div>
+    <div>Timeline</div><div>Click or drag to scrub · drag a ◆ to retime it · right-click a ◆ to delete it</div>
+  </div>
+  <p class="note">Your work is autosaved in this browser. Use <b>Save</b> to keep a project file you can reopen anywhere.</p>
+  </div>
+</div></div>
+
+<div id="mStart" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mStartT"><div class="dlg" style="width:min(640px,94vw)">
+  <button class="x" data-close aria-label="Close">×</button>
+  <div class="starthead" id="startHead" style="display:none"><svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M5 12V5h7M20 27h7v-7" fill="none" stroke="#E7E9EC" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 23C13 15 19 22 24 9" fill="none" stroke="#FF9A3C" stroke-width="2.4" stroke-linecap="round"/><circle cx="8" cy="23" r="2.4" fill="#FF9A3C"/><circle cx="24" cy="9" r="2.4" fill="#FF9A3C"/></svg><div><b>Shot<span>Ref</span></b><small>Block the shot. Move the camera. Guide the AI.</small></div></div>
+  <h2 id="mStartT">Starter sets</h2>
+  <p class="note" style="font-size:13px" id="mStartP">Pick a ready-made layout. Everything in it can be moved, changed or deleted.</p>
+  <div class="startgrid" id="startGrid"></div>
+  <div class="btns" style="margin-top:12px;justify-content:space-between;align-items:center"><span class="note" style="margin:0">New to ShotRef? The guide shows the basics in six steps.</span><button id="stHelp" style="flex:none">Quick start guide</button></div>
+</div></div>
+
+<div id="mCopy" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mCopyT"><div class="dlg" style="width:min(720px,94vw)">
+  <button class="x" data-close aria-label="Close">×</button>
+  <h2 id="mCopyT">Copy this frame</h2>
+  <p class="note" style="font-size:13px">This window doesn't allow direct copying. Right-click the image and choose <b>Copy image</b>.</p>
+  <img id="copyImg" alt="Current camera frame" style="width:100%;border-radius:8px;border:1px solid var(--line2);display:block;margin-top:8px">
+  <div class="btns" style="margin-top:12px"><button data-close>Close</button><button id="copySave" class="primary">Save as PNG instead</button></div>
+</div></div>
+
+<div id="mConfirm" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="cfTitle"><div class="dlg" style="width:min(400px,94vw)">
+  <h2 id="cfTitle"></h2><p id="cfText" class="note" style="font-size:13px"></p>
+  <div class="btns" style="margin-top:14px"><button data-close>Cancel</button><button id="cfOk" class="primary">OK</button></div>
+</div></div>
+
+<div id="toast"></div>
+<script>/*APP*/</script>
+</body>
+</html>

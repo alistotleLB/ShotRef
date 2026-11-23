@@ -1,0 +1,9 @@
+node_modules/
+dist/
+release/
+sandbox/app.html
+.superpowers/
+*.diff
+*.log
+.DS_Store
+Thumbs.db
