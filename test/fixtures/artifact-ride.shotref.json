@@ -1,0 +1,303 @@
+{
+ "app": "ShotRef",
+ "version": 1,
+ "state": {
+  "v": 1,
+  "meta": {
+   "id": "m-ride",
+   "name": "Ride demo"
+  },
+  "settings": {
+   "duration": 5,
+   "fps": 24,
+   "aspect": "16:9",
+   "size": 1920,
+   "interp": "smooth",
+   "loop": true,
+   "env": "day"
+  },
+  "camera": {
+   "base": {
+    "p": [
+     -3,
+     1.5,
+     4
+    ],
+    "tg": [
+     0.5,
+     1,
+     0
+    ],
+    "f": 35,
+    "roll": 0,
+    "fd": 5
+   },
+   "keys": [],
+   "shake": 0,
+   "lookAtId": null,
+   "follow": false,
+   "feel": "gentle",
+   "dof": {
+    "on": false,
+    "fstop": 2.8,
+    "auto": true
+   },
+   "mount": "car1"
+  },
+  "objects": [
+   {
+    "id": "tbl1",
+    "type": "table",
+    "name": "Table",
+    "color": "#8a5f3c",
+    "opts": {},
+    "base": {
+     "p": [
+      -4,
+      0,
+      -2
+     ],
+     "r": [
+      0,
+      0,
+      0
+     ],
+     "s": [
+      1,
+      1,
+      1
+     ]
+    },
+    "keys": [],
+    "visible": true
+   },
+   {
+    "id": "cup1",
+    "type": "ball",
+    "name": "Cup",
+    "color": "#f2f2f2",
+    "opts": {},
+    "base": {
+     "p": [
+      -3.8,
+      0.77,
+      -1.9
+     ],
+     "r": [
+      0,
+      0,
+      0
+     ],
+     "s": [
+      1,
+      1,
+      1
+     ]
+    },
+    "keys": [],
+    "visible": true
+   },
+   {
+    "id": "crt1",
+    "type": "box",
+    "name": "Crate",
+    "color": "#d6d0c4",
+    "opts": {},
+    "base": {
+     "p": [
+      3,
+      2,
+      -3
+     ],
+     "r": [
+      0,
+      0,
+      0
+     ],
+     "s": [
+      1,
+      1,
+      1
+     ]
+    },
+    "keys": [],
+    "visible": true
+   },
+   {
+    "id": "drn1",
+    "type": "sphere",
+    "name": "Drone",
+    "color": "#d9cbb7",
+    "opts": {
+     "free": true
+    },
+    "base": {
+     "p": [
+      0,
+      4,
+      -4
+     ],
+     "r": [
+      0,
+      0,
+      0
+     ],
+     "s": [
+      1,
+      1,
+      1
+     ]
+    },
+    "keys": [],
+    "visible": true
+   },
+   {
+    "id": "car1",
+    "type": "car",
+    "name": "Roadster",
+    "color": "#b3262b",
+    "opts": {
+     "convertible": true
+    },
+    "base": {
+     "p": [
+      2,
+      0,
+      0
+     ],
+     "r": [
+      0,
+      90,
+      0
+     ],
+     "s": [
+      1,
+      1,
+      1
+     ]
+    },
+    "keys": [
+     {
+      "t": 0,
+      "p": [
+       2,
+       0,
+       0
+      ],
+      "r": [
+       0,
+       90,
+       0
+      ],
+      "s": [
+       1,
+       1,
+       1
+      ]
+     },
+     {
+      "t": 2,
+      "p": [
+       6,
+       0,
+       0
+      ],
+      "r": [
+       0,
+       90,
+       0
+      ],
+      "s": [
+       1,
+       1,
+       1
+      ]
+     },
+     {
+      "t": 4.5,
+      "p": [
+       12,
+       0,
+       0
+      ],
+      "r": [
+       0,
+       90,
+       0
+      ],
+      "s": [
+       1,
+       1,
+       1
+      ]
+     }
+    ],
+    "visible": true
+   },
+   {
+    "id": "man1",
+    "type": "person",
+    "name": "Driver",
+    "color": "#3d6fd8",
+    "opts": {
+     "pose": "sit",
+     "height": 1.78,
+     "skin": "#c98e6b",
+     "pants": "#2d3340",
+     "hair": "#2a1d14",
+     "speed": 1,
+     "faceTravel": false,
+     "body": "man",
+     "seated": "car1"
+    },
+    "base": {
+     "p": [
+      0.4,
+      0.726,
+      -0.28
+     ],
+     "r": [
+      0,
+      0,
+      0
+     ],
+     "s": [
+      1,
+      1,
+      1
+     ]
+    },
+    "keys": [],
+    "visible": true,
+    "parent": "car1"
+   },
+   {
+    "id": "cac1",
+    "type": "cactus",
+    "name": "Saguaro",
+    "color": "#6f8a52",
+    "opts": {},
+    "base": {
+     "p": [
+      6,
+      0,
+      -5
+     ],
+     "r": [
+      0,
+      0,
+      0
+     ],
+     "s": [
+      1,
+      1,
+      1
+     ]
+    },
+    "keys": [],
+    "visible": true
+   }
+  ]
+ },
+ "assets": {}
+}

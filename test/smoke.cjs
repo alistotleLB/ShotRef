@@ -2658,7 +2658,7 @@ check('people: dragging a person onto a chair sits them; dragging away stands th
 
 check('people: menu and toolbar Sit / Stand up; a sofa has three seats and the next person takes the next one', async ({ open }) => {
   const p = await open(); await p.waitForTimeout(300);
-  const a = await placeAt(p, -3, 2), sofa = await addChair(p, 1, 0, 'sofa');
+  const a = await placeAt(p, -1.5, 2), sofa = await addChair(p, 1, 0, 'sofa'); /* within the toolbar's 3 m reach */
   const b = await p.evaluate(() => window.__shotref.addPerson('woman', false, [-3, 0, 3]).id);
   await p.waitForTimeout(300);
   await p.evaluate(i => window.__shotref.select(i), a); await p.waitForTimeout(200);
@@ -2797,6 +2797,394 @@ check('people: exports and PNG frames show the changed poses and the eyeline', a
   const d = Math.abs(cap[1].rSh[0] - cap[0].rSh[0]) + Math.abs(cap[1].rSh[1] - cap[0].rSh[1]) + Math.abs(cap[1].rSh[2] - cap[0].rSh[2]);
   ok(d > 1, 'the exported frame at 3.5 s has the wave pose: ' + d.toFixed(2));
   ok(Math.abs(cap[0].neck[1]) > 0.5 && Math.abs(cap[1].neck[1]) > 0.5, 'and the eyeline: ' + [cap[0].neck[1], cap[1].neck[1]].map(v => v.toFixed(2)));
+  noErrors(p);
+});
+
+/* ---------------- Batch E: parenting, ground stacking, camera mount, car wheels and convertible, cactus ---------------- */
+const SHOTS_DIR = process.env.SHOTREF_SHOTS || '';
+const shotPng = (p, name) => SHOTS_DIR ? p.screenshot({ path: path.join(SHOTS_DIR, name) }) : null;
+const near = (a, b, tol = 0.02) => a.length === b.length && a.every((v, i) => Math.abs(v - b[i]) <= tol);
+/* adds an object on the floor; extra fields are merged in (base, opts, parent, name...) */
+const mkObj = (p, type, at, extra = {}) => p.evaluate(a => { const S = window.__shotref, o = S.addObject(a[0], null, false, a[1]); const e = a[2] || {}; for (const k of Object.keys(e)) { if (k === 'opts') Object.assign(o.opts, e.opts); else if (k === 'base') Object.assign(o.base, e.base); else o[k] = e[k]; } S.changed(true, true); return o.id; }, [type, at, extra]);
+const worldP = (p, id, t = 0) => p.evaluate(a => window.__shotref.evalObj(window.__shotref.state.objects.find(o => o.id === a[0]), a[1]).p, [id, t]);
+const viewOf = (p, id, t) => p.evaluate(a => { const S = window.__shotref; if (a[1] != null) S.setT(a[1]); S.applyAll(S.T); return S.viewOf(a[0]); }, [id, t == null ? null : t]);
+const settle = (p, ms = 500) => p.waitForTimeout(ms);
+
+check('parenting: a child rides on its parent: position, turn and the parent\'s own keys, in the data and in the view', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const car = await mkObj(p, 'box', [0, 0, 0], { base: { p: [2, 0, 0], r: [0, 90, 0], s: [1, 1, 1] } });
+  const cup = await mkObj(p, 'ball', [0, 0, 0], { parent: car, base: { p: [0, 1, 1], r: [0, 0, 0], s: [1, 1, 1] }, opts: { free: true } });
+  ok(near(await worldP(p, cup), [3, 1, 0]), 'a yaw of 90 degrees turns local +z into world +x: ' + await worldP(p, cup));
+  let v = await viewOf(p, cup, 0);
+  ok(near(v.p, [3, 1, 0]) && Math.abs(v.yaw - 90) < 0.5, 'the view shows it there and turned with the parent: ' + JSON.stringify([v.p, v.yaw]));
+  await p.evaluate(i => { const S = window.__shotref, o = S.state.objects.find(x => x.id === i); o.keys = [{ t: 0, p: [2, 0, 0], r: [0, 90, 0], s: [1, 1, 1] }, { t: 2, p: [6, 0, 0], r: [0, 90, 0], s: [1, 1, 1] }]; S.changed(true, true); }, car);
+  ok(near(await worldP(p, cup, 2), [7, 1, 0]) && near(await worldP(p, cup, 1), [5, 1, 0]), 'rides along the parent\'s move: ' + await worldP(p, cup, 1) + ' / ' + await worldP(p, cup, 2));
+  v = await viewOf(p, cup, 2);
+  ok(near(v.p, [7, 1, 0]), 'and the view follows at 2 s: ' + v.p);
+  noErrors(p);
+});
+
+check('parenting: a child with its own keys moves relative to the parent; a parent that turns swings the child round', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const par = await mkObj(p, 'box', [0, 0, 0]);
+  const kid = await mkObj(p, 'ball', [0, 0, 0], { parent: par, opts: { free: true } });
+  await p.evaluate(a => { const S = window.__shotref, g = i => S.state.objects.find(x => x.id === i);
+    g(a[0]).keys = [{ t: 0, p: [0, 0, 0], r: [0, 0, 0], s: [1, 1, 1] }, { t: 2, p: [0, 0, 0], r: [0, 180, 0], s: [1, 1, 1] }];
+    g(a[1]).keys = [{ t: 0, p: [0, 1, 2], r: [0, 0, 0], s: [1, 1, 1] }, { t: 2, p: [0, 1, 2], r: [0, 0, 0], s: [1, 1, 1] }]; S.changed(true, true); }, [par, kid]);
+  ok(near(await worldP(p, kid, 0), [0, 1, 2]), 'at 0 s the child is 2 m in front');
+  ok(near(await worldP(p, kid, 2), [0, 1, -2], 0.05), 'the parent turned half way round, so the child is behind: ' + await worldP(p, kid, 2));
+  noErrors(p);
+});
+
+check('parenting: Attach keeps the world pose, Detach keeps it too, and a parent loop is impossible', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const car = await mkObj(p, 'box', [0, 0, 0], { base: { p: [2, 0, 0], r: [0, 90, 0], s: [1, 1, 1] } });
+  const cup = await mkObj(p, 'ball', [5, 0, 0], { opts: { free: true }, base: { p: [5, 0.5, 0], r: [0, 0, 0], s: [1, 1, 1] } });
+  const before = await worldP(p, cup);
+  ok(await p.evaluate(a => window.__shotref.attachTo(a[0], a[1]), [cup, car]) === true, 'attach says yes');
+  let o = await objOf(p, cup);
+  ok(o.parent === car && near(o.base.p, [0, 0.5, 3]) && Math.abs(o.base.r[1] + 90) < 0.5, 'stored relative to the parent: ' + JSON.stringify(o.base));
+  ok(near(await worldP(p, cup), before), 'it did not jump');
+  ok(await p.evaluate(a => window.__shotref.attachTo(a[0], a[1]), [car, cup]) === false && (await objOf(p, car)).parent == null, 'the parent cannot ride on its own child');
+  ok(await p.evaluate(a => window.__shotref.attachTo(a[0], a[0]), [car]) === false, 'nor on itself');
+  await p.evaluate(i => window.__shotref.attachTo(i, null), cup);
+  o = await objOf(p, cup);
+  ok(!o.parent && near(o.base.p, before) && Math.abs(o.base.r[1]) < 0.5, 'detached where it stood: ' + JSON.stringify(o.base));
+  /* a moving parent: attaching converts every one of the child's keys against the parent at that key's time */
+  await p.evaluate(a => { const S = window.__shotref, g = i => S.state.objects.find(x => x.id === i);
+    g(a[1]).keys = [{ t: 0, p: [5, 0.5, 0], r: [0, 0, 0], s: [1, 1, 1] }, { t: 2, p: [5, 0.5, 0], r: [0, 0, 0], s: [1, 1, 1] }];
+    g(a[0]).keys = [{ t: 0, p: [2, 0, 0], r: [0, 90, 0], s: [1, 1, 1] }, { t: 2, p: [4, 0, 0], r: [0, 90, 0], s: [1, 1, 1] }]; S.changed(true, true); S.attachTo(a[1], a[0]); }, [car, cup]);
+  ok(near(await worldP(p, cup, 0), [5, 0.5, 0]) && near(await worldP(p, cup, 2), [5, 0.5, 0]), 'a child that stood still in the world still does, whatever the parent does: ' + await worldP(p, cup, 2));
+  noErrors(p);
+});
+
+check('parenting: dragging and writes on a child are stored relative to the parent', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const car = await mkObj(p, 'box', [0, 0, 0], { base: { p: [2, 0, 0], r: [0, 90, 0], s: [1, 1, 1] } });
+  const cup = await mkObj(p, 'ball', [0, 0, 0], { parent: car, opts: { free: true }, base: { p: [0, 1, 1], r: [0, 0, 0], s: [1, 1, 1] } });
+  await p.evaluate(i => { const S = window.__shotref, o = S.state.objects.find(x => x.id === i); S.writeObj(o, { p: [5, 1, 0], r: [0, 0, 0], s: [1, 1, 1] }, true); }, cup);
+  const o = await objOf(p, cup);
+  ok(near(o.base.p, [0, 1, 3]) && Math.abs(o.base.r[1] + 90) < 0.5, 'a world pose written to a child is stored relative: ' + JSON.stringify(o.base));
+  await p.evaluate(i => { const S = window.__shotref; S.select(i); S.setView('top'); }, cup); await settle(p, 300);
+  const a = await proj3(p, 5, 1, 0), b = await proj3(p, 5, 1, 2);
+  await p.mouse.move(...a); await p.mouse.down(); await p.mouse.move((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, { steps: 4 }); await p.mouse.move(...b, { steps: 4 }); await p.mouse.up(); await settle(p, 300);
+  const w = await worldP(p, cup);
+  ok(Math.abs(w[0] - 5) < 0.2 && Math.abs(w[2] - 2) < 0.2, 'dragged on to (5, 2) in the world: ' + w);
+  ok((await objOf(p, cup)).parent === car, 'still riding on the parent');
+  noErrors(p);
+});
+
+check('parenting: selecting a parent and its child moves them once, not twice', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const car = await mkObj(p, 'box', [0, 0, 0], { base: { p: [-1, 0, 0], r: [0, 0, 0], s: [1, 1, 1] } });
+  const cup = await mkObj(p, 'box', [0, 0, 0], { parent: car, opts: { free: true }, base: { p: [3, 0, 0], r: [0, 0, 0], s: [0.5, 0.5, 0.5] } });
+  await p.evaluate(a => { const S = window.__shotref; S.setView('top'); S.select(a[0]); S.select(a[1], 'toggle'); }, [car, cup]); await settle(p, 300);
+  const c0 = await worldP(p, car), k0 = await worldP(p, cup);
+  const a = await proj3(p, -1, 0.5, 0), b = await proj3(p, -1, 0.5, 2);
+  await p.mouse.move(...a); await p.mouse.down(); await p.mouse.move(...b, { steps: 6 }); await p.mouse.up(); await settle(p, 300);
+  const c1 = await worldP(p, car), k1 = await worldP(p, cup);
+  const dc = c1[2] - c0[2], dk = k1[2] - k0[2];
+  ok(Math.abs(dc - 2) < 0.3 && Math.abs(dk - dc) < 0.05 && Math.abs(k1[0] - k0[0]) < 0.05, 'both moved the same amount: ' + JSON.stringify([dc, dk, k1[0] - k0[0]]));
+  noErrors(p);
+});
+
+check('parenting: duplicating a parent and its child keeps the child on the copy; deleting a parent keeps the child where it stood', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const car = await mkObj(p, 'box', [0, 0, 0], { base: { p: [2, 0, 0], r: [0, 90, 0], s: [1, 1, 1] } });
+  const cup = await mkObj(p, 'ball', [0, 0, 0], { parent: car, opts: { free: true }, base: { p: [0, 1, 1], r: [0, 0, 0], s: [1, 1, 1] } });
+  await p.evaluate(a => { const S = window.__shotref; S.select(a[0]); S.select(a[1], 'toggle'); }, [car, cup]);
+  await p.keyboard.press('Control+d'); await settle(p, 300);
+  const st = await stateOf(p);
+  const cc = st.objects.find(o => o.type === 'ball' && o.id !== cup), cb = cc && st.objects.find(o => o.id === cc.parent);
+  ok(cc && cb && cb.id !== car && cb.type === 'box', 'the copied cup rides on the copied parent');
+  ok(near(cc.base.p, [0, 1, 1]), 'its place in the parent did not get nudged: ' + cc.base.p);
+  await p.evaluate(i => window.__shotref.select(i), car); await p.keyboard.press('Delete'); await settle(p, 300);
+  const o = await objOf(p, cup);
+  ok(!o.parent && near(o.base.p, [3, 1, 0]) && Math.abs(o.base.r[1] - 90) < 0.5, 'the child stayed where it was in the world: ' + JSON.stringify([o.parent, o.base]));
+  noErrors(p);
+});
+
+check('parenting: the panel has Ride with (no loops offered), the scene list shows the parent tag, undo takes it back', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const car = await mkObj(p, 'box', [0, 0, 0], { name: 'Truck' });
+  const cup = await mkObj(p, 'ball', [0, 0, 0], { name: 'Mug', opts: { free: true } });
+  await p.evaluate(i => window.__shotref.select(i), cup); await settle(p, 300);
+  ok(/Attach/.test(await p.textContent('#props')), 'the object panel has an Attach section');
+  await p.selectOption('#props select[data-role="ride"]', car); await settle(p, 300);
+  ok((await objOf(p, cup)).parent === car, 'Ride with Truck sets the parent');
+  await p.click('#leftTabs [data-lt="scene"]'); await settle(p, 200);
+  const tag = await p.evaluate(i => { const r = document.querySelector('.ol[data-id="' + i + '"] .ptag'); return r ? r.textContent : null; }, cup);
+  ok(tag && /Truck/.test(tag), 'the scene row says it rides with the truck: ' + tag);
+  await p.evaluate(i => window.__shotref.select(i), car); await settle(p, 300);
+  const opts = await p.evaluate(() => [...document.querySelectorAll('#props select[data-role="ride"] option')].map(o => o.textContent));
+  ok(opts.length > 1 && !opts.includes('Mug'), 'the truck cannot ride with its own passenger: ' + JSON.stringify(opts));
+  await p.click('#bUndo'); await settle(p, 300);
+  ok(!(await objOf(p, cup)).parent, 'undo detached the mug');
+  noErrors(p);
+});
+
+check('parenting: right-click Attach to what is underneath, then Detach', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const table = await mkObj(p, 'table', [0, 0, 0]);
+  const cup = await mkObj(p, 'ball', [0, 0, 0], { base: { p: [0.2, 0.77, 0.1], r: [0, 0, 0], s: [1, 1, 1] } });
+  await p.evaluate(i => { const S = window.__shotref; S.select(i); }, cup); await settle(p, 300);
+  const xy = await proj3(p, 0.2, 0.88, 0.1);
+  await rightClick(p, ...xy); await settle(p, 200);
+  let labels = await menuLabels(p);
+  ok(labels && labels.some(l => /^Attach to Table 1/.test(l)), 'menu offers Attach to the table: ' + JSON.stringify(labels));
+  await clickItem(p, 'Attach to Table 1'); await settle(p, 200);
+  ok((await objOf(p, cup)).parent === table, 'attached to the table');
+  await rightClick(p, ...xy); await settle(p, 200);
+  labels = await menuLabels(p);
+  ok(labels && labels.some(l => /^Detach from Table 1/.test(l)), 'menu offers Detach: ' + JSON.stringify(labels));
+  await clickItem(p, 'Detach from'); await settle(p, 200);
+  ok(!(await objOf(p, cup)).parent, 'detached');
+  noErrors(p);
+});
+
+check('ground: dragging a cup onto a table puts it on top; it drops again when the table goes; Can float keeps it in the air', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const table = await mkObj(p, 'table', [0, 0, 0]);
+  const cup = await mkObj(p, 'ball', [2, 0, 2]);
+  await p.evaluate(i => { const S = window.__shotref; S.select(i); }, cup); await settle(p, 300);
+  const a = await proj3(p, 2, 0.11, 2), b = await proj3(p, 0.1, 0.77, 0);
+  await p.mouse.move(...a); await p.mouse.down(); await p.mouse.move(a[0] + (b[0] - a[0]) / 2, a[1] + (b[1] - a[1]) / 2, { steps: 4 }); await p.mouse.move(...b, { steps: 6 });
+  await settle(p, 200);
+  ok(/On top of something/.test(await p.textContent('#modeBar')), 'the hint says it is on top: ' + await p.textContent('#modeBar'));
+  await p.mouse.up(); await settle(p, 500);
+  let o = await objOf(p, cup);
+  ok(Math.abs(o.base.p[1] - 0.77) < 0.03, 'resting on the table top (0.77 m): ' + o.base.p);
+  await shotPng(p, 'e-ground-cup-on-table.png');
+  /* nothing under it any more: it falls to the floor on the next change */
+  await p.evaluate(i => { const S = window.__shotref, t = S.state.objects.find(x => x.id === i); t.base.p = [8, 0, 8]; S.changed(true, true); }, table); await settle(p, 500);
+  o = await objOf(p, cup);
+  ok(Math.abs(o.base.p[1]) < 0.02, 'back on the floor: ' + o.base.p);
+  await p.evaluate(i => { const S = window.__shotref; S.select(i); }, cup); await settle(p, 300);
+  await p.click('#props label:has-text("Can float")'); await settle(p, 300);
+  ok((await objOf(p, cup)).opts.free === true, 'Can float ticked');
+  await p.evaluate(i => { const S = window.__shotref, c = S.state.objects.find(x => x.id === i); c.base.p = [2, 3, 2]; S.changed(true, true); }, cup); await settle(p, 500);
+  ok(Math.abs((await objOf(p, cup)).base.p[1] - 3) < 0.01, 'a floating item stays up');
+  await p.click('#props label:has-text("Can float")'); await settle(p, 600);
+  ok(Math.abs((await objOf(p, cup)).base.p[1]) < 0.02, 'switching it off drops it to the floor');
+  noErrors(p);
+});
+
+check('ground: people ignore tables but stand on stairs; the preference "ground" switches the whole rule off', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await mkObj(p, 'table', [4, 0, 4]);
+  const man = await p.evaluate(() => window.__shotref.addPerson('man', false, [4, 0, 4]).id);
+  await mkObj(p, 'stairs', [-4, 0, 4]);
+  const man2 = await p.evaluate(() => window.__shotref.addPerson('man', false, [-4, 0, 4]).id);
+  await settle(p, 600);
+  ok(Math.abs((await objOf(p, man)).base.p[1]) < 0.02, 'a person at a table is not lifted onto it');
+  const y2 = (await objOf(p, man2)).base.p[1];
+  ok(Math.abs(y2 - 0.18) < 0.04, 'a person on the first stair stands on it: ' + y2);
+  await p.evaluate(() => { const S = window.__shotref; S.setPref('ground', false); const o = S.state.objects.find(x => x.type === 'box'); o.base.p = [o.base.p[0], 2, o.base.p[2]]; S.changed(true, true); }); await settle(p, 500);
+  ok(await p.evaluate(() => Math.abs(window.__shotref.state.objects.find(x => x.type === 'box').base.p[1] - 2) < 0.01), 'with the rule off nothing is moved');
+  noErrors(p);
+});
+
+check('ground: the green lift arrow raises a floating item; a grounded item has none; Drop to floor is in the menu', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const cup = await mkObj(p, 'box', [2, 0, 2], { opts: { free: true }, base: { p: [2, 1, 2], r: [0, 0, 0], s: [1, 1, 1] } });
+  await p.evaluate(i => window.__shotref.select(i), cup); await settle(p, 400);
+  const k = await p.evaluate(() => window.__shotref.liftKnob());
+  ok(k && k.length === 2, 'a floating item shows the lift arrow');
+  await shotPng(p, 'e-lift-arrow.png');
+  await p.mouse.move(...k); await p.mouse.down(); await p.mouse.move(k[0], k[1] - 25, { steps: 4 }); await p.mouse.move(k[0], k[1] - 60, { steps: 4 }); await p.mouse.up(); await settle(p, 300);
+  const y = (await objOf(p, cup)).base.p[1];
+  ok(y > 1.3, 'raised by the arrow: ' + y);
+  const xy = await proj3(p, 2, y + 0.5, 2);
+  await rightClick(p, ...xy); await settle(p, 200);
+  const labels = await menuLabels(p);
+  ok(labels && labels.includes('Drop to floor'), 'a floating item has Drop to floor in the menu: ' + JSON.stringify(labels));
+  await clickItem(p, 'Drop to floor'); await settle(p, 400);
+  ok(Math.abs((await objOf(p, cup)).base.p[1]) < 0.02, 'dropped');
+  await p.evaluate(i => { const o = window.__shotref.state.objects.find(x => x.id === i); o.opts.free = false; window.__shotref.select(i); window.__shotref.changed(true, true); }, cup); await settle(p, 500);
+  ok(await p.evaluate(() => window.__shotref.liftKnob()) === null, 'a grounded item has no lift arrow');
+  noErrors(p);
+});
+
+check('mount: the camera rides on an object; its own moves apply on top; unmounting keeps the framing; deleting the object frees it', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const car = await mkObj(p, 'car', [0, 0, 0]);
+  await p.evaluate(i => { const S = window.__shotref, o = S.state.objects.find(x => x.id === i); o.keys = [{ t: 0, p: [0, 0, 0], r: [0, 0, 0], s: [1, 1, 1] }, { t: 4, p: [6, 0, 0], r: [0, 0, 0], s: [1, 1, 1] }]; S.state.camera.base = { p: [3, 1.6, 6], tg: [0, 1, 0], f: 35, roll: 0, fd: 7 }; S.state.camera.keys = []; S.changed(true, true); S.setT(0); }, car);
+  const c0 = await p.evaluate(() => window.__shotref.evalCam(0));
+  await p.evaluate(i => window.__shotref.setMount(i), car);
+  ok((await stateOf(p)).camera.mount === car, 'camera.mount is saved');
+  ok(near(await p.evaluate(() => window.__shotref.evalCam(0).p), c0.p), 'mounting does not move the camera');
+  const c4 = await p.evaluate(() => window.__shotref.evalCam(4));
+  ok(near(c4.p, [c0.p[0] + 6, c0.p[1], c0.p[2]]) && near(c4.tg, [c0.tg[0] + 6, c0.tg[1], c0.tg[2]]), 'the camera and its aim ride 6 m along with the car: ' + JSON.stringify(c4));
+  await p.evaluate(() => { const S = window.__shotref; S.setT(2); S.writeCam({ p: [5, 3, 6] }, true); });
+  const st = await stateOf(p);
+  ok(near(st.camera.base.p, [2, 3, 6], 0.05), 'a world position written to the camera is stored relative to the car: ' + JSON.stringify(st.camera.base.p));
+  ok(near(await p.evaluate(() => window.__shotref.evalCam(2).p), [5, 3, 6], 0.05), 'and it shows where it was put');
+  const here = await p.evaluate(() => window.__shotref.evalCam(window.__shotref.T));
+  await p.evaluate(() => window.__shotref.setMount(null));
+  ok((await stateOf(p)).camera.mount === null && near(await p.evaluate(() => window.__shotref.evalCam(window.__shotref.T).p), here.p), 'unmounting leaves the camera where it is');
+  await p.evaluate(i => window.__shotref.setMount(i), car);
+  await p.evaluate(i => { window.__shotref.select(i); }, car); await p.keyboard.press('Delete'); await settle(p, 300);
+  ok((await stateOf(p)).camera.mount === null, 'deleting the object frees the camera');
+  noErrors(p);
+});
+
+check('mount: the Camera panel has Mount on; the object menu can mount the camera too', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const car = await mkObj(p, 'car', [0, 0, 0], { name: 'Taxi' });
+  await p.evaluate(() => window.__shotref.select('camera')); await settle(p, 300);
+  ok(/Mount/.test(await p.textContent('#props')), 'the camera panel has a Mount section');
+  await p.selectOption('#props select[data-role="mount"]', car); await settle(p, 300);
+  ok((await stateOf(p)).camera.mount === car, 'Mount on Taxi');
+  await p.evaluate(i => { const S = window.__shotref; S.setMount(null); S.select(i); S.setView('editor'); }, car); await settle(p, 300);
+  const xy = await proj3(p, 0, 0.9, 0);
+  await rightClick(p, ...xy); await settle(p, 200);
+  const labels = await menuLabels(p);
+  ok(labels && labels.some(l => /^Mount the camera on this/.test(l)), 'menu: ' + JSON.stringify(labels));
+  await clickItem(p, 'Mount the camera on this'); await settle(p, 200);
+  ok((await stateOf(p)).camera.mount === car, 'mounted from the menu');
+  noErrors(p);
+});
+
+check('cars: a convertible has two seats and an open top; sitting in it makes the person ride along; standing up detaches', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const man = await p.evaluate(() => window.__shotref.state.objects.find(o => o.type === 'person').id);
+  const car = await mkObj(p, 'car', [3, 0, 3], { name: 'Roadster' });
+  await p.evaluate(i => { const S = window.__shotref; S.select(i); }, car); await settle(p, 300);
+  ok(/Convertible \(open top\)/.test(await p.textContent('#props')), 'the car panel offers Convertible (open top)');
+  ok(await p.evaluate(() => window.__shotref.nearestSeat(3.4, 2.72, null, 1)) === null, 'a closed car has no seats');
+  await p.click('#props label:has-text("Convertible")'); await settle(p, 300);
+  ok((await objOf(p, car)).opts.convertible === true, 'convertible on');
+  const seat = await p.evaluate(() => window.__shotref.nearestSeat(3.4, 2.72, null, 1));
+  ok(seat && Math.abs(seat.w.x - 3.4) < 0.05 && Math.abs(seat.w.z - 2.72) < 0.05 && Math.abs(seat.w.top - 1.1) < 0.01, 'front-left seat: ' + JSON.stringify(seat && seat.w));
+  await shotPng(p, 'e-convertible.png');
+  await p.evaluate(a => { const S = window.__shotref, c = S.state.objects.find(x => x.id === a[1]), m = S.state.objects.find(x => x.id === a[0]); m.keys = []; S.sitPerson(m, S.freeSeat(c, m)); }, [man, car]);
+  let o = await objOf(p, man);
+  ok(o.parent === car && o.opts.seated === car && o.opts.pose === 'sit', 'sitting in a car attaches: ' + JSON.stringify([o.parent, o.opts.seated, o.opts.pose]));
+  const w0 = await worldP(p, man);
+  await p.evaluate(i => { const S = window.__shotref, c = S.state.objects.find(x => x.id === i); c.keys = [{ t: 0, p: [3, 0, 3], r: [0, 0, 0], s: [1, 1, 1] }, { t: 3, p: [9, 0, 3], r: [0, 0, 0], s: [1, 1, 1] }]; S.changed(true, true); }, car);
+  const w3 = await worldP(p, man, 3);
+  ok(near(w3, [w0[0] + 6, w0[1], w0[2]], 0.05), 'the driver rides 6 m with the car: ' + w0 + ' -> ' + w3);
+  await p.evaluate(i => { const S = window.__shotref; S.setT(3); S.standPerson(S.state.objects.find(x => x.id === i)); }, man);
+  o = await objOf(p, man);
+  ok(!o.parent && !o.opts.seated && o.opts.pose === 'stand', 'stood up and left the car');
+  ok(near(await worldP(p, man, 3), [w3[0], 0, w3[2]], 0.05), 'on the spot where the car was: ' + await worldP(p, man, 3));
+  noErrors(p);
+});
+
+check('cars: the right-click menu offers "Sit <person> here" on a convertible but not on a closed car', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const car = await mkObj(p, 'car', [3, 0, 3]);
+  await p.evaluate(i => window.__shotref.select(i), car); await settle(p, 300);
+  const xy = await proj3(p, 3, 0.6, 3);
+  await rightClick(p, ...xy); await settle(p, 200);
+  ok(!(await menuLabels(p)).some(l => /^Sit /.test(l)), 'a closed car has no Sit item');
+  await p.keyboard.press('Escape');
+  await p.evaluate(i => { const S = window.__shotref; S.state.objects.find(x => x.id === i).opts.convertible = true; S.changed(true, true); }, car); await settle(p, 300);
+  await rightClick(p, ...xy); await settle(p, 200);
+  ok((await menuLabels(p)).some(l => /^Sit /.test(l)), 'a convertible has Sit here');
+  noErrors(p);
+});
+
+check('cars: wheels roll with the distance driven and the front wheels steer into a curve', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const car = await mkObj(p, 'car', [0, 0, 0]);
+  await p.evaluate(i => { const S = window.__shotref, c = S.state.objects.find(x => x.id === i); c.opts.faceTravel = true;
+    c.keys = [{ t: 0, p: [0, 0, 0], r: [0, 90, 0], s: [1, 1, 1] }, { t: 1.5, p: [4, 0, 0], r: [0, 90, 0], s: [1, 1, 1] }, { t: 3, p: [8, 0, 0], r: [0, 90, 0], s: [1, 1, 1] }, { t: 4.5, p: [11, 0, 3], r: [0, 90, 0], s: [1, 1, 1] }]; S.changed(true, true); }, car);
+  const v0 = await viewOf(p, car, 0), v1 = await viewOf(p, car, 1.5), v2 = await viewOf(p, car, 0.8);
+  ok(v0.wheels && v0.wheels.length === 4 && v0.wheels.filter(w => w.front).length === 2, 'four wheels, two of them front');
+  ok(Math.abs(v0.wheels[0].spin) < 1e-6, 'not turned at the start');
+  ok(Math.abs(v1.wheels[0].spin - 4 / 0.36) < 0.5, 'rolled 4 m / 0.36 m radius = 11.1 rad: ' + v1.wheels[0].spin);
+  ok(v2.wheels.every(w => Math.abs(w.steer) < 0.05) && Math.abs(v1.wheels[0].steer) < 0.05, 'straight on, the wheels point ahead');
+  const v3 = await viewOf(p, car, 3.6);
+  ok(v3.wheels.filter(w => w.front).every(w => Math.abs(w.steer) > 0.05) && v3.wheels.filter(w => !w.front).every(w => Math.abs(w.steer) < 1e-6), 'in the bend only the front wheels steer: ' + JSON.stringify(v3.wheels.map(w => [w.front, +w.steer.toFixed(3)])));
+  noErrors(p);
+});
+
+check('cactus: a Cactus tile in Props adds a cactus that renders', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const tile = await p.evaluate(() => [...document.querySelectorAll('#addArea .tile')].map(b => b.textContent.trim()));
+  ok(tile.includes('Cactus'), 'Props has Cactus: ' + JSON.stringify(tile));
+  const id = await p.evaluate(() => window.__shotref.addObject('cactus', null, false, [0, 0, -3]).id);
+  await settle(p, 300);
+  const v = await p.evaluate(i => { const S = window.__shotref; S.applyAll(0); return S.viewOf(i); }, id);
+  ok(v && v.size && v.size[1] > 1.5 && v.size[0] > 0.3, 'a tall shape: ' + JSON.stringify(v && v.size));
+  ok((await objOf(p, id)).color === '#6f8a52', 'cactus green');
+  noErrors(p);
+});
+
+check('sitting: the toolbar Sit reaches seats within 3 m, otherwise a plain message; a sit action is stored relative to a parent', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const man = await placeAt(p, -6, 2); const sofa = await addChair(p, 1, 0, 'sofa');
+  await p.evaluate(i => window.__shotref.select(i), man); await settle(p, 300);
+  ok(await p.isVisible('#selBar [data-tip="Sit on the nearest seat"]'), 'the Sit button is there');
+  await p.click('#selBar [data-tip="Sit on the nearest seat"]'); await settle(p, 300);
+  ok(!(await objOf(p, man)).opts.seated, 'a seat 7 m away is not used');
+  ok(/3 m/.test(await p.textContent('#toast')), 'a plain message says why: ' + await p.textContent('#toast'));
+  await placeAt(p, -2.5, 0); await p.evaluate(i => { window.__shotref.select(null); window.__shotref.select(i); }, man); await settle(p, 300);
+  await p.click('#selBar [data-tip="Sit on the nearest seat"]'); await settle(p, 300);
+  ok((await objOf(p, man)).opts.seated === sofa, 'a seat 2 m away is used');
+  const plat = await mkObj(p, 'box', [0, 0, 0], { base: { p: [10, 0, 0], r: [0, 90, 0], s: [1, 1, 1] } });
+  await mkObj(p, 'sofa', [0, 0, 0], { parent: plat, base: { p: [0, 0, 0], r: [0, 0, 0], s: [1, 1, 1] } });
+  const girl = await p.evaluate(a => { const S = window.__shotref, g = S.addPerson('woman', false, [0, 0, 0]); g.parent = a; g.base = { p: [0.2, 0, 0.8], r: [0, 0, 0], s: [1, 1, 1] }; S.changed(true, true); return g.id; }, plat);
+  await settle(p, 400);
+  await p.evaluate(i => { window.__shotref.setPoseAt(window.__shotref.state.objects.find(x => x.id === i), 'sit', 1); }, girl);
+  const og = await objOf(p, girl);
+  ok(og.acts && og.acts[0].at && Math.abs(og.acts[0].at.p[0]) < 2 && Math.abs(og.acts[0].at.p[2]) < 2, 'the stored seat is in the platform\'s frame (near 0,0), not the world (near 10): ' + JSON.stringify(og.acts && og.acts[0].at));
+  const sh = await p.evaluate(i => window.__shotref.shownObj(i, 2).p, girl);
+  ok(Math.abs(sh[0] - 10.06) < 0.3 && Math.abs(sh[2]) < 0.3, 'and she sits on the sofa in the world: ' + sh);
+  noErrors(p);
+});
+
+check('eyeline and seats read the world pose of things that ride on a parent', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const man = await placeAt(p, 0, 0);
+  const plat = await mkObj(p, 'box', [0, 0, 0], { base: { p: [10, 0, 0], r: [0, 0, 0], s: [1, 1, 1] } });
+  const ball = await mkObj(p, 'ball', [0, 0, 0], { parent: plat, opts: { free: true }, base: { p: [0, 1, 0], r: [0, 0, 0], s: [1, 1, 1] } });
+  await p.evaluate(a => { const S = window.__shotref; S.setLookAt(S.state.objects.find(x => x.id === a[0]), a[1]); }, [man, ball]);
+  const r = await rigOf(p, man);
+  ok(r.neck[1] > 0.5, 'the head turned toward the ball 10 m to the right (world), not toward the local origin: ' + r.neck[1]);
+  await mkObj(p, 'sofa', [0, 0, 0], { parent: plat, base: { p: [0, 0, 0], r: [0, 90, 0], s: [1, 1, 1] } });
+  const seat = await p.evaluate(() => window.__shotref.nearestSeat(10.06, 0.55, null, 0.4));
+  ok(seat && Math.abs(seat.w.yaw - 90) < 1, 'a seat on a parented, turned sofa is found in the world: ' + JSON.stringify(seat && seat.w));
+  noErrors(p);
+});
+
+check('artifact files: parent, free, mount and convertible shapes open and render like the artifact', async ({ open, fixtures }) => {
+  const p = await open(); await settle(p, 300);
+  const txt = fs.readFileSync(path.join(fixtures, 'artifact-ride.shotref.json'), 'utf8');
+  await openFile(p, 'artifact-ride.shotref.json', txt);
+  await p.waitForFunction(() => window.__shotref.state.objects.length >= 7); await settle(p, 800);
+  const st = await stateOf(p), by = n => st.objects.find(o => o.name === n);
+  ok(st.camera.mount === by('Roadster').id, 'camera mount kept');
+  ok(by('Driver').parent === by('Roadster').id && by('Driver').opts.seated === by('Roadster').id, 'the driver rides in the roadster');
+  ok(by('Drone').opts.free === true && Math.abs(by('Drone').base.p[1] - 4) < 0.01, 'a floating drone stays up (Can float): ' + by('Drone').base.p);
+  ok(Math.abs(by('Cup').base.p[1] - 0.77) < 0.03, 'the cup rests on the table: ' + by('Cup').base.p);
+  ok(Math.abs(by('Crate').base.p[1]) < 0.02, 'a crate saved in the air without Can float drops to the floor, as in the artifact: ' + by('Crate').base.p);
+  const dw = await p.evaluate(i => { const S = window.__shotref; S.setT(2); S.applyAll(2); return S.viewOf(i).p; }, by('Driver').id);
+  ok(near(dw, [5.72, 0.726, -0.4], 0.05), 'the driver is in the seat of the moving car at 2 s (car at 6,0,0 turned 90): ' + dw);
+  const cam = await p.evaluate(() => window.__shotref.evalCam(2));
+  ok(near(cam.p, [10, 1.5, 3], 0.05), 'the mounted camera is with the car: ' + cam.p);
+  ok(await p.evaluate(i => window.__shotref.viewOf(i).wheels.length, by('Roadster').id) === 4, 'the wheels are built');
+  await p.evaluate(() => { window.__shotref.setT(2); window.__shotref.setView('editor'); }); await settle(p, 500);
+  await shotPng(p, 'e-fixture-editor.png');
+  await p.evaluate(() => { window.__shotref.setView('camera'); }); await settle(p, 500);
+  await shotPng(p, 'e-fixture-camera.png');
+  noErrors(p);
+});
+
+check('artifact files: the Desert overlook cast (woman, convertible, cacti) opens and renders', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const file = { app: 'ShotRef', version: 1, state: { v: 1, settings: { env: 'custom', sky: '#c9c2a2', groundColor: '#bf9168' }, camera: { base: { p: [-0.97, 6.55, 32.7], tg: [-0.97, 4.3, -0.24], f: 60, roll: 0, fd: 33.2 }, keys: [] }, objects: [
+    { id: 'w', type: 'person', name: 'Woman', color: '#c4566c', opts: { pose: 'stand', height: 1.65, body: 'woman', faceTravel: true }, base: { p: [0, 0, 0], r: [0, 0, 0], s: [1, 1, 1] }, keys: [], visible: true },
+    { id: 'c', type: 'car', name: 'Convertible', color: '#b3262b', opts: { convertible: true }, base: { p: [-2.7, 0, 0.276], r: [0, 0, 0], s: [1, 1, 1] }, keys: [], visible: true },
+    { id: 'k1', type: 'cactus', name: 'Saguaro', color: '#6f8a52', opts: {}, base: { p: [-4.978, 0, -6.058], r: [0, 0, 0], s: [1, 1, 1] }, keys: [], visible: true },
+    { id: 'k2', type: 'cactus', name: 'Small cactus', color: '#6f8a52', opts: {}, base: { p: [8.367, 0, -0.857], r: [0, 0, 0], s: [0.5, 0.5, 0.5] }, keys: [], visible: true }] }, assets: {} };
+  await openFile(p, 'desert.shotref.json', JSON.stringify(file));
+  await p.waitForFunction(() => window.__shotref.state.objects.length === 4); await settle(p, 600);
+  const k = await p.evaluate(() => { const S = window.__shotref; S.applyAll(0); return [S.viewOf('k1').size, S.viewOf('k2').size]; });
+  ok(k[0][1] > 5 && Math.abs(k[1][1] / k[0][1] - 0.5) < 0.05, 'cacti are tall and the small one is half: ' + JSON.stringify(k));
+  await p.evaluate(() => window.__shotref.setView('camera')); await settle(p, 500);
+  await shotPng(p, 'e-desert-cast.png');
   noErrors(p);
 });
 
