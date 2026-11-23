@@ -29,6 +29,8 @@ async function launch(args = [], opts = {}) {
   await page.evaluate(() => { window.__edit = () => { window.__shotref.addObject('box'); window.__shotref.changed(true); }; });
   return { app, page, errors, userData };
 }
+/* File menu item by its data-cmd (the top bar has no Save button any more) */
+const fileCmd = async (page, cmd) => { await page.click('#bFile'); await page.click('#ctxMenu [data-cmd="' + cmd + '"]'); };
 /* stub the native dialogs: each call takes the next answer from the queue and counts calls */
 async function stubDialogs(app, saveAnswers, openAnswers = []) {
   await app.evaluate(({ dialog }, [s, o]) => {
@@ -73,7 +75,7 @@ const ok = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
     await stubDialogs(app, [file1, file2]);
     await page.evaluate(() => window.__edit());
     savedObjects = await objCount(page);
-    await page.click('#bSave');
+    await fileCmd(page, 'save');
     await sleep(600);
     ok(fs.existsSync(file1), 'file not written');
     const j = JSON.parse(fs.readFileSync(file1, 'utf8'));
@@ -84,7 +86,7 @@ const ok = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
     fs.unlinkSync(file1);
     await page.evaluate(() => window.__edit());
     savedObjects = await objCount(page);
-    await page.click('#bSave'); await sleep(600);
+    await fileCmd(page, 'save'); await sleep(600);
     ok(fs.existsSync(file1), 'second save did not rewrite the file');
     ok((await dlgCounts(app)).save === 1, 'second save showed a dialog');
     await page.keyboard.press('Control+Shift+S'); await sleep(600);
@@ -99,7 +101,7 @@ const ok = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
     const missing = path.join(tmp, 'no-such-folder', 'x.shotref');
     await stubDialogs(app, [missing]);
     await page.evaluate(() => window.__edit());
-    await page.click('#bSave'); await sleep(700);
+    await fileCmd(page, 'save'); await sleep(700);
     const t = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getTitle());
     ok(t.startsWith('•'), 'dirty mark lost: ' + t);
     ok(!fs.existsSync(missing), 'file should not exist');
@@ -154,11 +156,11 @@ const ok = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
     const target = path.join(dir, 'keep.shotref');
     const { app, page } = await launch();
     await stubDialogs(app, [target]);
-    await page.click('#bSave'); await page.waitForFunction(() => /Saved/.test(document.querySelector('#toast').textContent), null, { timeout: 8000 });
+    await fileCmd(page, 'save'); await page.waitForFunction(() => /Saved/.test(document.querySelector('#toast').textContent), null, { timeout: 8000 });
     const before = fs.readFileSync(target, 'utf8');
     fs.chmodSync(target, 0o444); /* the final rename over a read-only file fails on Windows */
     await page.evaluate(() => window.__edit());
-    await page.click('#bSave'); await sleep(1200);
+    await fileCmd(page, 'save'); await sleep(1200);
     const t = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getTitle());
     ok(t.startsWith('•'), 'dirty mark lost: ' + t);
     ok(fs.readFileSync(target, 'utf8') === before, 'previous file was changed');
@@ -172,7 +174,8 @@ const ok = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
     const { app, page } = await launch();
     await app.evaluate(async ({ clipboard }) => { globalThis.__clipText = String(await clipboard.readText()); await clipboard.clear(); });
     try {
-      await page.click('#bCopy');
+      await page.click('#bExport');
+      await page.click('#exCopy');
       await page.waitForFunction(() => /Frame copied/.test(document.querySelector('#toast').textContent), null, { timeout: 15000 });
       ok(!(await page.evaluate(() => document.querySelector('#mCopy').classList.contains('hidden') === false)), 'fell back to the right-click dialog');
     } finally { await app.evaluate(async ({ clipboard }) => { if (globalThis.__clipText) await clipboard.writeText(globalThis.__clipText); /* an image on the clipboard before the test cannot be restored */ }); }

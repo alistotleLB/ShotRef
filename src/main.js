@@ -27,7 +27,8 @@ import { platform } from './platform.js';
  * lastNow                        time of the previous animation frame: frame
  * needsRender...wasExporting     render on demand: requestRender, pokeRender, frame
  * moveAmt                        one-click move strength: propsCamera
- * simple                         Simple/Advanced mode: setSimple
+ * simple                         Simple/Advanced mode: setSimple (gear menu)
+ * tracksMode                      timeline tracks opened or closed by hand (null = open only while something is keyed): #bTracks
  * placing, pathMode, pathFit, rec  click-to-place, path drawing, path fit option, live recording: their start/commit/cancel functions
  * shotPerson                     person picked for shot sizes: propsCamera
  * menuBtn, menuClosedAt           button whose menu is open, when a menu last closed: showMenu, hideMenu, menuButton
@@ -1140,7 +1141,7 @@ gizmo.addEventListener('objectChange', () => {
     writeObj(o, cur, false);
   }
 });
-function setGizmoMode(m) { gizmoMode = m; updateGizmo(); $$('#vpTools [data-g]').forEach(b => b.classList.toggle('on', b.dataset.g === m)); }
+function setGizmoMode(m) { gizmoMode = m; updateGizmo(); $$('#vpRight [data-g]').forEach(b => b.classList.toggle('on', b.dataset.g === m)); }
 function updateGizmo() {
   gizmo.detach();
   gizmo.camera = view === 'top' ? topCam : edCam;
@@ -1465,6 +1466,14 @@ function addObject(type, extra, place = false, at = null) {
   if (place) { changed(false, true); startPlacing(o.id); } else { changed(true, true); toast(o.name + ' added'); }
   return o;
 }
+const SIMPLE_SHAPES = ['box', 'wall', 'plane', 'stairs', 'cylinder']; /* the shapes Simple mode lists; "More shapes" shows the rest */
+/* the Add | Scene tabs on the left; the last one is remembered */
+function setLeftTab(t, save = true) {
+  if (t !== 'scene') t = 'add';
+  if (save) setPref('leftTab', t);
+  $('#addArea').style.display = t === 'add' ? '' : 'none'; $('#outliner').style.display = t === 'scene' ? '' : 'none';
+  $$('#leftTabs button').forEach(b => { const on = b.dataset.lt === t; b.classList.toggle('on', on); b.setAttribute('aria-selected', String(on)); });
+}
 function buildAddPanel() {
   const area = $('#addArea'); area.innerHTML = '';
   const cats = { People: [], Shapes: [], Props: [], Import: [], Blocking: [] };
@@ -1472,9 +1481,13 @@ function buildAddPanel() {
   area.append(h('div', { class: 'addgrid' },
     h('button', { class: 'tile big', title: 'Add a person, then click where they stand', onclick: () => addObject('person', null, true) }, h('span', { html: svgI('person') }), 'Add person'),
     h('button', { class: 'tile big', title: 'Floor mark (like tape on set). Not visible in the shot.', onclick: () => addObject('mark', null, true) }, h('span', { html: svgI('mark') }), 'Add floor mark')));
-  for (const cat of ['Shapes', 'Props']) {
-    area.append(h('div', { class: 'addcat' }, cat));
-    area.append(h('div', { class: 'addgrid' }, cats[cat].map(k => h('button', { class: 'tile', title: 'Add ' + CATALOG[k].label.toLowerCase() + ', then click where it goes', onclick: () => addObject(k, null, true) }, h('span', { html: svgI(k) }), CATALOG[k].label))));
+  for (const cat of ['Props', 'Shapes']) {
+    const fewer = cat === 'Shapes' && simple && !getPref('moreShapes', false);
+    const list = fewer ? cats[cat].filter(k => SIMPLE_SHAPES.includes(k)) : cats[cat];
+    const grid = h('div', { class: 'addgrid' }, list.map(k => h('button', { class: 'tile', title: 'Add ' + CATALOG[k].label.toLowerCase() + ', then click where it goes', onclick: () => addObject(k, null, true) }, h('span', { html: svgI(k) }), CATALOG[k].label)));
+    if (cat === 'Shapes' && simple) grid.append(h('button', { class: 'tile more', title: fewer ? 'Show every shape' : 'Show fewer shapes', onclick: () => { setPref('moreShapes', fewer); buildAddPanel(); } },
+      h('span', { html: fewer ? '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>' : '<svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg>' }), fewer ? 'More shapes' : 'Fewer'));
+    area.append(h('div', { class: 'addcat' }, cat), grid);
   }
   area.append(h('div', { class: 'addcat' }, 'Import'));
   area.append(h('div', { class: 'addgrid' },
@@ -1490,7 +1503,8 @@ function renderOutliner() {
     onEye ? h('button', { class: 'eye', title: hidden ? 'Show' : 'Hide', onclick: e => { e.stopPropagation(); onEye(); } }, hidden ? '◌' : '●') : null);
   el.append(row('camera', svgI('camera'), 'Shot camera', state.camera.keys.length));
   for (const o of state.objects) el.append(row(o.id, iconFor(o), o.name, o.keys.length, o.visible === false, () => { o.visible = o.visible === false; syncScene(); updateGizmo(); changed(true); }));
-  if (!state.objects.length) el.append(h('div', { class: 'note', style: 'padding:6px 8px' }, 'Nothing here yet. Add a person or an object above.'));
+  if (!state.objects.length) el.append(h('div', { class: 'note', style: 'padding:6px 8px' }, 'Nothing here yet. Add a person or an object from the Add tab.'));
+  putText($('#sceneCnt'), state.objects.length ? String(state.objects.length) : '');
   refocusRow(el, fid);
 }
 /* list rows (outliner, timeline labels) are keyboard-reachable: Enter or Space selects (U4) */
@@ -1593,7 +1607,7 @@ function propsScene(p) {
     h('button', { class: 'primary', style: 'width:100%', onclick: () => openStarters() }, 'Browse starter sets…')));
   if (simple) {
     p.append(sec('Ground', check('Show ground', () => s.groundOn, v => set('groundOn', v)), check('Grid in editor', () => s.gridOn, v => { set('gridOn', v); syncTopUI(); }),
-      h('p', { class: 'note' }, 'Sky colours, sun and fog are in Advanced mode (top bar).')));
+      h('p', { class: 'note' }, 'Sky colours, sun and fog are in Advanced mode (gear menu, top right).')));
   }
   if (!simple) p.append(sec('Sky & ground',
     colorRow('Sky', () => s.sky, (v, c) => { s.env = 'custom'; set('sky', v, c); }),
@@ -1942,7 +1956,26 @@ function tickUI() {
   }
   $('#bUndo').disabled = hi <= 0; $('#bRedo').disabled = hi >= hist.length - 1;
   undoTitles();
+  const step = currentStep();
+  $$('#stepSeg button').forEach(b => { const on = b.dataset.step === step; if (b.classList.contains('on') !== on) b.classList.toggle('on', on); });
+  syncTracks();
 }
+/* the step bar: 1 Build, 2 Frame, 3 Export. The active pill follows what you are doing. */
+const currentStep = () => openModals().some(m => m.id === 'mExport') ? 'export' : view === 'camera' || selected === 'camera' || selected === 'target' ? 'frame' : 'build';
+function goStep(s) {
+  if (exporting || rec) return;
+  if (placing) cancelPlacing();
+  if (pathMode) cancelPath();
+  if (s === 'build') { if (view === 'camera') setView(lastWorkView); if (selected === 'camera' || selected === 'target') select(null); setLeftTab('add'); }
+  else if (s === 'frame') { setView('camera'); select('camera'); }
+  else if (s === 'export') openModal('mExport'); /* the Export window stays until the Export panel is ported (batch 9) */
+  requestRender();
+}
+/* timeline tracks: open while something is keyed, unless you opened or closed them by hand */
+let tracksMode = null;
+const anyKeys = () => state.camera.keys.length > 0 || state.objects.some(o => o.keys.length > 0);
+const tracksOpen = () => tracksMode ? tracksMode === 'open' : anyKeys();
+function syncTracks() { const open = tracksOpen(); $('#tl').classList.toggle('closed', !open); putText($('#bTracks'), open ? 'Tracks ▾' : 'Tracks ▴'); }
 /* the undo and redo buttons say which step they would undo or redo (worked out only when the history changes) */
 let ttKey = null;
 function undoTitles() {
@@ -1957,7 +1990,7 @@ function undoTitles() {
 
 /* ============================== menus ============================== */
 /* One menu element (#ctxMenu) serves dropdown buttons and the right-click menu.
-   items: { head } | { label, fn, key?, check?, danger?, disabled? } | '-' */
+   items: { head } | { label, fn, id?, key?, check?, danger?, disabled? } | '-' */
 let menuBtn = null, menuClosedAt = 0;
 const menuOpen = () => $('#ctxMenu').style.display === 'block';
 function hideMenu(refocus) {
@@ -1972,7 +2005,7 @@ function showMenu(x, y, items, opener = null) {
   for (const it of items) {
     if (it === '-') m.append(h('div', { class: 'sep', role: 'separator' }));
     else if (it.head) m.append(h('div', { class: 'head' }, it.head));
-    else m.append(h('button', { role: it.check !== undefined ? 'menuitemcheckbox' : 'menuitem', 'aria-checked': it.check !== undefined ? String(!!it.check) : null, class: it.danger ? 'danger' : '', disabled: !!it.disabled, onclick: () => { hideMenu(true); it.fn(); } },
+    else m.append(h('button', { role: it.check !== undefined ? 'menuitemcheckbox' : 'menuitem', 'aria-checked': it.check !== undefined ? String(!!it.check) : null, 'data-cmd': it.id, class: it.danger ? 'danger' : '', disabled: !!it.disabled, onclick: () => { hideMenu(true); it.fn(); } },
       h('span', null, it.check !== undefined ? h('span', { class: 'ck' }, it.check ? '\u2713' : '') : null, it.label), it.key ? h('kbd', null, it.key) : null));
   }
   m.style.display = 'block';
@@ -1987,6 +2020,24 @@ function menuButton(btn, itemsFn) {
     if (menuBtn === btn && performance.now() - menuClosedAt < 250) { menuBtn = null; return; }
     const r = btn.getBoundingClientRect(); showMenu(r.left, r.bottom + 4, itemsFn(), btn);
   });
+}
+const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '';
+function fileMenuItems() {
+  return [{ head: 'Project' },
+    { id: 'new', label: 'New\u2026', fn: () => openStarters() },
+    { id: 'open', label: 'Open\u2026', fn: openDialog, key: 'Ctrl O' },
+    '-',
+    { id: 'save', label: 'Save', fn: () => saveProject(false), key: 'Ctrl S' },
+    { id: 'saveas', label: 'Save as\u2026', fn: () => saveProject(true), key: 'Ctrl Shift S' },
+    '-',
+    { id: 'export', label: 'Export\u2026', fn: () => goStep('export'), key: '3' }];
+}
+function gearMenuItems() {
+  return [{ id: 'advanced', label: 'Advanced controls', check: !simple, fn: () => setSimple(!simple) },
+    { id: 'settings', label: 'Settings\u2026', fn: () => openModal('mSettings') },
+    '-',
+    { id: 'help', label: 'Quick start and shortcuts', fn: () => openModal('mHelp'), key: '?' },
+    { id: 'about', label: 'About ShotRef', fn: () => { const v = platform.version || APP_VERSION; $('#aboutVer').textContent = v ? 'Version ' + v : ''; openModal('mAbout'); } }];
 }
 function wireMenu() {
   const m = $('#ctxMenu');
@@ -2335,7 +2386,7 @@ function setDuration(v) {
 }
 function setSimple(v) {
   simple = v; try { localStorage.setItem('shotref.simple', v ? '1' : '0'); } catch (e) { }
-  document.body.classList.toggle('simple', v); updateGizmo(); propsDirty = true; syncTopUI();
+  document.body.classList.toggle('simple', v); updateGizmo(); propsDirty = true; buildAddPanel(); syncTopUI();
 }
 
 /* ============================== commands ============================== */
@@ -2368,7 +2419,7 @@ function setView(v) {
   view = v;
   edControls.enabled = v === 'editor'; camControls.enabled = v === 'camera'; topControls.enabled = v === 'top';
   $$('#viewSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
-  $('#vpTools').style.display = v !== 'camera' ? 'flex' : 'none';
+  $$('#vpRight [data-g], #vpRight [data-g2], #bSnapGrid, #bFocus').forEach(b => { b.style.display = v === 'camera' ? 'none' : ''; }); /* in Camera view only Grid stays */
   $('#camBar').style.display = v === 'camera' ? 'flex' : 'none';
   $('#bCamHere').style.display = v === 'editor' ? '' : 'none';
   $('#bPip').style.display = v !== 'camera' ? '' : 'none';
@@ -2546,12 +2597,14 @@ async function saveProject(saveAs = false) {
   saving = true;
   try { return await doSaveProject(saveAs); } finally { saving = false; }
 }
+/* the project name as a file name part: "Desert chase" -> desert-chase */
+const projectSlug = () => String(state.meta && state.meta.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
 async function doSaveProject(saveAs) {
   /* only the files this scene uses (memory also keeps older ones for undo) */
   const used = {};
   for (const id of usedAssetIds(state)) if (assets[id]) used[id] = assets[id];
   const data = JSON.stringify({ app: 'ShotRef', version: FORMAT_VERSION, state, assets: used });
-  const r = await platform.saveProject(data, { saveAs: saveAs === true, name: `shotref-${stamp()}.shotref` });
+  const r = await platform.saveProject(data, { saveAs: saveAs === true, name: `${projectSlug() || 'shotref'}-${stamp()}.shotref` });
   if (r.ok) { toast('Saved ' + (r.name || 'project')); autosave(); } /* the autosave records that nothing is unsaved now */
   else if (r.canceled) toast('Save cancelled');
   else toast("Couldn't save the project. Your changes are still here, so try again.", 5000);
@@ -2825,7 +2878,7 @@ let modalReturn = null;
 function openModal(id) {
   const m = $('#' + id), ae = document.activeElement;
   if (!openModals().length && ae && ae !== document.body) modalReturn = ae;
-  m.classList.remove('hidden');
+  m.classList.remove('hidden'); requestRender();
   if (id === 'mExport') { $('#exProg').hidden = !exporting; renderExportDialog(); }
   placeToast();
   if (exporting && id === 'mExport') return; /* the export lock owns focus */
@@ -2835,7 +2888,7 @@ function openModal(id) {
 }
 function closeModal(el) {
   const m = el.closest('.modal'); if (exporting && m.id === 'mExport') return;
-  m.classList.add('hidden'); placeToast();
+  m.classList.add('hidden'); placeToast(); requestRender();
   if (!openModals().length && modalReturn) { const r = modalReturn; modalReturn = null; if (r.isConnected && !r.closest('.modal')) r.focus(); }
 }
 /* Tab and Shift+Tab cycle inside the topmost open dialog (U4) */
@@ -2893,7 +2946,7 @@ function syncTopUI() {
   $('#inDur').value = state.settings.duration; $('#inFps').value = String(state.settings.fps);
   $$('#lenSet [data-len]').forEach(b => b.classList.toggle('on', +b.dataset.len === state.settings.duration));
   $$('#feelBar button').forEach(b => b.classList.toggle('on', b.dataset.feel === (state.camera.feel || 'gentle')));
-  $$('#modeSeg button').forEach(b => b.classList.toggle('on', (b.dataset.m === 'simple') === simple));
+  const pn = $('#projName'); if (document.activeElement !== pn) pn.value = (state.meta && state.meta.name) || '';
   $('#bLoop').classList.toggle('on', !!state.settings.loop);
   $('#bGrid').classList.toggle('on', !!state.settings.gridOn);
   $('#bPip').classList.toggle('on', pipOn);
@@ -2902,22 +2955,28 @@ function syncTopUI() {
 }
 function wire() {
   buildAddPanel();
-  $('#bNew').onclick = () => openStarters();
-  $$('#modeSeg button').forEach(b => b.onclick = () => setSimple(b.dataset.m === 'simple'));
+  setLeftTab(getPref('leftTab', 'add'), false);
+  $$('#leftTabs button').forEach(b => b.onclick = () => setLeftTab(b.dataset.lt));
+  $$('#stepSeg button').forEach(b => b.onclick = () => goStep(b.dataset.step));
+  menuButton($('#bFile'), fileMenuItems); menuButton($('#bMenu'), gearMenuItems);
+  $('#bTracks').onclick = () => { tracksMode = tracksOpen() ? 'closed' : 'open'; syncTracks(); uiDirty = true; requestRender(); };
+  const pn = $('#projName');
+  pn.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') pn.blur(); else if (e.key === 'Escape') { pn.value = (state.meta && state.meta.name) || ''; pn.blur(); } });
+  pn.addEventListener('change', () => {
+    const v = pn.value.trim().slice(0, 80), old = (state.meta && state.meta.name) || '';
+    if (v === old) { pn.value = old; return; }
+    if (!state.meta) state.meta = { id: uid(), name: '' };
+    state.meta.name = v; changed(true); pn.value = v;
+  });
   $$('#lenSet [data-len]').forEach(b => b.onclick = () => setDuration(+b.dataset.len));
   $$('#feelBar button').forEach(b => b.onclick = () => { state.camera.feel = b.dataset.feel; changed(true, true); syncTopUI(); });
   $('#cbStart').onclick = () => setShotEnd('start'); $('#cbEnd').onclick = () => setShotEnd('end'); $('#cbRec').onclick = startRecord;
-  $('#bOpen').onclick = openDialog;
-  $('#bSave').onclick = () => saveProject(false);
   $('#bUndo').onclick = undo; $('#bRedo').onclick = redo;
   $$('#viewSeg button').forEach(b => b.onclick = () => setView(b.dataset.v));
-  $('#bHelp').onclick = () => openModal('mHelp');
   $('#stHelp').onclick = () => { closeModal($('#stHelp')); openModal('mHelp'); };
-  $('#bSnap').onclick = () => exportPNG(T);
-  $('#bCopy').onclick = copyFrame; $('#cbCopy').onclick = copyFrame; $('#exCopy').onclick = copyFrame;
+  $('#cbCopy').onclick = copyFrame; $('#exCopy').onclick = copyFrame;
   $('#copySave').onclick = () => { if (copyBlob) { const fr = Math.round(T * state.settings.fps) + 1; saveFile(`shotref-frame${String(fr).padStart(4, '0')}-${state.settings.style}-${stamp()}.png`, copyBlob); } closeModal($('#copySave')); };
-  $('#bExport').onclick = () => openModal('mExport');
-  $$('#vpTools [data-g]').forEach(b => b.onclick = () => setGizmoMode(b.dataset.g));
+  $$('#vpRight [data-g]').forEach(b => b.onclick = () => setGizmoMode(b.dataset.g));
   $('#bSnapGrid').onclick = () => { snapOn = !snapOn; updateGizmo(); syncTopUI(); };
   $('#bFocus').onclick = focusSel;
   $('#bCamHere').onclick = camToEditorView;
@@ -3134,6 +3193,7 @@ function wire() {
     else if (k === 'w') setGizmoMode('translate');
     else if (k === 'e') setGizmoMode('rotate');
     else if (k === 'r') setGizmoMode('scale');
+    else if ((k === '1' || k === '2' || k === '3') && !e.altKey && !e.shiftKey) goStep(['build', 'frame', 'export'][+k - 1]);
     else if (k === 'k') addKeySel();
     else if (k === 'f') focusSel();
     else if (k === 'p') exportPNG(T);

@@ -70,10 +70,14 @@ aside{background:var(--panel);overflow:auto}
 #vp{grid-area:vp;position:relative;overflow:hidden;background:#0e0f11}
 #c{position:absolute;inset:0;width:100%;height:100%;display:block;outline:none}
 .ov{position:absolute;pointer-events:none}
-#vpTools{top:10px;left:10px;display:flex;gap:4px;pointer-events:auto}
-#vpRight{top:10px;right:10px;display:flex;gap:4px;pointer-events:auto}
-#vpTools button,#vpRight button{background:rgba(25,27,31,.85);backdrop-filter:blur(6px);padding:5px 9px}
-#vpTools button.on,#vpRight button.on{background:rgba(90,58,28,.92)}
+/* viewport icon cluster (top right); the tooltips come from data-tip */
+#vpRight{top:10px;right:10px;display:flex;flex-direction:row;gap:3px;pointer-events:auto;background:rgba(22,24,28,.78);backdrop-filter:blur(6px);border:1px solid rgba(255,255,255,.08);border-radius:9px;padding:3px}
+#vpRight .ib{position:relative;display:inline-flex;align-items:center;justify-content:center;background:transparent;border:0;border-radius:6px;padding:5px 6px;color:#cfd3d8}
+#vpRight .ib:hover{background:rgba(255,255,255,.08)}
+#vpRight .ib.on{background:rgba(255,154,60,.22);color:var(--acc2)}
+#vpRight .vsep{width:1px;background:rgba(255,255,255,.12);margin:4px 2px}
+button.icon svg,.ib svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+[data-tip]:hover::after,[data-tip]:focus-visible::after{content:attr(data-tip);position:absolute;top:calc(100% + 6px);right:0;white-space:nowrap;background:#0f1013;color:#e7e9ec;border:1px solid var(--line2);font-size:11.5px;font-weight:400;padding:4px 8px;border-radius:6px;pointer-events:none;z-index:20}
 #pipFrame{border:1.5px solid var(--acc);border-radius:3px;pointer-events:auto;cursor:pointer;box-shadow:0 4px 22px rgba(0,0,0,.5)}
 #pipFrame span{position:absolute;left:6px;top:4px;font-size:10px;font-weight:700;color:var(--acc2);text-shadow:0 1px 2px #000;letter-spacing:.5px}
 #camFrame{border:1px solid rgba(255,255,255,.25)}
@@ -205,10 +209,39 @@ aside{background:var(--panel);overflow:auto}
 .startgrid .card b{font-size:13.5px}
 .startgrid .card small{color:var(--mute);font-size:11.5px;line-height:1.35}
 .startgrid .card:hover{border-color:var(--acc)}
-body.simple #vpTools [data-g]{display:none}
-@media (max-width:1400px){.brand small{display:none}}
+body.simple #vpRight [data-g],body.simple #vpRight [data-g2]{display:none}
+body.simple .adv{display:none!important}
+/* top bar: project name, File menu, step bar */
+#top{gap:8px}
+#projName{background:transparent;border:1px solid transparent;color:#e9ebee;font-weight:600;width:170px;padding:4px 6px;border-radius:5px;flex:0 1 170px}
+#projName::placeholder{color:var(--mute);font-weight:400}
+#projName:hover{border-color:var(--line2)}
+#projName:focus{background:#15161a;border-color:var(--acc);outline:none}
+button.icon{padding:5px 8px;min-width:32px;display:inline-flex;align-items:center;justify-content:center}
+.menubtn{background:transparent;border-color:transparent;color:#d6d9de;padding:5px 9px}
+.menubtn::after{content:"\25BE";margin-left:6px;font-size:10px;color:var(--mute)}
+.menubtn:hover{background:var(--panel2);border-color:var(--line2)}
+.stepseg{display:flex;gap:3px;background:#15161a;border:1px solid var(--line2);border-radius:20px;padding:3px;flex:none}
+.stepseg button{border:0;border-radius:16px;background:transparent;padding:4px 14px 4px 6px;display:flex;align-items:center;gap:7px;color:#c3c7cd}
+.stepseg button b{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:#2a2d33;font-size:11px;color:#c3c7cd}
+.stepseg button:hover{background:#25282d}
+.stepseg button.on{background:var(--accd);color:#ffe3c6}
+.stepseg button.on b{background:var(--acc);color:#1b1206}
+/* left panel tabs: Add | Scene */
+#left{display:flex;flex-direction:column;overflow:hidden}
+.tabs{display:flex;gap:2px;padding:8px 10px 0;border-bottom:1px solid var(--line);flex:none;background:var(--panel)}
+.tabs button{flex:1;border:0;border-radius:6px 6px 0 0;background:transparent;padding:7px 2px;color:var(--mute);position:relative;font-size:12.5px}
+.tabs button.on{background:var(--panel2);color:var(--acc2);box-shadow:inset 0 -2px 0 var(--acc)}
+.tabs .cnt{font-size:10.5px;color:var(--mute);margin-left:3px}
+#addArea,#outliner{flex:1;overflow:auto;min-height:0}
+#addArea{padding-bottom:12px}
+.tile.more{border-style:dashed;color:var(--mute)}
+#tl.closed #tlBody{display:none}
+#tl.closed{min-height:0}
+@media (max-width:1560px){.brand small{display:none}}
 @media (max-width:1250px){#tlBar{flex-wrap:wrap}}
-@media (max-width:1100px){.brand .name{display:none}}
+@media (max-width:1200px){.stepseg button{padding-right:9px;gap:5px}#projName{flex-basis:120px;width:120px}}
+@media (max-width:1100px){.brand .name{display:none}.menubtn{padding:5px 6px}#top{gap:5px}.seg button{padding:5px 8px}.stepseg button{padding-right:7px}#projName{flex-basis:130px;width:130px}}
 @media (max-width:900px){#app{grid-template-columns:190px minmax(0,1fr) 250px}.brand small{display:none}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
@@ -217,50 +250,45 @@ body.simple #vpTools [data-g]{display:none}
 <div id="app">
   <header id="top">
     <div class="brand" title="ShotRef"><svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M5 12V5h7M20 27h7v-7" fill="none" stroke="#E7E9EC" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 23C13 15 19 22 24 9" fill="none" stroke="#FF9A3C" stroke-width="2.4" stroke-linecap="round"/><circle cx="8" cy="23" r="2.4" fill="#FF9A3C"/><circle cx="24" cy="9" r="2.4" fill="#FF9A3C"/></svg><span class="name">Shot<span class="r">Ref</span></span> <small>Camera moves for AI video</small></div>
+    <input id="projName" type="text" placeholder="Untitled scene" aria-label="Project name" title="Project name (click to rename)" spellcheck="false" maxlength="80" autocomplete="off">
+    <button id="bFile" class="menubtn" aria-haspopup="menu" title="New, open, save and export">File</button>
     <div class="grp">
-      <button id="bNew" title="Start a new project">New</button>
-      <button id="bOpen" title="Open a saved project (Ctrl+O)">Open</button>
-      <button id="bSave" title="Save project file (Ctrl+S). Save as: Ctrl+Shift+S">Save</button>
-    </div>
-    <div class="grp">
-      <button id="bUndo" title="Undo (Ctrl+Z)">↶ Undo</button>
-      <button id="bRedo" title="Redo (Ctrl+Y)">↷</button>
-    </div>
-    <div class="seg" id="viewSeg">
-      <button data-v="editor" title="Free 3D view to build the scene">Editor</button>
-      <button data-v="top" title="Overhead floor-plan view for blocking (T)">Top view</button>
-      <button data-v="camera" title="Look through the shot camera (C)">Camera view</button>
-    </div>
-    <div class="seg" id="modeSeg" title="Simple mode hides the number fields and lighting details">
-      <button data-m="simple">Simple</button><button data-m="advanced">Advanced</button>
+      <button id="bUndo" class="icon" aria-label="Undo" title="Undo (Ctrl+Z)">↶</button>
+      <button id="bRedo" class="icon" aria-label="Redo" title="Redo (Ctrl+Y)">↷</button>
     </div>
     <div class="spacer"></div>
-    <button id="bHelp" class="ghost" title="Quick start and shortcuts">? Help</button>
-    <button id="bCopy" title="Copy the current camera frame to the clipboard as an image (Ctrl+C)">Copy frame</button>
-    <button id="bSnap" title="Save the current frame as PNG (P)">Frame PNG</button>
-    <button id="bExport" class="primary" title="Export video or images">Export…</button>
+    <div class="stepseg" id="stepSeg" role="group" aria-label="Work in three steps">
+      <button data-step="build" title="Add and place people and props (1)"><b>1</b>Build</button>
+      <button data-step="frame" title="Frame the shot and set the camera move (2)"><b>2</b>Frame</button>
+      <button id="bExport" data-step="export" title="Video, frames and images to export (3)"><b>3</b>Export</button>
+    </div>
+    <div class="spacer"></div>
+    <div class="seg" id="viewSeg">
+      <button data-v="editor" title="Free 3D view to build the scene">Editor</button>
+      <button data-v="top" title="Overhead floor-plan view for blocking (T)">Top</button>
+      <button data-v="camera" title="Look through the shot camera (C)">Camera</button>
+    </div>
+    <button id="bMenu" class="icon" aria-haspopup="menu" aria-label="Settings and help" title="Settings, Advanced controls and help"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg></button>
   </header>
 
   <aside id="left">
-    <div class="ph">Add to scene</div>
+    <div class="tabs" id="leftTabs" role="tablist"><button data-lt="add" role="tab">Add</button><button data-lt="scene" role="tab">Scene <span class="cnt" id="sceneCnt"></span></button></div>
     <div id="addArea"></div>
-    <div class="ph">In the scene</div>
     <div id="outliner"></div>
   </aside>
 
   <main id="vp">
     <canvas id="c" tabindex="0"></canvas>
-    <div id="vpTools" class="ov">
-      <button data-g="translate" title="Move (W)">Move</button>
-      <button data-g="rotate" title="Rotate (E)">Rotate</button>
-      <button data-g="scale" title="Scale (R)">Scale</button>
-      <button id="bSnapGrid" title="Snap to 0.25 m and 15°">Snap</button>
-      <button id="bFocus" title="Zoom the view to the selected object (F)">Zoom to</button>
-    </div>
-    <div id="vpRight" class="ov">
-      <button id="bCamHere" title="Put the shot camera where you are looking now">Camera to this view</button>
-      <button id="bPip" title="Camera preview picture-in-picture">Preview</button>
-      <button id="bGrid" title="Show grid">Grid</button>
+    <div id="vpRight" class="ov" role="toolbar" aria-label="View tools">
+      <button data-g="translate" class="ib" data-tip="Move arrows (W)" aria-label="Move arrows"><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/></svg></button>
+      <button data-g="rotate" class="ib" data-tip="Rotate rings (E)" aria-label="Rotate rings"><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 11-2.3-5.6M20 4v4h-4"/></svg></button>
+      <button data-g="scale" class="ib" data-tip="Scale handles (R)" aria-label="Scale handles"><svg viewBox="0 0 24 24"><rect x="4" y="10" width="10" height="10" rx="1"/><path d="M13 11l7-7M15 4h5v5"/></svg></button>
+      <span class="vsep" data-g2></span>
+      <button id="bSnapGrid" class="ib" data-tip="Snap to 25 cm and 15°" aria-label="Snap to 25 cm and 15 degrees"><svg viewBox="0 0 24 24"><path d="M4 4h16v16H4zM4 12h16M12 4v16"/><circle cx="12" cy="12" r="2.2" fill="currentColor"/></svg></button>
+      <button id="bFocus" class="ib" data-tip="Zoom to the selection (F)" aria-label="Zoom to the selection"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/><circle cx="12" cy="12" r="3"/></svg></button>
+      <button id="bGrid" class="ib" data-tip="Grid" aria-label="Grid"><svg viewBox="0 0 24 24"><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg></button>
+      <button id="bPip" class="ib" data-tip="Camera preview in the corner" aria-label="Camera preview in the corner"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><rect x="12" y="12" width="7" height="5" rx="1" fill="currentColor"/></svg></button>
+      <button id="bCamHere" class="ib" data-tip="Put the shot camera where you are looking now" aria-label="Put the shot camera where you are looking now"><svg viewBox="0 0 24 24"><rect x="3" y="8" width="12" height="9" rx="2"/><path d="M15 11l5-3v9l-5-3M7 4l2 3 2-3"/></svg></button>
     </div>
     <div id="camBar" class="ov">
       <button id="cbStart" title="Save this framing as the first frame">Set start</button>
@@ -291,19 +319,20 @@ body.simple #vpTools [data-g]{display:none}
         <button id="bEnd" title="Go to end (End)">⏭</button>
       </div>
       <div id="tcode">00:00.00</div>
-      <div id="tframe">frame 1</div>
-      <button id="bKey" title="Add a keyframe for the selected item at the playhead (K)">◆ Add key</button>
-      <button id="bUnkey" title="Remove the selected item's keyframe at the playhead">◇ Remove key</button>
+      <div id="tframe" class="adv">frame 1</div>
+      <button id="bKey" title="Add a keyframe for the selected item at the playhead (K)">◆ Key</button>
+      <button id="bUnkey" class="adv" title="Remove the selected item's keyframe at the playhead">◇ Remove key</button>
       <div class="spacer"></div>
       <div id="lenSet" class="lenset" title="Shot length. Common AI video lengths; the animation stretches to fit.">
         <span>Length</span><button data-len="5">5 s</button><button data-len="8">8 s</button><button data-len="10">10 s</button>
         <input id="inDur" type="number" min="1" max="120" step="0.5" title="Custom length (seconds)">
       </div>
-      <label>FPS <select id="inFps"><option>24</option><option>25</option><option>30</option><option>50</option><option>60</option></select></label>
+      <label class="adv">FPS <select id="inFps"><option>24</option><option>25</option><option>30</option><option>50</option><option>60</option></select></label>
       <div class="seg feelbar" id="feelBar" title="Camera motion feel: how the move starts and stops">
         <button data-feel="constant">Constant</button><button data-feel="gentle">Gentle</button><button data-feel="strong">Strong</button>
       </div>
       <button id="bLoop" title="Loop playback">⟲ Loop</button>
+      <button id="bTracks" title="Show or hide the tracks">Tracks ▴</button>
     </div>
     <div id="tlBody">
       <div class="tlr" id="tlRuler"><div class="lab" style="cursor:default;color:var(--mute)">Tracks</div><div class="lane" id="rulerLane"></div></div>
@@ -346,17 +375,18 @@ body.simple #vpTools [data-g]{display:none}
   <div class="dlgBody">
   <h2 id="mHelpT">Quick start</h2>
   <ol class="steps">
-    <li><b>Start from a set</b> (the New button), or click items on the left and then click on the floor to place them.</li>
+    <li><b>Start from a set</b> (<b>File</b> then <b>New</b>), or click items on the Add tab on the left and then click on the floor to place them.</li>
     <li><b>Block it.</b> Drag people and props across the floor; drag the orange ring to turn them. <b>Top view</b> (<span class="kbd">T</span>) works like a floor plan.</li>
     <li><b>Move people.</b> Select a person, press <b>Draw walk path</b> and click points on the floor, or send them to a floor mark with an arrival time.</li>
     <li><b>Right-click</b> anything for what you can do with it: add a person here, walk them to a mark, frame a medium shot, face the camera, duplicate, hide. Right-click the floor to add things or aim the camera there. Right-drag still pans.</li>
     <li><b>Frame the shot.</b> In <b>Camera view</b> (<span class="kbd">C</span>) drag to orbit, right-drag to pan, scroll to dolly, <span class="kbd">W A S D Q E</span> to fly. Or use a shot size: Wide, Medium, Close-up…</li>
     <li><b>Make the move.</b> Press <b>Set start</b>, reframe, press <b>Set end</b>. Or pick a one-click move, or <b>● Record</b> and operate the camera live.</li>
-    <li><b>Export</b> an MP4, the current frame, or start + end frames for image-to-video models.</li>
+    <li><b>Export</b> (step 3, or press <span class="kbd">3</span>): an MP4, the current frame, or start + end frames for image-to-video models.</li>
   </ol>
   <h2 style="margin-top:16px">Shortcuts</h2>
   <div class="help-grid">
     <div><span class="kbd">Space</span></div><div>Play / pause</div>
+    <div><span class="kbd">1</span> <span class="kbd">2</span> <span class="kbd">3</span></div><div>Step 1 Build · step 2 Frame (camera view) · step 3 Export</div>
     <div><span class="kbd">C</span> · <span class="kbd">T</span></div><div>Camera view · Top view</div>
     <div><span class="kbd">Enter</span> · <span class="kbd">Esc</span></div><div>Finish a path · cancel placing, a path or a recording</div>
     <div><span class="kbd">W</span> <span class="kbd">E</span> <span class="kbd">R</span></div><div>Move / Rotate / Scale arrows (Advanced mode)</div>
@@ -383,6 +413,21 @@ body.simple #vpTools [data-g]{display:none}
   <p class="note" style="font-size:13px" id="mStartP">Pick a ready-made layout. Everything in it can be moved, changed or deleted.</p>
   <div class="startgrid" id="startGrid"></div>
   <div class="btns" style="margin-top:12px;justify-content:space-between;align-items:center"><span class="note" style="margin:0">New to ShotRef? The guide shows the basics in six steps.</span><button id="stHelp" style="flex:none">Quick start guide</button></div>
+</div></div>
+
+<div id="mSettings" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mSettingsT"><div class="dlg" style="width:min(460px,94vw)">
+  <button class="x" data-close aria-label="Close">×</button>
+  <h2 id="mSettingsT">Settings</h2>
+  <p class="note" style="font-size:13px">Preferences for new scenes, exports and the viewport will live here. There is nothing to set yet. The Advanced controls switch is in the same menu as Settings.</p>
+  <div class="btns" style="margin-top:12px;justify-content:flex-end"><button data-close class="primary">Close</button></div>
+</div></div>
+
+<div id="mAbout" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mAboutT"><div class="dlg" style="width:min(460px,94vw)">
+  <button class="x" data-close aria-label="Close">×</button>
+  <div class="starthead"><svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M5 12V5h7M20 27h7v-7" fill="none" stroke="#E7E9EC" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 23C13 15 19 22 24 9" fill="none" stroke="#FF9A3C" stroke-width="2.4" stroke-linecap="round"/><circle cx="8" cy="23" r="2.4" fill="#FF9A3C"/><circle cx="24" cy="9" r="2.4" fill="#FF9A3C"/></svg><div><b id="mAboutT">Shot<span>Ref</span></b><span class="note" id="aboutVer" style="margin:0"></span></div></div>
+  <p class="note" style="font-size:13px">ShotRef is a simple 3D tool for blocking scenes and camera moves, then exporting reference clips for AI video models like Kling, Runway and Veo.</p>
+  <p class="note" style="font-size:13px">Block the shot. Move the camera. Guide the AI.</p>
+  <div class="btns" style="margin-top:12px;justify-content:flex-end"><button data-close class="primary">Close</button></div>
 </div></div>
 
 <div id="mCopy" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mCopyT"><div class="dlg" style="width:min(720px,94vw)">

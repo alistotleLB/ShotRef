@@ -193,6 +193,7 @@ export function describeChange(beforeJSON, afterJSON) {
   if (removed.length) return nm(removed, 'delete');
   for (const o of B) { const p = inA.get(o.id); if (!same(p.base, o.base) || !same(p.keys, o.keys)) return 'move ' + (o.name || 'item'); }
   for (const o of B) { const p = inA.get(o.id); if (!same(p, o)) return 'change ' + (o.name || 'item'); }
+  if (!same(a.meta, b.meta)) return 'rename project';
   if (!same(a.camera, b.camera)) return 'camera change';
   if (!same(a.settings, b.settings)) return 'settings change';
   if (!same(a.plate, b.plate)) return 'location photo change';

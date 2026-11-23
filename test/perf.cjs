@@ -98,7 +98,7 @@ async function main() {
   const kinds = ['Empty stage', 'Two-person dialogue', 'Walk and talk', 'Living room', 'Café table', 'Street', 'Blocking practice'];
   out.elements = { after0: await count() };
   for (let i = 0; i < 30; i++) {
-    await p2.click('#bNew');
+    await p2.click('#bFile'); await p2.click('#ctxMenu [data-cmd="new"]');
     await p2.click('#startGrid .card:has-text("' + kinds[i % kinds.length] + '")');
     const asked = await p2.waitForSelector('#mConfirm:not(.hidden)', { timeout: 1500 }).then(() => true, () => false);
     if (asked) await p2.click('#cfOk');

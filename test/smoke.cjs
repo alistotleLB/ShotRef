@@ -140,6 +140,12 @@ const noErrors = (page, what) => ok(page.__errors.length === 0, (what || 'page')
 /* uncaught exceptions only (a deliberate console.error is allowed) */
 const noPageErrors = (page, what) => { const e = page.__errors.filter(x => x.startsWith('pageerror:')); ok(e.length === 0, (what || 'page') + ' threw ' + e.length + ' uncaught error(s): ' + (e[0] || '').slice(0, 100)); };
 const stateOf = page => page.evaluate(() => JSON.parse(JSON.stringify(window.__shotref.state)));
+/* menu helpers: open a dropdown button, then pick an item by its data-cmd (File menu #bFile, gear menu #bMenu) */
+const menuCmd = async (p, opener, cmd) => { await p.click(opener); await p.click('#ctxMenu [data-cmd="' + cmd + '"]'); };
+const fileCmd = (p, cmd) => menuCmd(p, '#bFile', cmd);
+const gearCmd = (p, cmd) => menuCmd(p, '#bMenu', cmd);
+/* Advanced mode on (the gear menu checkbox) */
+const goAdvanced = async p => { if (await p.evaluate(() => document.body.classList.contains('simple'))) await gearCmd(p, 'advanced'); };
 
 /* =================================================================== */
 /*                               CHECKS                                */
@@ -183,7 +189,7 @@ check('save then open round-trips', async ({ open, freshContext, downloads }) =>
   const a = await open();
   await a.evaluate(() => { const S = window.__shotref; S.addObject('person'); S.applyMove('orbitL'); S.changed(true); });
   const before = await stateOf(a);
-  await a.click('#bSave');
+  await fileCmd(a, 'save');
   const file = await downloads(a).wait('.shotref');
   const fc = await freshContext();
   const b = await fc.open();
@@ -290,7 +296,7 @@ check('undo after open restores scene and assets', async ({ open, fixtures }) =>
 check('starter set can be undone', async ({ open }) => {
   const p = await open();
   const ids = await p.evaluate(() => window.__shotref.state.objects.map(o => o.id).join());
-  await p.click('#bNew');
+  await fileCmd(p, 'new');
   await p.click('#startGrid .card:has-text("Street")');
   await p.waitForSelector('#mConfirm:not(.hidden)');
   await p.click('#cfOk');
@@ -518,7 +524,7 @@ check('last tab to write keeps its photo', async ({ open, fixtures }) => {
 
 check('save file name has a date', async ({ open, downloads }) => {
   const p = await open();
-  await p.click('#bSave');
+  await fileCmd(p, 'save');
   const f = await downloads(p).wait('.shotref');
   ok(/^shotref-\d{8}-\d{4}\.shotref$/.test(f.name), 'file is called ' + f.name);
 });
@@ -670,6 +676,7 @@ check('shrinking the shot keeps keys apart', async ({ open }) => {
 
 check('changing fps keeps keys apart', async ({ open }) => {
   const p = await open();
+  await goAdvanced(p); /* the FPS box is an Advanced control */
   await setDur(p, 4);
   await p.selectOption('#inFps', '30');
   await p.waitForTimeout(200);
@@ -905,6 +912,7 @@ check('delete with slider focused keeps object', async ({ open }) => {
 
 check('space works after changing fps dropdown', async ({ open }) => {
   const p = await open();
+  await goAdvanced(p);
   await p.selectOption('#inFps', '30');
   await p.focus('#inFps');
   await p.keyboard.press('Space');
@@ -930,7 +938,7 @@ check('dialogs trap focus', async ({ open }) => {
 
 check('confirm accepts Enter', async ({ open }) => {
   const p = await open();
-  await p.click('#bNew');
+  await fileCmd(p, 'new');
   await p.click('#startGrid .card:has-text("Street")');
   await p.waitForSelector('#mConfirm:not(.hidden)');
   await p.keyboard.press('Enter');
@@ -979,7 +987,7 @@ check('first launch shows starter sets', async ({ freshContext }) => {
   await p.waitForTimeout(200);
   ok(!(await isOpen(p, 'mConfirm')), 'asked to replace the scene on first launch');
   await p.waitForFunction(() => window.__shotref.state.objects.length > 3, null, { timeout: 3000 }).catch(() => { throw new Error('starter set did not load'); });
-  await p.click('#bNew');
+  await fileCmd(p, 'new');
   await p.locator('#mStart button', { hasText: 'Quick start guide' }).click();
   ok(await isOpen(p, 'mHelp'), 'Quick start guide button did not open the guide');
   ok(!(await isOpen(p, 'mStart')), 'starter sets still open behind the guide');
@@ -1011,7 +1019,7 @@ check('toast shows above an open dialog', async ({ open }) => {
 check('quick start fits a 720 px window', async ({ freshContext }) => {
   const fc = await freshContext({ viewport: { width: 1280, height: 720 } });
   const p = await fc.open();
-  await p.click('#bHelp');
+  await gearCmd(p, 'help');
   const r = await p.evaluate(() => { const d = document.querySelector('#mHelp .dlg').getBoundingClientRect(); return { top: d.top, bottom: d.bottom, sh: document.scrollingElement.scrollHeight }; });
   ok(r.top >= 0 && r.bottom <= 720, 'dialog spans ' + r.top + ' to ' + r.bottom + ' px');
   ok(r.sh <= 720, 'page scrolls (' + r.sh + ' px)');
@@ -1019,6 +1027,7 @@ check('quick start fits a 720 px window', async ({ freshContext }) => {
 
 check('timeline fits its tracks', async ({ open }) => {
   const p = await open();
+  await p.click('#bTracks'); /* tracks start closed while nothing is keyed (batch B) */
   await p.waitForTimeout(200);
   const h1 = await p.evaluate(() => document.querySelector('#tl').getBoundingClientRect().height);
   ok(h1 >= 90 && h1 < 150, 'timeline is ' + h1 + ' px tall with 1 track');
@@ -1032,6 +1041,8 @@ check('outliner and timeline rows work from the keyboard', async ({ open }) => {
   const p = await open();
   await p.waitForTimeout(200);
   const id = await p.evaluate(() => window.__shotref.state.objects[1].id);
+  await p.click('#leftTabs [data-lt=scene]'); await p.click('#bTracks'); /* the list is on the Scene tab; tracks start closed */
+  await p.waitForTimeout(200);
   const rows = await p.evaluate(() => [...document.querySelectorAll('#outliner .ol, #tlRows .lab')].every(r => r.tabIndex === 0));
   ok(rows, 'outliner rows or timeline labels are not focusable');
   await p.focus('#outliner .ol:nth-child(3)');
@@ -1054,7 +1065,7 @@ check('shortcut letters do not change a focused dropdown', async ({ open }) => {
   const p = await open();
   await p.evaluate(() => { window.__shotref.select('camera'); });
   await p.waitForTimeout(300);
-  await p.evaluate(() => { document.querySelector('#modeSeg [data-m=advanced]').click(); });
+  await goAdvanced(p);
   await p.waitForTimeout(300);
   const g0 = await p.evaluate(() => window.__shotref.state.settings.guides);
   ok(await focusPropSelect(p, 'Guides') !== null, 'setup: no Guides dropdown in the camera panel');
@@ -1074,7 +1085,7 @@ check('shortcut letters do not change a focused dropdown', async ({ open }) => {
 /* ---- Task 7: performance ---- */
 const stats = p => p.evaluate(() => window.__shotref.renderStats());
 const loadEmptyStarter = async p => {
-  await p.click('#bNew');
+  await fileCmd(p, 'new');
   await p.click('#startGrid .card:has-text("Empty stage")');
   const asked = await p.waitForSelector('#mConfirm:not(.hidden)', { timeout: 1500 }).then(() => true, () => false);
   if (asked) await p.click('#cfOk');
@@ -1295,13 +1306,12 @@ check('a drag cut off by the browser still saves the move', async ({ open }) => 
 
 check('clicking outside a dialog returns focus', async ({ open }) => {
   const p = await open();
-  await p.focus('#bHelp');
-  await p.keyboard.press('Enter');
+  await gearCmd(p, 'help');
   ok(await isOpen(p, 'mHelp'), 'setup: Help did not open');
   await p.mouse.click(4, 450);
   ok(!(await isOpen(p, 'mHelp')), 'clicking the dark backdrop did not close Help');
   const a = await p.evaluate(() => document.activeElement && document.activeElement.id);
-  ok(a === 'bHelp', 'focus went to "' + a + '", not back to the Help button');
+  ok(a === 'bMenu', 'focus went to "' + a + '", not back to the gear button the guide was opened from');
 });
 
 check('selecting an object does not resize the view', async ({ open }) => {
@@ -1539,7 +1549,7 @@ check('web: Ctrl+Shift+S saves like Save', async ({ open, downloads }) => {
 check('desktop: Save reuses the file, Save as asks again, title shows name and unsaved dot', async ({ freshContext }) => {
   const p = await desktopPage(freshContext);
   ok((await p.title()) === 'ShotRef', 'start title ' + (await p.title()));
-  await p.click('#bSave');
+  await fileCmd(p, 'save');
   await p.waitForFunction(() => window.__dsk.calls.length === 1);
   let c = await p.evaluate(() => window.__dsk.calls.slice());
   ok(c[0].k === 'proj' && !c[0].o.saveAs && !c[0].o.path && /^shotref-\d{8}-\d{4}\.shotref$/.test(c[0].o.name), 'first save ' + JSON.stringify(c[0]));
@@ -1564,7 +1574,7 @@ check('desktop: a failed save says so and keeps the unsaved dot', async ({ fresh
   const p = await desktopPage(freshContext);
   await dirtyEdit(p);
   await p.evaluate(() => { window.__dsk.fail = true; });
-  await p.click('#bSave');
+  await fileCmd(p, 'save');
   await p.waitForFunction(() => window.__dsk.calls.length === 1);
   await p.waitForTimeout(300);
   const r = await p.evaluate(() => ({ toast: document.querySelector('#toast').textContent, t: window.__dsk.titles.slice(-1)[0] }));
@@ -1585,7 +1595,7 @@ check('desktop: Open uses the native dialog and later Save writes back to that f
   const t = await p.evaluate(() => window.__dsk.titles.slice(-1)[0]);
   ok(t.includes('scene.shotref') && !t.includes('•'), 'title ' + t);
   await dirtyEdit(p);
-  await p.click('#bSave');
+  await fileCmd(p, 'save');
   await p.waitForFunction(() => window.__dsk.calls.length === 1);
   const c = await p.evaluate(() => window.__dsk.calls[0]);
   ok(c.o.path === 'D:/work/scene.shotref', 'Save should write back to the opened file ' + JSON.stringify(c));
@@ -1606,7 +1616,8 @@ check('desktop: menu commands, opened-file events and exports go through the bri
   ok(c.o.saveAs === true, 'menu save-as ' + JSON.stringify(c));
   await p.evaluate(() => window.__dsk.menu('save'));
   await p.waitForFunction(() => window.__dsk.calls.length === 2);
-  await p.click('#bSnap');
+  await p.click('#bExport');
+  await p.click('#exFrame');
   await p.waitForFunction(() => window.__dsk.calls.some(x => x.k === 'blob'), null, { timeout: 30000 });
   const b = await p.evaluate(() => window.__dsk.calls.find(x => x.k === 'blob'));
   ok(/\.png$/.test(b.n) && b.size > 1000 && JSON.stringify(b.f).includes('png'), 'png via bridge ' + JSON.stringify(b));
@@ -1685,13 +1696,13 @@ check('desktop: undo back past an Open does not let Save overwrite the opened fi
   await p.waitForFunction(() => window.__shotref.state.objects.length === 1);
   await p.keyboard.press('Control+Z');
   await p.waitForFunction(() => window.__shotref.state.objects.length === 3);
-  await p.click('#bSave');
+  await fileCmd(p, 'save');
   await p.waitForFunction(() => window.__dsk.calls.length === 1);
   let c = await p.evaluate(() => window.__dsk.calls[0]);
   ok(!c.o.path, 'Save after undoing the Open must ask for a file, got path ' + c.o.path);
   await p.keyboard.press('Control+Y'); /* redo: B again, and Save writes to B */
   await p.waitForFunction(() => window.__shotref.state.objects.length === 1);
-  await p.click('#bSave');
+  await fileCmd(p, 'save');
   await p.waitForFunction(() => window.__dsk.calls.length === 2);
   c = await p.evaluate(() => window.__dsk.calls[1]);
   ok(c.o.path === 'D:/b.shotref', 'redo should bring B back with its path, got ' + c.o.path);
@@ -1706,7 +1717,7 @@ check('desktop: after Save as, undoing an edit still saves to that file', async 
   await p.waitForTimeout(100);
   await p.keyboard.press('Control+Z');
   await p.waitForFunction(() => window.__shotref.state.objects.length === 3);
-  await p.click('#bSave');
+  await fileCmd(p, 'save');
   await p.waitForFunction(() => window.__dsk.calls.length === 2);
   const c = await p.evaluate(() => window.__dsk.calls[1]);
   ok(c.o.path === path && !c.o.saveAs, 'Save after undo should write to ' + path + ', got ' + JSON.stringify(c.o));
@@ -1872,12 +1883,15 @@ check('camera menu: look through, set start, make static', async ({ open }) => {
   await rightClick(p, xy[0], xy[1]); await p.waitForTimeout(200);
   const labels = await menuLabels(p);
   ok(labels && labels.some(x => x.startsWith('Look through camera')) && labels.some(x => x.startsWith('Set start frame')) && labels.some(x => x.startsWith('Set end frame')), 'camera menu: ' + JSON.stringify(labels));
-  await clickItem(p, 'Set start frame'); await p.waitForTimeout(200);
+  await clickItem(p, 'Set start frame'); await p.waitForTimeout(400);
   ok(await p.evaluate(() => window.__shotref.state.camera.keys.length) === 1, 'Set start frame should key the camera');
-  await rightClick(p, xy[0], xy[1]); await p.waitForTimeout(150);
-  await clickItem(p, 'Make static'); await p.waitForTimeout(200);
+  /* the tracks opened, so the view is shorter: find the camera again */
+  const xy2 = await p.evaluate(q => window.__shotref.project(q[0], q[1], q[2]), cp);
+  await rightClick(p, xy2[0], xy2[1]); await p.waitForTimeout(150);
+  await clickItem(p, 'Make static'); await p.waitForTimeout(400);
   ok(await p.evaluate(() => window.__shotref.state.camera.keys.length) === 0, 'Make static should clear the keys');
-  await rightClick(p, xy[0], xy[1]); await p.waitForTimeout(150);
+  const xy3 = await p.evaluate(q => window.__shotref.project(q[0], q[1], q[2]), cp);
+  await rightClick(p, xy3[0], xy3[1]); await p.waitForTimeout(150);
   await clickItem(p, 'Look through camera'); await p.waitForTimeout(200);
   ok(await p.evaluate(() => window.__shotref.view) === 'camera', 'should be in camera view');
 });
@@ -1987,7 +2001,7 @@ check('artifact-format file survives save then reopen', async ({ open, freshCont
   await openFile(a, 'art.shotref.json', JSON.stringify(file));
   await a.waitForFunction(() => window.__shotref.state.objects.length === 2);
   const before = await stateOf(a);
-  await a.click('#bSave');
+  await fileCmd(a, 'save');
   const f = await downloads(a).wait('.shotref');
   const fc = await freshContext(); const b = await fc.open();
   await openFile(b, f.name, f.text());
@@ -1995,6 +2009,192 @@ check('artifact-format file survives save then reopen', async ({ open, freshCont
   ok(canon(await stateOf(b)) === canon(before), 'state differs after save and reopen');
   const st = await stateOf(b);
   ok(st.meta.name === 'Desert' && st.shots.length === 1 && st.takes.length === 1 && st.objects[1].acts.length === 1 && st.camera.dof.strength === 4 && st.settings.tod === 9, 'new fields lost');
+});
+
+/* ---------------- Batch B: shell (top bar, step bar, left tabs, viewport icons, timeline) ---------------- */
+check('top bar: project name lives in the project, is undoable and names the file', async ({ open, downloads }) => {
+  const p = await open();
+  ok(await p.evaluate(() => document.title) === 'ShotRef', 'setup: page title');
+  await p.fill('#projName', 'Desert chase');
+  await p.press('#projName', 'Enter');
+  ok(await p.evaluate(() => window.__shotref.state.meta && window.__shotref.state.meta.name) === 'Desert chase', 'state.meta.name was not set');
+  ok(await p.evaluate(() => document.title) === 'ShotRef', 'the page title changed with the project name');
+  await fileCmd(p, 'save');
+  const f = await downloads(p).wait('.shotref');
+  ok(/^desert-chase-\d{8}-\d{4}\.shotref$/.test(f.name), 'file is called ' + f.name);
+  ok(JSON.parse(f.text()).state.meta.name === 'Desert chase', 'the saved file has no project name');
+  await p.click('#bUndo');
+  ok(await p.evaluate(() => document.querySelector('#projName').value) === '', 'undo did not clear the name field');
+  await p.click('#bRedo');
+  ok(await p.evaluate(() => document.querySelector('#projName').value) === 'Desert chase', 'redo did not bring the name back');
+  noPageErrors(p);
+});
+
+check('top bar: brand mark and wordmark stay, the artifact dot does not come back', async ({ freshContext }) => {
+  const fc = await freshContext({ viewport: { width: 1280, height: 800 } });
+  const p = await fc.open();
+  const r = await p.evaluate(() => { const b = document.querySelector('#top .brand'); const m = b.querySelector('.mark'); return { dot: !!b.querySelector('.dot'), mark: m && m.getBoundingClientRect().width, text: b.textContent.replace(/\s+/g, ' ').trim() }; });
+  ok(!r.dot && r.mark > 10, 'brand mark missing or a dot is back: ' + JSON.stringify(r));
+  ok(/ShotRef/.test(r.text), 'no wordmark: ' + r.text);
+});
+
+check('File menu has New, Open, Save, Save as and Export, and the old top bar buttons are gone', async ({ open }) => {
+  const p = await open();
+  for (const id of ['bNew', 'bOpen', 'bSave', 'bHelp', 'bCopy', 'bSnap', 'modeSeg', 'vpTools']) ok(await p.$('#' + id) === null, '#' + id + ' is still in the page');
+  await p.click('#bFile');
+  const items = await p.evaluate(() => [...document.querySelectorAll('#ctxMenu button')].map(b => b.dataset.cmd + '=' + b.firstElementChild.textContent));
+  for (const w of ['new=New', 'open=Open', 'save=Save', 'saveas=Save as', 'export=Export']) ok(items.some(i => i.startsWith(w)), 'File menu lacks ' + w + ' (has ' + items.join(', ') + ')');
+  await p.keyboard.press('Escape');
+  await fileCmd(p, 'export');
+  ok(await p.evaluate(() => !document.querySelector('#mExport').classList.contains('hidden')), 'File > Export did not open the Export window');
+  await p.keyboard.press('Escape');
+  await fileCmd(p, 'new');
+  ok(await p.evaluate(() => !document.querySelector('#mStart').classList.contains('hidden')), 'File > New did not open the starter sets');
+});
+
+check('gear menu: Advanced toggle, Settings, Quick start and About', async ({ open }) => {
+  const p = await open();
+  await p.click('#bMenu');
+  ok(await p.getAttribute('#ctxMenu [data-cmd="advanced"]', 'aria-checked') === 'false', 'Advanced should start off');
+  await p.click('#ctxMenu [data-cmd="advanced"]');
+  ok(await p.evaluate(() => !document.body.classList.contains('simple')), 'Advanced did not switch Simple mode off');
+  await p.click('#bMenu');
+  ok(await p.getAttribute('#ctxMenu [data-cmd="advanced"]', 'aria-checked') === 'true', 'Advanced should now be checked');
+  await p.keyboard.press('Escape');
+  await gearCmd(p, 'settings');
+  ok(await p.evaluate(() => !document.querySelector('#mSettings').classList.contains('hidden')), 'Settings did not open');
+  await p.keyboard.press('Escape');
+  await gearCmd(p, 'help');
+  ok(await p.evaluate(() => !document.querySelector('#mHelp').classList.contains('hidden')), 'Quick start did not open');
+  await p.keyboard.press('Escape');
+  await gearCmd(p, 'about');
+  const t = await p.evaluate(() => { const m = document.querySelector('#mAbout'); return m.classList.contains('hidden') ? null : m.textContent; });
+  ok(t && /ShotRef/.test(t) && /\d+\.\d+\.\d+/.test(t), 'About box missing or has no version: ' + t);
+  await p.keyboard.press('Escape');
+  await p.click('#bMenu');
+  await p.keyboard.press('Escape');
+  ok(await p.evaluate(() => document.activeElement.id) === 'bMenu', 'focus did not return to the gear button');
+});
+
+check('step bar: 1 Build, 2 Frame, 3 Export, with keys 1 2 3', async ({ open }) => {
+  const p = await open();
+  const on = () => p.evaluate(() => [...document.querySelectorAll('#stepSeg button.on')].map(b => b.dataset.step).join());
+  const labels = await p.evaluate(() => [...document.querySelectorAll('#stepSeg button')].map(b => b.textContent.trim()).join('|'));
+  ok(labels === '1Build|2Frame|3Export', 'step labels: ' + labels);
+  ok(await on() === 'build', 'Build should start active, got ' + await on());
+  await p.focus('#c');
+  await p.keyboard.press('2');
+  await p.waitForTimeout(150);
+  ok(await p.evaluate(() => window.__shotref.view) === 'camera' && await p.evaluate(() => window.__shotref.selected) === 'camera', 'key 2 did not go to Frame');
+  ok(await on() === 'frame', 'Frame should be active, got ' + await on());
+  await p.keyboard.press('1');
+  await p.waitForTimeout(150);
+  ok(await p.evaluate(() => window.__shotref.view) === 'editor', 'key 1 did not go back to the editor');
+  ok(await on() === 'build', 'Build should be active again, got ' + await on());
+  await p.keyboard.press('3');
+  await p.waitForTimeout(150);
+  ok(await p.evaluate(() => !document.querySelector('#mExport').classList.contains('hidden')), 'key 3 did not open Export');
+  ok(await on() === 'export', 'Export should be active, got ' + await on());
+  await p.keyboard.press('Escape');
+  await p.waitForTimeout(150);
+  ok(await on() === 'build', 'closing Export should return to Build, got ' + await on());
+  await p.click('#stepSeg [data-step=frame]');
+  ok(await p.evaluate(() => window.__shotref.view) === 'camera', 'the Frame pill did not open the camera view');
+  await p.click('#stepSeg [data-step=build]');
+  ok(await p.evaluate(() => window.__shotref.view) === 'editor', 'the Build pill did not leave the camera view');
+  const v = await p.evaluate(() => window.__shotref.view);
+  await p.click('#projName'); await p.keyboard.type('123'); await p.keyboard.press('Enter');
+  ok(await p.evaluate(() => window.__shotref.view) === v, 'typing 1 2 3 in the name field changed the step');
+});
+
+check('left panel: Add and Scene tabs with a count, remembered; Props before Shapes; fewer shapes in Simple', async ({ open }) => {
+  const p = await open();
+  const vis = sel => p.evaluate(s => { const e = document.querySelector(s); return !!e && e.getClientRects().length > 0; }, sel);
+  ok(await vis('#addArea') && !(await vis('#outliner')), 'Add tab should show first');
+  ok(await p.evaluate(() => document.querySelector('#sceneCnt').textContent) === '3', 'scene count is ' + await p.evaluate(() => document.querySelector('#sceneCnt').textContent));
+  const cats = await p.evaluate(() => [...document.querySelectorAll('#addArea .addcat')].map(e => e.textContent));
+  ok(cats.indexOf('Props') >= 0 && cats.indexOf('Props') < cats.indexOf('Shapes'), 'Props should come before Shapes: ' + cats.join());
+  const shapes = () => p.evaluate(() => { const c = [...document.querySelectorAll('#addArea .addcat')].find(e => e.textContent === 'Shapes'); return [...c.nextElementSibling.querySelectorAll('button')].map(b => b.textContent.trim()); });
+  const s1 = await shapes();
+  ok(s1.length === 6 && s1.includes('More shapes') && !s1.includes('Sphere'), 'Simple shapes: ' + s1.join());
+  await p.click('#addArea .tile.more');
+  const s2 = await shapes();
+  ok(s2.includes('Sphere') && s2.includes('Fewer'), 'More shapes did not show every shape: ' + s2.join());
+  await p.click('#leftTabs [data-lt=scene]');
+  ok(await vis('#outliner') && !(await vis('#addArea')), 'Scene tab did not show the list');
+  await p.reload();
+  await p.waitForFunction(() => window.__shotref && window.__shotref.state);
+  ok(await vis('#outliner'), 'the Scene tab was not remembered');
+  await p.click('#leftTabs [data-lt=add]');
+  await goAdvanced(p);
+  const s3 = await shapes();
+  ok(s3.includes('Sphere') && !s3.includes('More shapes'), 'Advanced should list every shape: ' + s3.join());
+});
+
+check('viewport has one icon toolbar with tooltips; Simple hides the arrows', async ({ open }) => {
+  const p = await open();
+  ok(await p.$('#vpTools') === null, 'the old tool group is still there');
+  const info = await p.evaluate(() => [...document.querySelectorAll('#vpRight .ib')].map(b => ({ id: b.id || b.dataset.g, tip: b.dataset.tip, shown: b.getClientRects().length > 0 })));
+  ok(info.length === 8 && info.every(i => i.tip), 'expected 8 icon buttons with tooltips: ' + JSON.stringify(info));
+  ok(info.filter(i => i.shown).map(i => i.id).join() === 'bSnapGrid,bFocus,bGrid,bPip,bCamHere', 'Simple should show Snap, Zoom to, Grid, Preview, Camera here: ' + info.filter(i => i.shown).map(i => i.id));
+  await p.hover('#bFocus');
+  const tip = await p.evaluate(() => getComputedStyle(document.querySelector('#bFocus'), '::after').content);
+  ok(/Zoom to the selection/.test(tip), 'no tooltip on hover: ' + tip);
+  await goAdvanced(p);
+  ok(await p.evaluate(() => [...document.querySelectorAll('#vpRight [data-g]')].every(b => b.getClientRects().length > 0)), 'Advanced should show Move, Rotate, Scale');
+  await p.click('#vpRight [data-g=rotate]');
+  ok(await p.evaluate(() => document.querySelector('#vpRight [data-g=rotate]').classList.contains('on')), 'Rotate button did not light up');
+  await p.keyboard.press('c');
+  ok(await p.evaluate(() => [...document.querySelectorAll('#vpRight [data-g], #bSnapGrid, #bFocus, #bPip, #bCamHere')].every(b => b.getClientRects().length === 0)), 'Camera view should hide the editor tools');
+});
+
+check('timeline: Simple hides frame count, Remove key and FPS; Tracks collapse', async ({ open }) => {
+  const p = await open();
+  const shown = sel => p.evaluate(s => document.querySelector(s).getClientRects().length > 0, sel);
+  ok(!(await shown('#tframe')) && !(await shown('#bUnkey')) && !(await shown('#inFps')), 'Simple mode should hide the frame counter, Remove key and FPS');
+  ok(await p.evaluate(() => document.querySelector('#bKey').textContent.trim()) === '◆ Key', 'key button text');
+  ok(await p.evaluate(() => document.querySelector('#tl').classList.contains('closed')) && !(await shown('#tlBody')), 'tracks should be closed while nothing is keyed');
+  ok(await p.evaluate(() => document.querySelector('#bTracks').textContent) === 'Tracks ▴', 'closed label');
+  await p.click('#bTracks');
+  ok(await shown('#tlBody') && await p.evaluate(() => document.querySelector('#bTracks').textContent) === 'Tracks ▾', 'Tracks did not open by hand');
+  await p.click('#bTracks');
+  ok(!(await shown('#tlBody')), 'Tracks did not close by hand');
+  await goAdvanced(p);
+  ok(await shown('#tframe') && await shown('#bUnkey') && await shown('#inFps'), 'Advanced should show them');
+});
+
+check('timeline: tracks open by themselves once something is keyed', async ({ open }) => {
+  const p = await open();
+  await p.evaluate(() => window.__shotref.applyMove('dollyIn'));
+  await p.waitForTimeout(300);
+  ok(await p.evaluate(() => document.querySelector('#tlBody').getClientRects().length > 0), 'tracks stayed closed after a camera move was keyed');
+});
+
+for (const W of [1100, 1280, 1440]) {
+  check('top bar fits without overlap at ' + W + ' px', async ({ freshContext }) => {
+    const fc = await freshContext({ viewport: { width: W, height: 800 } });
+    const p = await fc.open();
+    await p.waitForTimeout(200);
+    const r = await p.evaluate(() => {
+      const top = document.querySelector('#top'), out = [];
+      for (const e of top.children) { const b = e.getBoundingClientRect(); if (b.width > 0 && e.getClientRects().length && !e.classList.contains('spacer')) out.push({ id: e.id || e.className, l: b.left, r: b.right }); }
+      return { items: out, sw: top.scrollWidth, cw: top.clientWidth, vw: innerWidth };
+    });
+    r.items.sort((a, b) => a.l - b.l);
+    for (let i = 1; i < r.items.length; i++) ok(r.items[i].l >= r.items[i - 1].r - 0.5, 'overlap: ' + JSON.stringify(r.items[i - 1]) + ' and ' + JSON.stringify(r.items[i]));
+    ok(r.items[r.items.length - 1].r <= r.vw + 0.5 && r.items[0].l >= 0 && r.sw <= r.cw + 1, 'the top bar overflows: ' + JSON.stringify(r));
+    const st = await p.evaluate(() => { const s = document.querySelector('#stepSeg').getBoundingClientRect(); return { sc: (s.left + s.right) / 2, w: innerWidth }; });
+    ok(Math.abs(st.sc - st.w / 2) < 120, 'step bar is not near the centre: ' + JSON.stringify(st));
+  });
+}
+
+check('camera view: toolbar and camera buttons do not overlap at 1100 px', async ({ freshContext }) => {
+  const fc = await freshContext({ viewport: { width: 1100, height: 800 } });
+  const p = await fc.open();
+  await p.keyboard.press('c');
+  await p.waitForTimeout(200);
+  const r = await p.evaluate(() => { const a = document.querySelector('#camBar').getBoundingClientRect(), b = document.querySelector('#vpRight').getBoundingClientRect(); return { camR: a.right, vpL: b.left, camT: a.top, vpB: b.bottom, vpT: b.top, camB: a.bottom }; });
+  ok(r.camR <= r.vpL || r.camB <= r.vpT || r.vpB <= r.camT, 'camera bar and icon toolbar overlap: ' + JSON.stringify(r));
 });
 
 main().catch(e => { console.error(e && e.stack || e); process.exit(2); });
