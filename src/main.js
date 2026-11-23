@@ -84,7 +84,7 @@ const isTyping = () => { const a = document.activeElement; return !!a && (a.tagN
 const isField = el => !!el && (el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA');
 
 /* exports and downloads go through the platform layer (native dialog in the desktop app, downloads capability on claude.ai, plain link elsewhere) */
-const SAVE_KINDS = { png: ['PNG image', ['png']], mp4: ['MP4 video', ['mp4']], webm: ['WebM video', ['webm']], shotref: ['ShotRef project', ['shotref']] };
+const SAVE_KINDS = { png: ['PNG image', ['png']], mp4: ['MP4 video', ['mp4']], webm: ['WebM video', ['webm']], shotref: ['ShotRef project', ['shotref']], zip: ['Zip file', ['zip']] };
 async function saveFile(filename, blob) {
   const k = SAVE_KINDS[(filename.split('.').pop() || '').toLowerCase()];
   const r = await platform.saveBlob(filename, blob, { filters: k ? [{ name: k[0], extensions: k[1] }] : [] });
@@ -477,7 +477,7 @@ function writeAutosave() {
   if (autosaveOff) return;
   if (!autosaveReady) { autosaveWaiting = true; return; }
   const ids = [...usedAssetIds(state)].filter(id => assets[id]);
-  const put = a => localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({ state, assets: a, assetIds: ids, v: FORMAT_VERSION, dirty: platform.isDirty() })); /* dirty: unsaved changes, so a restored session keeps its "unsaved" mark */
+  const put = a => localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({ state: stateForSave(), assets: a, assetIds: ids, v: FORMAT_VERSION, dirty: platform.isDirty() })); /* dirty: unsaved changes, so a restored session keeps its "unsaved" mark */
   if (idb.ok !== false) {
     try { put({}); } catch (e) { console.error('ShotRef: could not autosave', e); }
     if (idb.ok) idbSync(ids);
@@ -1713,7 +1713,7 @@ function frame(now) {
     renderer.shadowMap.needsUpdate = true;
     draw();
   }
-  if (uiDirty) { uiDirty = false; rebuilds++; renderOutliner(); renderTimeline(); }
+  if (uiDirty) { uiDirty = false; rebuilds++; renderOutliner(); renderTimeline(); renderShotBar(); }
   if (propsDirty) { propsDirty = false; renderProps(); }
   if (go) tickUI();
 }
@@ -1871,7 +1871,7 @@ const groupMembers = id => { const o = getObj(id); return o && o.grp ? state.obj
 const groupName = gid => (state.groups && state.groups[gid] && state.groups[gid].name) || 'Group';
 /* mode: undefined = this item (and its whole group), 'single' = just this one, 'toggle' = add or remove (Shift/Ctrl-click) */
 function select(id, mode) {
-  const o = id && id !== 'camera' && id !== 'target' && id !== 'sun' ? getObj(id) : null;
+  const o = id && id !== 'camera' && id !== 'target' && id !== 'sun' && id !== 'export' ? getObj(id) : null;
   if (o) {
     const set = mode === 'single' ? [id] : groupMembers(id);
     if (mode === 'toggle') {
@@ -1886,9 +1886,9 @@ function select(id, mode) {
 /* after undo, delete, open: forget ids that are gone and keep `selected` and `selIds` in step */
 function sanitizeSel() {
   selIds = selIds.filter(id => getObj(id));
-  if (selected && selected !== 'camera' && selected !== 'target' && selected !== 'sun' && !getObj(selected)) selected = selIds[selIds.length - 1] || null;
+  if (selected && selected !== 'camera' && selected !== 'target' && selected !== 'sun' && selected !== 'export' && !getObj(selected)) selected = selIds[selIds.length - 1] || null;
   if (getObj(selected) && !selIds.includes(selected)) selIds.push(selected);
-  if (!getObj(selected) && selected !== 'camera' && selected !== 'target' && selected !== 'sun') selected = null;
+  if (!getObj(selected) && selected !== 'camera' && selected !== 'target' && selected !== 'sun' && selected !== 'export') selected = null;
 }
 /* a group left with fewer than two members is dissolved; groups with nobody in them go */
 function pruneGroups() {
@@ -2002,6 +2002,7 @@ function renderProps() {
   live.length = 0;
   const p = $('#props'); p.innerHTML = '';
   /* in Camera view with nothing selected, show the camera tools; the selection stays empty (U3) */
+  if (selected === 'export') return propsExport(p);
   if (selected === 'sun') return propsSun(p);
   if (selected === 'camera' || selected === 'target' || (view === 'camera' && !selected)) return propsCamera(p);
   const o = selected && getObj(selected);
@@ -2484,7 +2485,7 @@ function actDrag(tag, o, act, laneEl) {
 function selKeysTarget() {
   if (view === 'camera') return 'camera';
   if (selected === 'target') return 'camera';
-  if (selected === 'sun') return null;
+  if (selected === 'sun' || selected === 'export') return null;
   return selected || (view === 'camera' ? 'camera' : null);
 }
 function addKeySel() {
@@ -2568,6 +2569,7 @@ function tickUI() {
     const nav = view === 'top' ? 'Drag empty space: pan · Scroll: zoom' : 'Drag empty space: orbit · Right-drag: pan · Scroll: zoom';
     putHTML(hint, placing || pathMode ? '<kbd>Esc</kbd> cancel' + (pathMode ? ' · <kbd>Enter</kbd> done · right-click removes the last point' : '')
       : isMulti() ? 'Drag any of them to move them all · drag the orange ring to turn them together · <kbd>Shift</kbd> click adds or removes · <kbd>Ctrl</kbd><kbd>G</kbd> group · <kbd>Ctrl</kbd><kbd>L</kbd> lock'
+      : selected === 'export' ? 'Choose what to export in the panel on the right'
       : selected === 'sun' ? 'Drag the yellow sun to turn the light and the shadows · right-click it for light-from presets · or use the panel'
       : selected && selected !== 'camera' && selected !== 'target'
         ? 'Drag it on the floor to move · drag the orange ring to turn · right-click for more · <kbd>K</kbd> key · <kbd>Del</kbd> delete'
@@ -2581,14 +2583,14 @@ function tickUI() {
   syncTracks();
 }
 /* the step bar: 1 Build, 2 Frame, 3 Export. The active pill follows what you are doing. */
-const currentStep = () => openModals().some(m => m.id === 'mExport') ? 'export' : view === 'camera' || selected === 'camera' || selected === 'target' ? 'frame' : 'build';
+const currentStep = () => selected === 'export' || openModals().some(m => m.id === 'mExport') ? 'export' : view === 'camera' || selected === 'camera' || selected === 'target' ? 'frame' : 'build';
 function goStep(s) {
   if (exporting || rec) return;
   if (placing) cancelPlacing();
   if (pathMode) cancelPath();
-  if (s === 'build') { if (view === 'camera') setView(lastWorkView); if (selected === 'camera' || selected === 'target') select(null); setLeftTab('add'); }
+  if (s === 'build') { if (view === 'camera') setView(lastWorkView); if (selected === 'camera' || selected === 'target' || selected === 'export') select(null); setLeftTab('add'); }
   else if (s === 'frame') { setView('camera'); select('camera'); }
-  else if (s === 'export') openModal('mExport'); /* the Export window stays until the Export panel is ported (batch 9) */
+  else if (s === 'export') { if (view !== 'camera') setView('camera'); select('export'); }
   requestRender();
 }
 /* timeline tracks: open while something is keyed, unless you opened or closed them by hand */
@@ -3422,7 +3424,7 @@ function replaceProject(newState, newAssets = {}, label) {
   try {
     for (const [id, a] of Object.entries(newAssets)) if (assets[id] && assets[id].b64 !== (a && a.b64)) dropModel(id);
     assets = { ...assets, ...newAssets };
-    state = newState; selected = null; selIds = []; setTime(0); migrateAll();
+    state = newState; selected = null; selIds = []; promptEdit = null; shotEditId = null; setTime(0); migrateAll();
     platform.startDoc(); /* Open, New and starters are a new document: Save must not reuse the previous file */
     restore(snapshot()); pushHistory(); resetEditorCam();
     if (label) toast(label);
@@ -3528,7 +3530,7 @@ async function doSaveProject(saveAs) {
   /* only the files this scene uses (memory also keeps older ones for undo) */
   const used = {};
   for (const id of usedAssetIds(state)) if (assets[id]) used[id] = assets[id];
-  const data = JSON.stringify({ app: 'ShotRef', version: FORMAT_VERSION, state, assets: used });
+  const data = JSON.stringify({ app: 'ShotRef', version: FORMAT_VERSION, state: stateForSave(), assets: used });
   const r = await platform.saveProject(data, { saveAs: saveAs === true, name: `${projectSlug() || 'shotref'}-${stamp()}.shotref` });
   if (r.ok) { toast('Saved ' + (r.name || 'project')); autosave(); } /* the autosave records that nothing is unsaved now */
   else if (r.canceled) toast('Save cancelled');
@@ -3619,6 +3621,367 @@ async function importImage(file) {
   o.opts.aspect = r4(aspect); o.name = nextName(file.name.replace(/\.[^.]+$/, '')); syncScene(); changed(false, true); autosave(); if (placing === o.id) startPlacing(o.id);
 }
 
+/* ============================== shots ============================== */
+/* A project has one or more shots: each is its own camera and length on the same scene and action.
+   state.camera and state.settings.duration always belong to the shot being worked on, so everything else keeps working.
+   state.shots[] holds every shot's copy (the active one is brought up to date by syncShot before a save, a snapshot or a switch).
+   A project that never made a second shot has no state.shots at all; the bar then shows one "Shot 1" chip. */
+const hasShots = () => !!(state.shots && state.shots.length);
+function ensureShots() {
+  if (!hasShots()) { const id = uid(); state.shots = [{ id, name: 'Shot 1', camera: clone(state.camera), duration: state.settings.duration }]; state.shotId = id; }
+  else if (!state.shots.some(s => s.id === state.shotId)) state.shotId = state.shots[0].id;
+  return state.shots;
+}
+const activeShot = () => hasShots() ? state.shots.find(s => s.id === state.shotId) || state.shots[0] : null;
+/* the project as it is written to a file or an autosave: the active shot's own copy matches the live camera (the state itself is left alone) */
+function stateForSave() {
+  if (!hasShots()) return state;
+  return { ...state, shots: state.shots.map(s => s.id === state.shotId ? { ...s, camera: state.camera, duration: state.settings.duration } : s) };
+}
+function syncShot() { const s = activeShot(); if (s) { s.camera = clone(state.camera); s.duration = state.settings.duration; } }
+/* the active shot's name, for file names and the summary: only when there is more than one */
+const shotName = () => state.shots && state.shots.length > 1 ? activeShot().name : null;
+/* makes `s` the live camera and length. No history step: the callers make that. */
+function loadShot(s) {
+  state.shotId = s.id; state.camera = clone(s.camera); state.settings.duration = s.duration;
+  setTime(clamp(snapT(Math.min(T, lastT())), 0, lastT()));
+  editRev++; uiDirty = true; propsDirty = true; pathRev = -1; requestRender();
+}
+const realShotId = id => id === '_' ? ensureShots()[0].id : id;
+function switchShot(id) {
+  if (exporting || rec) return;
+  id = realShotId(id); if (id === state.shotId) return;
+  const s = (state.shots || []).find(x => x.id === id); if (!s) return;
+  syncShot(); loadShot(s); changed(true, true); syncTopUI();
+}
+function newShotName() {
+  let n = state.shots.length + 1; const used = new Set(state.shots.map(s => s.name));
+  while (used.has('Shot ' + n)) n++;
+  return 'Shot ' + n;
+}
+/* a new shot starts from the framing at the playhead with no keys; a duplicate keeps the same move */
+function newShot(dup) {
+  if (exporting || rec) return;
+  ensureShots(); syncShot();
+  const cam = clone(state.camera), cur = activeShot();
+  if (!dup) { cam.base = clone(evalCamRaw(T)); cam.keys = []; }
+  const s = { id: uid(), name: dup ? cur.name + ' copy' : newShotName(), camera: cam, duration: state.settings.duration };
+  state.shots.splice(state.shots.indexOf(cur) + 1, 0, s);
+  loadShot(s); changed(true, true); syncTopUI();
+  toast(dup ? s.name + ' added' : s.name + ' starts from the current framing. Frame it and set its move.', 4000);
+}
+function deleteShot(id) {
+  if (exporting || rec) return;
+  ensureShots(); id = realShotId(id);
+  if (state.shots.length < 2) { toast('A project needs at least one shot'); return; }
+  const i = state.shots.findIndex(s => s.id === id); if (i < 0) return;
+  const name = state.shots[i].name;
+  if (id === state.shotId) { state.shots.splice(i, 1); loadShot(state.shots[Math.max(0, i - 1)]); }
+  else { syncShot(); state.shots.splice(i, 1); }
+  changed(true, true); syncTopUI(); toast(name + ' deleted. Ctrl+Z brings it back.', 4000);
+}
+function moveShot(id, dir) {
+  ensureShots(); id = realShotId(id);
+  const l = state.shots, i = l.findIndex(s => s.id === id), j = i + dir;
+  if (i < 0 || j < 0 || j >= l.length) return;
+  syncShot(); [l[i], l[j]] = [l[j], l[i]]; changed(true, true);
+}
+let shotEditId = null, shotBarKey = '';
+function renameShot(id) { shotEditId = realShotId(id); shotBarKey = ''; uiDirty = true; requestRender(); }
+const fmtLen = n => (n % 1 ? n.toFixed(1) : n) + ' s';
+/* the chips under the viewport; rebuilt only when what they show changes */
+function renderShotBar() {
+  const real = hasShots(), list = real ? state.shots : [{ id: '_', name: 'Shot 1', duration: state.settings.duration }], act = real ? activeShot().id : '_';
+  const key = JSON.stringify([list.map(s => [s.id, s.name, s.id === act ? state.settings.duration : s.duration]), act, shotEditId]);
+  if (key === shotBarKey) return;
+  shotBarKey = key;
+  const bar = $('#shotBar'); bar.innerHTML = '';
+  bar.append(h('span', { class: 'lbl' }, 'Shots'));
+  for (const s of list) {
+    const on = s.id === act, len = fmtLen(on ? state.settings.duration : s.duration);
+    if (s.id === shotEditId) {
+      const inp = h('input', { type: 'text', value: s.name, maxlength: '40', 'aria-label': 'Shot name' }); let fin = false;
+      const done = commit => {
+        if (fin) return; fin = true; shotEditId = null; shotBarKey = ''; uiDirty = true;
+        const v = inp.value.trim().slice(0, 40);
+        if (commit && v && v !== s.name) { const t = realShotId(s.id), sh = ensureShots().find(x => x.id === t); if (sh) { sh.name = v; changed(true, true); } }
+        requestRender();
+      };
+      inp.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') done(true); else if (e.key === 'Escape') done(false); });
+      inp.addEventListener('blur', () => done(true));
+      bar.append(inp); setTimeout(() => { inp.focus(); inp.select(); }, 0);
+      continue;
+    }
+    const chip = h('button', { class: 'shotchip' + (on ? ' on' : ''), title: on ? 'This shot. Double-click to rename, right-click for more.' : 'Switch to ' + s.name, 'aria-pressed': String(on), onclick: () => switchShot(s.id), ondblclick: () => renameShot(s.id) }, s.name, h('small', null, len));
+    chip.addEventListener('contextmenu', e => {
+      e.preventDefault();
+      showMenu(e.clientX, e.clientY, [{ head: s.name }, { id: 'rename', label: 'Rename…', fn: () => renameShot(s.id) },
+        { id: 'dup', label: 'Duplicate (same move)', fn: () => { switchShot(s.id); newShot(true); } },
+        { id: 'left', label: 'Move left', fn: () => moveShot(s.id, -1), disabled: list[0] === s }, { id: 'right', label: 'Move right', fn: () => moveShot(s.id, 1), disabled: list[list.length - 1] === s },
+        '-', { id: 'del', label: 'Delete shot', danger: true, fn: () => deleteShot(s.id), disabled: list.length < 2 }]);
+    });
+    bar.append(chip);
+  }
+  bar.append(h('button', { class: 'shotchip add', onclick: () => newShot(false), title: 'A new camera setup on the same scene and action, starting from the current framing' }, '+ New shot'));
+  bar.append(h('div', { class: 'sright' }, list.length > 1 ? h('button', { id: 'bSheet', onclick: makeContactSheet, title: 'First and last frame of every shot on one page' }, 'Contact sheet') : null));
+}
+
+/* ============================== the prompt for the AI model ============================== */
+/* Written from the scene in plain words: shot size, lens and angle, the camera move, who does what, the light.
+   The person can edit it freely; their words are kept in promptEdit (not saved) until they press Rewrite from scene. */
+const COLOR_NAMES = [['black', '#1d1d1f'], ['white', '#f2f2f2'], ['grey', '#8a8e94'], ['dark grey', '#45484e'], ['red', '#c0392b'], ['dark red', '#7a1f22'], ['orange', '#e67e22'], ['yellow', '#e3c034'], ['green', '#2e8b57'], ['dark green', '#2f5130'], ['teal', '#16a085'], ['blue', '#3d6fd8'], ['navy', '#25335c'], ['light blue', '#8fbbe8'], ['purple', '#7d3c98'], ['pink', '#d47a9a'], ['brown', '#6b4a32'], ['beige', '#d9c7a3'], ['tan', '#b88b5a']];
+function colorName(hex) {
+  const c = new THREE.Color(hex); let best = 'grey', bd = Infinity;
+  for (const [name, v] of COLOR_NAMES) { const o = new THREE.Color(v), d = (c.r - o.r) ** 2 + (c.g - o.g) ** 2 + (c.b - o.b) ** 2; if (d < bd) { bd = d; best = name; } }
+  return best;
+}
+const kindLabel = o => o.type === 'person' ? o.opts.body || 'man' : ((CATALOG[o.type] || {}).label || o.type).toLowerCase();
+function describeObj(o) {
+  if (o.type === 'person') {
+    const b = kindLabel(o), e = `${b === 'man' ? 'a man' : b === 'woman' ? 'a woman' : 'a child'} in a ${colorName(o.color)} top`;
+    return /^(Man|Woman|Child|Person) \d+$/.test(o.name) ? e : `${o.name} (${e})`;
+  }
+  if (o.type === 'car') return `a ${colorName(o.color)} ${o.opts.convertible ? 'convertible' : 'car'}`;
+  return 'the ' + kindLabel(o);
+}
+const theOf = s => s.replace(/^an? /, 'the ');
+const DOES = { stand: 'stands', walk: 'walks', run: 'runs', sit: 'sits', crouch: 'crouches', wave: 'waves', point: 'points', talk: 'talks, gesturing', cheer: 'cheers with arms raised', phone: 'talks on the phone', arms: 'holds their arms out', look: 'looks around' };
+const THEN_DOES = { stand: 'stops and stands', walk: 'starts walking', run: 'breaks into a run', sit: 'sits down', crouch: 'crouches down', wave: 'waves', point: 'points', talk: 'starts talking', cheer: 'cheers', phone: 'answers the phone', arms: 'spreads their arms', look: 'looks around' };
+const MOVE_WORDS = { 'static camera': 'stays locked off (static camera)', 'dolly in': 'dollies in', 'dolly out': 'dollies out', 'orbit left': 'orbits left around the subject', 'orbit right': 'orbits right around the subject', 'truck left': 'trucks left', 'truck right': 'trucks right', 'crane up': 'cranes up', 'crane down': 'cranes down', 'pan left': 'pans left', 'pan right': 'pans right', 'tilt up': 'tilts up', 'tilt down': 'tilts down', 'zoom in': 'zooms in', 'zoom out': 'zooms out', 'dolly zoom': 'does a dolly zoom (vertigo effect)', 'free / recorded move': 'moves freely like an operated camera', 'subtle move': 'drifts subtly' };
+/* where a world point lands in the frame at time t: x and y from -1 to 1, in front of the lens or not, and whether it is in shot */
+function frameOf(pt, t) {
+  const c = evalCam(t), cam = new THREE.PerspectiveCamera();
+  cam.aspect = arOf(state.settings.aspect); cam.filmGauge = 36; cam.setFocalLength(c.f);
+  cam.position.fromArray(c.p); cam.lookAt(c.tg[0], c.tg[1], c.tg[2]); cam.updateMatrixWorld(); cam.updateProjectionMatrix();
+  const v = new THREE.Vector3().fromArray(pt).project(cam);
+  return { x: v.x, y: v.y, inFront: v.z < 1, inFrame: v.z < 1 && Math.abs(v.x) < 1.05 && Math.abs(v.y) < 1.1 };
+}
+/* the middle of a person or thing, for "is it in shot" */
+function bodyPoint(o, t) {
+  const tr = shownObj(o, t), v = views.get(o.id), k = o.type === 'person' ? (o.opts.height || 1.75) * 0.55 : v && v.aimY != null ? v.aimY : 0.5;
+  return [tr.p[0], tr.p[1] + k * tr.s[1], tr.p[2]];
+}
+const placeWord = x => x < -0.35 ? 'the left of frame' : x > 0.35 ? 'the right of frame' : 'the centre of frame';
+/* "from the left of frame to the right of frame, toward the camera, into frame" */
+function travelWords(o, t0, t1) {
+  const a = shownObj(o, t0).p, b = shownObj(o, t1).p, fa = frameOf(bodyPoint(o, t0), t0), fb = frameOf(bodyPoint(o, t1), t1), out = [];
+  const c = evalCam(t0), fwd = new THREE.Vector3(c.tg[0] - c.p[0], 0, c.tg[2] - c.p[2]).normalize(), right = new THREE.Vector3(-fwd.z, 0, fwd.x), d = new THREE.Vector3(b[0] - a[0], 0, b[2] - a[2]);
+  const side = d.dot(right), depth = d.dot(fwd);
+  if (Math.abs(side) > 0.6 && Math.abs(side) > Math.abs(depth) * 0.5) out.push(Math.abs(fb.x - fa.x) > 0.4 && placeWord(fa.x) !== placeWord(fb.x) ? `from ${placeWord(fa.x)} to ${placeWord(fb.x)}` : side > 0 ? 'from left to right' : 'from right to left');
+  if (Math.abs(depth) > 0.6) out.push(depth < 0 ? 'toward the camera' : 'away from the camera');
+  if (!fa.inFrame && fb.inFrame) out.push('into frame'); else if (fa.inFrame && !fb.inFrame) out.push('out of frame');
+  return out.join(', ') || 'a short way';
+}
+const wrapNear = (n, ref) => { while (n - ref > 180) n -= 360; while (n - ref < -180) n += 360; return n; };
+/* the shot description at time t (the camera and people are posed there for a moment) */
+function atTime(t, fn) { applyAll(t); try { return fn(); } finally { applyAll(T); } }
+const pluralWord = (label, n) => {
+  if (n === 1) return (/^[aeiou]/.test(label) ? 'an ' : 'a ') + label;
+  const words = ['', 'a', 'two', 'three', 'four', 'five', 'six'];
+  return (words[n] || n) + ' ' + (label === 'cactus' ? 'cacti' : label.endsWith('s') ? label : label.replace(/y$/, 'ie') + 's');
+};
+function writePrompt() {
+  const st = state.settings, cam = state.camera, end = lastT(), out = [];
+  const first = atTime(0, describeShot).split(' · '), c0 = evalCam(0), mm = Math.round(c0.f);
+  const lens = mm < 20 ? 'ultra-wide' : mm < 40 ? 'wide' : mm < 70 ? 'normal' : 'telephoto';
+  const sizes = first.filter(x => /shot|close|wide/i.test(x)).map(x => x.toLowerCase());
+  const angle = first.find(x => /angle|overhead|eye level/.test(x)) || 'eye level', subj = subject();
+  out.push(`${sizes[0] ? sizes[0][0].toUpperCase() + sizes[0].slice(1) : 'Shot'}${subj ? ' of ' + theOf(describeObj(subj)) : ''}, ${mm}mm ${lens} lens, ${angle}${Math.abs(c0.roll || 0) > 3 ? ', dutch angle' : ''}.`);
+  const mv = atTime(0, detectMove);
+  let line = 'The camera ' + mv.title.split(' + ').map(part => { const x = part.toLowerCase(); return x.startsWith('tracking ') && subj ? 'tracks with ' + theOf(describeObj(subj)) : MOVE_WORDS[x] || x; }).join(' and ');
+  if (mv.title !== 'Static camera' && cam.keys.length > 1) {
+    const speed = dist3(evalCam(0).p, evalCam(end).p) / Math.max(0.5, end);
+    line += speed < 0.35 ? ' slowly' : speed > 2 ? ' quickly' : '';
+    line += cam.feel === 'constant' ? ' at a constant speed' : cam.feel === 'strong' ? ', easing in and out' : ', with a gentle ease';
+    const endSize = atTime(end, describeShot).split(' · ').find(x => /shot|close|wide/i.test(x));
+    if (endSize && sizes[0] && endSize.toLowerCase() !== sizes[0]) line += `, ending on a ${endSize.toLowerCase()}`;
+  }
+  if (mountObj()) line += `, mounted on ${theOf(describeObj(mountObj()))}`;
+  if ((cam.shake || 0) > 0.05) line += ', handheld with a slight shake';
+  out.push(line + '.');
+  if (ensureDof().on) out.push('Shallow depth of field' + (ensureDof().fstop <= 2 ? ', strong background blur.' : '.'));
+  for (const o of state.objects) {
+    if (o.visible === false || (o.type !== 'person' && o.type !== 'car')) continue;
+    const a = frameOf(bodyPoint(o, 0), 0), b = frameOf(bodyPoint(o, end), end);
+    if (!a.inFrame && !b.inFrame && !(o.keys.length > 1) && !(o.acts && o.acts.length)) continue;
+    const d = describeObj(o), par = parentOf(o);
+    let s = d[0].toUpperCase() + d.slice(1);
+    const moves = o.keys.length > 1 && dist3(evalLocal(o, 0).p, evalLocal(o, end).p) > 0.4;
+    if (o.type === 'car') s += moves ? ` drives ${travelWords(o, 0, end)}` : ' is parked' + (a.inFrame ? ' in ' + placeWord(a.x) : '');
+    else {
+      const pose = o.opts.pose || 'stand';
+      if (par) s += ` rides in ${theOf(describeObj(par))}`;
+      else if (moves) {
+        const L = o.keys[0].t, G = o.keys[o.keys.length - 1].t;
+        s += ` ${DOES[poseAt(o, (L + G) / 2)] === 'runs' ? 'runs' : 'walks'} ${travelWords(o, L, G)}`;
+        if (L > 0.3) s = s.replace(/ (walks|runs) /, ` waits, then at ${L.toFixed(1)} s $1 `);
+      } else s += ` ${DOES[pose] || 'stands'}` + (a.inFrame ? ' in ' + placeWord(a.x) : ' just out of frame');
+      for (const act of o.acts || []) s += `, then at ${act.t.toFixed(1)} s ${THEN_DOES[act.pose] || act.pose}`;
+      if (o.opts.lookAt) {
+        const tgt = o.opts.lookAt === 'camera' ? null : getObj(o.opts.lookAt);
+        s += o.opts.lookAt === 'camera' ? ', looking into the camera' : tgt ? `, looking at ${theOf(describeObj(tgt))}` : '';
+      } else if (!moves && !par) {
+        const me = shownObj(o, 0), yaw = me.r[1];
+        const near = persons().filter(q => q !== o).map(q => ({ q, p: shownObj(q, 0).p })).filter(q => Math.hypot(q.p[0] - me.p[0], q.p[2] - me.p[2]) < 3.5).find(q => Math.abs(wrapNear(Math.atan2(q.p[0] - me.p[0], q.p[2] - me.p[2]) * R2D, yaw) - yaw) < 35);
+        if (near) s += `, facing ${theOf(describeObj(near.q))}`;
+      }
+    }
+    out.push(s + '.');
+  }
+  const counts = {};
+  for (const o of state.objects) {
+    if (o.visible === false || ['person', 'car', 'mark', 'plane', 'image', 'model'].includes(o.type) || (!frameOf(bodyPoint(o, 0), 0).inFrame && !frameOf(bodyPoint(o, end), end).inFrame)) continue;
+    const k = kindLabel(o); counts[k] = (counts[k] || 0) + 1;
+  }
+  const props = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 7).map(([k, n]) => pluralWord(k, n));
+  if (props.length) out.push('In the scene: ' + props.join(', ') + '.');
+  if (state.plate && plateAsset()) out.push('The setting matches the reference location photo.');
+  const az = Math.atan2(c0.p[0] - c0.tg[0], c0.p[2] - c0.tg[2]) * R2D, rel = ((st.sunAz - az) % 360 + 540) % 360 - 180;
+  const dir = Math.abs(rel) < 45 ? 'front light' : Math.abs(rel) > 135 ? 'backlight' : `side light from the ${rel > 0 ? 'right' : 'left'}`;
+  const light = st.env === 'night' ? 'Night' : st.env === 'overcast' ? 'Overcast, soft light' : st.env === 'studio' ? 'Studio lighting' : st.sunEl < 8 ? 'Sun on the horizon' : st.sunEl < 18 ? 'Golden hour' : st.sunEl < 40 ? 'Low sun' : 'Daylight, high sun';
+  out.push(`${light}, ${dir}${st.shadows === false ? ', no hard shadows' : st.sunEl < 18 ? ', long shadows' : ''}.`);
+  out.push(`${st.aspect}, ${st.duration % 1 ? st.duration.toFixed(1) : st.duration} seconds.`);
+  return out.join(' ');
+}
+/* the written prompt is worked out again only after an edit */
+let promptEdit = null, promptCache = { rev: -1, text: '' };
+function promptText() {
+  if (promptCache.rev !== editRev) promptCache = { rev: editRev, text: writePrompt() };
+  return promptCache.text;
+}
+const currentPrompt = () => promptEdit != null ? promptEdit : promptText();
+async function copyPromptText(text, box) {
+  try { await navigator.clipboard.writeText(text); toast('Prompt copied. Paste it next to the reference clip.'); return; } catch (e) { }
+  if (box) { box.focus(); box.select(); try { if (document.execCommand('copy')) { toast('Prompt copied'); return; } } catch (e) { } }
+  toast('Select the text and press Ctrl+C to copy it', 4000);
+}
+
+/* ============================== export panel ============================== */
+function propsExport(p) {
+  const s = state.settings, { w, h: hh } = exportSize(), sn = shotName();
+  p.append(sec('Export',
+    h('p', { class: 'note keep', style: 'margin:0 0 8px;font-size:12.5px;color:#cfd3d8' }, `${w}×${hh} · ${s.fps} fps · ${s.duration.toFixed(1)} s` + (sn ? ' · ' + sn : '')),
+    selectRow('Aspect', ASPECTS.map(a => [a[0], a[2]]), () => s.aspect, v => { s.aspect = v; changed(true, true); syncTopUI(); }),
+    selectRow('Size', SIZES.map(([v, l]) => [String(v), l]), () => String(s.size), v => { s.size = +v; changed(true, true); }),
+    h('div', { class: 'lbl', style: 'width:auto;margin:8px 0 5px' }, 'Render style'),
+    h('div', { class: 'stylechips' }, STYLES.map(([k, l, d, bg]) => h('button', { class: s.style === k ? 'on' : '', title: d, onclick: () => { s.style = k; changed(true, true); syncTopUI(); } }, h('div', { class: 'sw', style: 'background:' + bg }), l))),
+    check('Show the floor grid in exports', () => s.exportGrid, v => { s.exportGrid = v; changed(true); })));
+  p.append(sec('This shot', h('div', { class: 'expgrid' },
+    h('button', { id: 'xoVideo', class: 'primary wide', onclick: () => { openModal('mExport'); exportVideo(); } }, 'Render video (MP4)'),
+    h('button', { id: 'xoPack', onclick: exportFramePack, title: 'Start, middle and end frames plus the prompt, in one zip' }, 'Frame pack (zip)'),
+    h('button', { id: 'xoPng', onclick: () => exportPNG(T) }, 'Current frame (PNG)'),
+    h('button', { id: 'xoCopy', onclick: copyFrame }, 'Copy frame'),
+    h('button', { id: 'xoOptions', onclick: () => openModal('mExport') }, 'Video options…')),
+  h('p', { class: 'note' }, 'Frame pack: the first, middle and last frames as PNG plus the prompt as a text file, in one zip. Made for image-to-video and keyframe models.')));
+  const n = hasShots() ? state.shots.length : 1;
+  p.append(sec('All shots', n > 1 ? h('div', { class: 'expgrid' }, h('button', { id: 'xoAll', onclick: exportAllShots }, `Every shot (${n} videos)`), h('button', { id: 'xoSheet', onclick: makeContactSheet }, 'Contact sheet'))
+    : h('p', { class: 'note' }, 'Add shots with "+ New shot" above the timeline to export them together or make a contact sheet.')));
+  const box = h('textarea', { class: 'promptbox', spellcheck: 'false', 'aria-label': 'Prompt for the AI model' });
+  box.value = currentPrompt();
+  box.addEventListener('input', () => { promptEdit = box.value; });
+  box.addEventListener('keydown', e => e.stopPropagation());
+  p.append(sec('Prompt for the AI model', box,
+    h('div', { class: 'btns', style: 'margin-top:6px' }, h('button', { id: 'xoCopyPrompt', class: 'primary', onclick: () => copyPromptText(box.value, box) }, 'Copy prompt'),
+      h('button', { id: 'xoRewrite', onclick: () => { promptEdit = null; box.value = promptText(); toast('Prompt rewritten from the scene'); } }, 'Rewrite from scene')),
+    h('p', { class: 'note' }, 'Written from the scene: framing, lens, camera move, who does what, and the light. Edit it freely; your edits stay until you press Rewrite.')));
+}
+
+/* ---- a zip with no compression: enough to bundle PNGs and a text file ---- */
+const CRC_TABLE = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function crc32(bytes) { let c = 0xFFFFFFFF; for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+/* files: [{ name, data: Uint8Array }] -> a zip Blob */
+function zipStore(files) {
+  const enc = new TextEncoder(), parts = [], central = [], d = new Date();
+  const time = ((d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1)) & 0xFFFF, date = (((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate()) & 0xFFFF;
+  let offset = 0;
+  for (const f of files) {
+    const name = enc.encode(f.name), data = f.data, crc = crc32(data);
+    const lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, 0x0800, true); lh.setUint16(8, 0, true); lh.setUint16(10, time, true); lh.setUint16(12, date, true);
+    lh.setUint32(14, crc, true); lh.setUint32(18, data.length, true); lh.setUint32(22, data.length, true); lh.setUint16(26, name.length, true); lh.setUint16(28, 0, true);
+    parts.push(new Uint8Array(lh.buffer), name, data);
+    const ch = new DataView(new ArrayBuffer(46));
+    ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true); ch.setUint16(8, 0x0800, true); ch.setUint16(10, 0, true); ch.setUint16(12, time, true); ch.setUint16(14, date, true);
+    ch.setUint32(16, crc, true); ch.setUint32(20, data.length, true); ch.setUint32(24, data.length, true); ch.setUint16(28, name.length, true); ch.setUint32(42, offset, true);
+    central.push(new Uint8Array(ch.buffer), name);
+    offset += 30 + name.length + data.length;
+  }
+  const cdSize = central.reduce((n, x) => n + x.length, 0), end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true); end.setUint16(8, files.length, true); end.setUint16(10, files.length, true); end.setUint32(12, cdSize, true); end.setUint32(16, offset, true);
+  return new Blob([...parts, ...central, new Uint8Array(end.buffer)], { type: 'application/zip' });
+}
+/* the first, middle and last frame as PNG plus the prompt, in one zip */
+async function exportFramePack() {
+  if (exporting) { toast('Wait for the export to finish.'); return false; }
+  setPlaying(false); toast('Rendering the frame pack…', 8000);
+  const { w, h: hh } = exportSize(), last = lastT(), base = outName(state.settings.style), files = [];
+  try {
+    const r = getExportRenderer(w, hh);
+    for (const [label, t] of [['1-start', 0], ['2-middle', snapT(last / 2)], ['3-end', last]]) {
+      renderExportFrame(r, t, w, hh);
+      const blob = await canvasBlob(r.domElement);
+      if (!blob) throw new Error('no frame');
+      files.push({ name: `${base}-${label}.png`, data: new Uint8Array(await blob.arrayBuffer()) });
+    }
+  } catch (e) { console.error(e); applyAll(T); requestRender(); toast('Could not make that frame. Try a smaller export size.', 4000); return false; }
+  applyAll(T); requestRender();
+  files.push({ name: base + '-prompt.txt', data: new TextEncoder().encode(currentPrompt() + '\n') });
+  await saveFile(base + '-frames.zip', zipStore(files));
+  return true;
+}
+/* one PNG with the first and last frame of every shot, its name, length, size and move */
+let sheetBlob = null;
+async function makeContactSheet() {
+  if (exporting) { toast('Wait for the export to finish.'); return; }
+  setPlaying(false);
+  const list = ensureShots().slice(); syncShot();
+  const keepId = state.shotId, keepT = T, ar = arOf(state.settings.aspect), cw = 360, ch = Math.round(cw / ar), pad = 16, top = 34, cap = 28, rows = [];
+  toast('Building the contact sheet…', 8000);
+  await new Promise(r => setTimeout(r, 30));
+  try {
+    const r = getExportRenderer(cw, ch);
+    const grab = t => { renderExportFrame(r, t, cw, ch); return r.domElement.toDataURL('image/png'); };
+    for (const s of list) {
+      loadShot(s); applyAll(0);
+      const size = describeShot().split(' · ').slice(0, 2).join(' · '), move = detectMove().title;
+      rows.push({ name: s.name, dur: s.duration, move, size, a: grab(0), b: grab(lastT()) });
+      await new Promise(res => setTimeout(res, 0));
+    }
+  } catch (e) { console.error(e); toast('Could not make the contact sheet. Try a smaller export size.', 4000); rows.length = 0; }
+  loadShot(state.shots.find(s => s.id === keepId) || state.shots[0]); setTime(keepT); applyAll(T); requestRender(); syncTopUI();
+  if (!rows.length) return;
+  const W = pad * 3 + cw * 2 + 260, H = top + pad + rows.length * (ch + cap + pad), c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  g.fillStyle = '#141518'; g.fillRect(0, 0, W, H); g.fillStyle = '#ffb870'; g.font = '600 18px Segoe UI, Arial, sans-serif';
+  g.fillText(((state.meta && state.meta.name) || 'Scene') + ' · contact sheet', pad, 24);
+  const load = src => new Promise(res => { const i = new Image(); i.onload = () => res(i); i.onerror = () => res(null); i.src = src; });
+  let y = top + pad;
+  for (const [n, s] of rows.entries()) {
+    const A = await load(s.a), B = await load(s.b);
+    if (A) g.drawImage(A, pad, y, cw, ch); if (B) g.drawImage(B, pad * 2 + cw, y, cw, ch);
+    g.fillStyle = '#8f959e'; g.font = '12px Segoe UI, Arial, sans-serif'; g.fillText('START', pad, y + ch + 17); g.fillText('END', pad * 2 + cw, y + ch + 17);
+    const x = pad * 3 + cw * 2;
+    g.fillStyle = '#e7e9ec'; g.font = '600 16px Segoe UI, Arial, sans-serif'; g.fillText((n + 1) + '. ' + s.name, x, y + 20);
+    g.fillStyle = '#c9cdd3'; g.font = '13px Segoe UI, Arial, sans-serif'; g.fillText(s.dur.toFixed(1) + ' s', x, y + 44); g.fillText(s.size, x, y + 64); g.fillText(s.move, x, y + 84);
+    y += ch + cap + pad;
+  }
+  sheetBlob = await canvasBlob(c);
+  $('#toast').classList.remove('show'); $('#sheetImg').src = c.toDataURL('image/png'); openModal('mSheet');
+}
+/* a video for every shot in turn, in one go: the page stays locked between them */
+async function exportAllShots() {
+  if (exporting) return;
+  const list = ensureShots().slice(); syncShot();
+  const keepId = state.shotId, keepT = T;
+  openModal('mExport');
+  try {
+    for (const [i, s] of list.entries()) {
+      loadShot(s);
+      if (!(await exportVideo({ label: `Shot ${i + 1} of ${list.length}: ${s.name}` }))) break;
+    }
+  } finally { loadShot(state.shots.find(s => s.id === keepId) || state.shots[0]); setTime(keepT); applyAll(T); requestRender(); syncTopUI(); }
+}
+
 /* ============================== export ============================== */
 function exportSize() {
   const ar = arOf(state.settings.aspect), L = state.settings.size;
@@ -3645,6 +4008,8 @@ function renderExportFrame(r, t, w, hh) {
   try { shotPass(r, w, hh); } finally { exportingRender = false; }
 }
 function canvasBlob(c, type = 'image/png') { return new Promise(res => c.toBlob(res, type)); }
+const nameFrom = parts => ['shotref', ...parts, stamp()].filter(Boolean).join('-').replace(/[\\/:*?"<>|\s]+/g, '_');
+const outName = (...parts) => nameFrom([shotName(), ...parts]);
 const stamp = () => { const d = new Date(); const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`; };
 async function exportPNG(t, label) {
   if (exporting) { toast('Wait for the export to finish.'); return false; }
@@ -3658,7 +4023,7 @@ async function exportPNG(t, label) {
   applyAll(T);
   if (!blob) { toast('Could not make that frame. Try a smaller export size.', 4000); return false; }
   const fr = Math.round(t * state.settings.fps) + 1;
-  await saveFile(`shotref-${label || 'frame' + String(fr).padStart(4, '0')}-${state.settings.style}-${stamp()}.png`, blob);
+  await saveFile(outName(label || 'frame' + String(fr).padStart(4, '0'), state.settings.style) + '.png', blob);
   return true;
 }
 /* ---- copy the current camera frame to the clipboard ---- */
@@ -3708,10 +4073,12 @@ function setExportLock(on) {
   for (const el of document.body.children) if (el.id !== 'mExport' && el.id !== 'toast' && el.tagName !== 'SCRIPT') el.inert = on;
   if (on) { const c = $('#exCancel'); if (c && !c.hidden) c.focus(); else if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); }
 }
-function exProgress(frac, txt) { $('#exBar').style.width = (frac * 100).toFixed(1) + '%'; $('#exTxt').textContent = txt; }
-async function exportVideo() {
-  if (exporting) return;
+function exProgressRaw(frac, txt) { $('#exBar').style.width = (frac * 100).toFixed(1) + '%'; $('#exTxt').textContent = txt; }
+async function exportVideo(opts = {}) {
+  if (exporting) return false;
   exporting = true; exCancel = false;
+  let done = false; const pre = opts.label ? opts.label + ' · ' : '';
+  const exProgress = (f, t) => exProgressRaw(f, t ? pre + t : t);
   const saveT = T;
   let enc = null, vf = null; /* closed in finally if the loop fails (C8) */
   try {
@@ -3740,7 +4107,7 @@ async function exportVideo() {
       const blob = new Blob([muxer.target.buffer], { type: 'video/mp4' });
       if (blob.size < 1024) { const e = new Error('MP4 came out empty (' + blob.size + ' bytes)'); e.mp4 = true; throw e; }
       exProgress(1, 'Done: ' + (blob.size < 0.1 * 1048576 ? Math.max(1, Math.round(blob.size / 1024)) + ' KB' : (blob.size / 1048576).toFixed(1) + ' MB'));
-      await saveFile(`shotref-${state.settings.style}-${w}x${hh}-${fps}fps-${stamp()}.mp4`, blob);
+      await saveFile(outName(state.settings.style, `${w}x${hh}`, `${fps}fps`) + '.mp4', blob); done = true;
     } else {
       // fallback: WebM in real time
       const c = r.domElement;
@@ -3763,7 +4130,7 @@ async function exportVideo() {
       if (exCancel) { toast('Export cancelled'); return; }
       const blob = new Blob(parts, { type: 'video/webm' });
       if (blob.size < 1024) throw new Error('WebM came out empty (' + blob.size + ' bytes)');
-      await saveFile(`shotref-${state.settings.style}-${w}x${hh}-${stamp()}.webm`, blob);
+      await saveFile(outName(state.settings.style, `${w}x${hh}`) + '.webm', blob); done = true;
     }
   } catch (e) {
     console.error(e);
@@ -3776,6 +4143,7 @@ async function exportVideo() {
     exporting = false; exCancel = false; $('#exCancel').hidden = true; setTime(saveT, false); applyAll(T); setExportLock(false);
     if (!$('#mExport').classList.contains('hidden')) $('#exVideo').focus(); /* Cancel just hid itself; keep focus in the dialog (M8) */
   }
+  return done;
 }
 function renderExportDialog() {
   const s = state.settings, { w, h: hh } = exportSize();
@@ -3900,7 +4268,7 @@ function wire() {
   $$('#viewSeg button').forEach(b => b.onclick = () => setView(b.dataset.v));
   $('#stHelp').onclick = () => { closeModal($('#stHelp')); openModal('mHelp'); };
   $('#cbCopy').onclick = copyFrame; $('#exCopy').onclick = copyFrame;
-  $('#copySave').onclick = () => { if (copyBlob) { const fr = Math.round(T * state.settings.fps) + 1; saveFile(`shotref-frame${String(fr).padStart(4, '0')}-${state.settings.style}-${stamp()}.png`, copyBlob); } closeModal($('#copySave')); };
+  $('#copySave').onclick = () => { if (copyBlob) { const fr = Math.round(T * state.settings.fps) + 1; saveFile(outName('frame' + String(fr).padStart(4, '0'), state.settings.style) + '.png', copyBlob); } closeModal($('#copySave')); };
   $$('#vpRight [data-g]').forEach(b => b.onclick = () => setGizmoMode(b.dataset.g));
   $('#bSnapGrid').onclick = () => { snapOn = !snapOn; updateGizmo(); syncTopUI(); };
   $('#bFocus').onclick = focusSel;
@@ -3957,7 +4325,8 @@ function wire() {
   $('#exGrid').onchange = e => { state.settings.exportGrid = e.target.checked; changed(true); };
   $('#exVideo').onclick = exportVideo;
   $('#exFrame').onclick = () => exportPNG(T);
-  $('#exEnds').onclick = async () => { if (!(await exportPNG(0, 'start'))) return; await new Promise(r => setTimeout(r, 400)); await exportPNG(lastT(), 'end'); };
+  $('#exEnds').onclick = exportFramePack;
+  $('#sheetSave').onclick = () => { if (sheetBlob) saveFile(nameFrom(['contact-sheet']) + '.png', sheetBlob); };
   $('#exCancel').onclick = () => { exCancel = true; };
 
   wireMenu();
@@ -4368,7 +4737,7 @@ function boot() {
     if (e.key === AUTOSAVE_KEY && !tabWarned) { tabWarned = true; toast('ShotRef is open in another tab. Changes here may overwrite it.', 6000); }
   });
   window.addEventListener('pagehide', flushAutosave);
-  window.__shotref = { get selection() { return selIds; }, pickAtScreen: (x, y) => { const rc = rayFromEvent({ clientX: x, clientY: y }); const h = rc && pickAt(rc); return h ? h.id : null; }, settleTime: () => { const t0 = performance.now(); solveGround(); return performance.now() - t0; }, groundMigrate: () => groundMigrate.size, liftKnob: () => { if (!liftGrp.visible) return null; const q = liftPick.getWorldPosition(new THREE.Vector3()); return window.__shotref.project(q.x, q.y, q.z); }, attachTo, setMount, writeCam, shownObj: (id, t) => shownObj(getObj(id), t), viewOf: id => { const v = views.get(id); if (!v) return null; v.group.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(v.group), sz = bb.getSize(new THREE.Vector3()); return { p: v.group.position.toArray(), yaw: v.group.rotation.y * R2D, s: v.group.scale.toArray(), size: sz.toArray(), wheels: v.wheels ? v.wheels.list.map(w => ({ spin: w.spin.rotation.x, steer: w.piv.rotation.y, front: w.front })) : null }; }, ringKnob: () => ringGrp.visible ? ringKnob.getWorldPosition(new THREE.Vector3()).toArray() : null, getPref, setPref, showMenu, menuButton, hideMenu, project: (x, y, z) => { const r = canvas.getBoundingClientRect(); let cam = view === 'top' ? topCam : edCam, rr = { x: 0, y: 0, w: r.width, h: r.height }; if (view === 'camera') { cam = renderCam; rr = camRect(r.width, r.height); } const v = new THREE.Vector3(x, y, z).project(cam); return [r.left + rr.x + (v.x * 0.5 + 0.5) * rr.w, r.top + rr.y + (-v.y * 0.5 + 0.5) * rr.h]; }, get view() { return view; }, get selected() { return selected; }, get state() { return state; }, get assets() { return assets; }, setT: t => setTime(t, false), applyMove, addObject, select, setView, evalCam, exportVideo, exportPNG, pickCodec, _exportCanvas: () => exRenderer ? exRenderer.domElement : null, changed, writeObj, evalObj, setKey, get T() { return T; },
+  window.__shotref = { promptText, ensureDof, get selection() { return selIds; }, pickAtScreen: (x, y) => { const rc = rayFromEvent({ clientX: x, clientY: y }); const h = rc && pickAt(rc); return h ? h.id : null; }, settleTime: () => { const t0 = performance.now(); solveGround(); return performance.now() - t0; }, groundMigrate: () => groundMigrate.size, liftKnob: () => { if (!liftGrp.visible) return null; const q = liftPick.getWorldPosition(new THREE.Vector3()); return window.__shotref.project(q.x, q.y, q.z); }, attachTo, setMount, writeCam, shownObj: (id, t) => shownObj(getObj(id), t), viewOf: id => { const v = views.get(id); if (!v) return null; v.group.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(v.group), sz = bb.getSize(new THREE.Vector3()); return { p: v.group.position.toArray(), yaw: v.group.rotation.y * R2D, s: v.group.scale.toArray(), size: sz.toArray(), wheels: v.wheels ? v.wheels.list.map(w => ({ spin: w.spin.rotation.x, steer: w.piv.rotation.y, front: w.front })) : null }; }, ringKnob: () => ringGrp.visible ? ringKnob.getWorldPosition(new THREE.Vector3()).toArray() : null, getPref, setPref, showMenu, menuButton, hideMenu, project: (x, y, z) => { const r = canvas.getBoundingClientRect(); let cam = view === 'top' ? topCam : edCam, rr = { x: 0, y: 0, w: r.width, h: r.height }; if (view === 'camera') { cam = renderCam; rr = camRect(r.width, r.height); } const v = new THREE.Vector3(x, y, z).project(cam); return [r.left + rr.x + (v.x * 0.5 + 0.5) * rr.w, r.top + rr.y + (-v.y * 0.5 + 0.5) * rr.h]; }, get view() { return view; }, get selected() { return selected; }, get state() { return state; }, get assets() { return assets; }, setT: t => setTime(t, false), applyMove, addObject, select, setView, evalCam, exportVideo, exportPNG, pickCodec, _exportCanvas: () => exRenderer ? exRenderer.domElement : null, changed, writeObj, evalObj, setKey, get T() { return T; },
     get rebuilds() { return rebuilds; }, urlCacheIds: () => [...urlCache.keys()],
     get history() { return { at: hi, length: hist.length }; },
     /* batch F (camera UX and light) hooks for the smoke test */

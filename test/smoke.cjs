@@ -539,7 +539,7 @@ function mp4Dims(buf) {
 const startExport = async (p, size, dur) => {
   await p.evaluate(({ size, dur }) => { const s = window.__shotref.state.settings; s.size = size; s.duration = dur; window.__shotref.changed(true, true); }, { size, dur });
   await p.click('#bExport');
-  await p.click('#exVideo');
+  await p.click('#xoVideo');
 };
 
 check('export settings are locked while exporting', async ({ open, downloads }) => {
@@ -924,7 +924,7 @@ check('space works after changing fps dropdown', async ({ open }) => {
 
 check('dialogs trap focus', async ({ open }) => {
   const p = await open();
-  await p.click('#bExport');
+  await exportDialog(p);
   await p.waitForTimeout(100);
   const inside = () => p.evaluate(() => { const a = document.activeElement; return a && document.querySelector('#mExport').contains(a) ? 'ok' : (a ? a.tagName + '#' + a.id : 'none'); });
   ok(await inside() === 'ok', 'focus did not move into the Export dialog: ' + await inside());
@@ -1009,7 +1009,7 @@ check('friendly error on bad file', async ({ open }) => {
 
 check('toast shows above an open dialog', async ({ open }) => {
   const p = await open();
-  await p.click('#bExport');
+  await exportDialog(p);
   await p.evaluate(() => window.__shotref.exportPNG(0));
   await p.waitForTimeout(300);
   const top = await p.evaluate(() => document.querySelector('#toast').getBoundingClientRect().top);
@@ -1034,7 +1034,7 @@ check('timeline fits its tracks', async ({ open }) => {
   await p.evaluate(() => { const S = window.__shotref; for (let i = 0; i < 8; i++) { const o = S.addObject('box'); S.setKey(o.keys, 0, { p: [i, 0, 0], r: [0, 0, 0], s: [1, 1, 1] }); } S.changed(true, true); });
   await p.waitForTimeout(300);
   const h2 = await p.evaluate(() => document.querySelector('#tl').getBoundingClientRect().height);
-  ok(h2 <= 183 && h2 > h1, 'timeline is ' + h2 + ' px tall with 9 tracks');
+  ok(h2 <= 217 && h2 > h1, 'timeline is ' + h2 + ' px tall with 9 tracks');
 });
 
 check('outliner and timeline rows work from the keyboard', async ({ open }) => {
@@ -1404,7 +1404,7 @@ check('build escapes </script inside the app code', async () => {
 check('Tab from the depth range fields stays in the export dialog', async ({ open }) => {
   const p = await open();
   await p.evaluate(() => { const s = window.__shotref.state.settings; s.style = 'depth'; s.depthAuto = false; window.__shotref.changed(true, true); });
-  await p.click('#bExport');
+  await exportDialog(p);
   const n = await p.evaluate(() => document.querySelectorAll('#exDepthRow .nf input').length);
   ok(n === 2, 'setup: expected Near and Far fields, found ' + n);
   for (const i of [0, 1]) {
@@ -1465,11 +1465,11 @@ check('data URL cache forgets removed files', async ({ open, fixtures }) => {
   ok(!after.includes(id), 'removed photo still cached');
 });
 
-check('start + end frames stops after a failed start frame', async ({ open }) => {
+check('frame pack (from the Video options window) stops after a failed frame', async ({ open }) => {
   const p = await open();
   await p.evaluate(TOAST_LOG);
   await p.evaluate(() => { HTMLCanvasElement.prototype.toBlob = function (cb) { cb(null); }; });
-  await p.click('#bExport');
+  await exportDialog(p);
   await p.click('#exEnds');
   await p.waitForTimeout(1500);
   const n = await p.evaluate(() => window.__toasts.filter(t => /Could not make that frame/.test(t)).length);
@@ -1618,11 +1618,20 @@ check('desktop: menu commands, opened-file events and exports go through the bri
   ok(c.o.saveAs === true, 'menu save-as ' + JSON.stringify(c));
   await p.evaluate(() => window.__dsk.menu('save'));
   await p.waitForFunction(() => window.__dsk.calls.length === 2);
-  await p.click('#bExport');
+  await exportDialog(p);
   await p.click('#exFrame');
   await p.waitForFunction(() => window.__dsk.calls.some(x => x.k === 'blob'), null, { timeout: 30000 });
   const b = await p.evaluate(() => window.__dsk.calls.find(x => x.k === 'blob'));
   ok(/\.png$/.test(b.n) && b.size > 1000 && JSON.stringify(b.f).includes('png'), 'png via bridge ' + JSON.stringify(b));
+});
+
+check('desktop: the frame pack goes through the Save dialog as a zip', async ({ freshContext }) => {
+  const p = await desktopPage(freshContext);
+  await p.evaluate(() => { window.__shotref.state.settings.size = 1280; window.__shotref.changed(true, true); });
+  await p.click('#bExport'); await p.click('#xoPack');
+  await p.waitForFunction(() => window.__dsk.calls.some(x => x.k === 'blob'), null, { timeout: 30000 });
+  const b = await p.evaluate(() => window.__dsk.calls.find(x => x.k === 'blob'));
+  ok(/-frames.zip$/.test(b.n) && b.size > 3000 && JSON.stringify(b.f).includes('zip'), 'zip via bridge ' + JSON.stringify(b));
 });
 
 check('desktop: closing asks about unsaved changes (Save / Dont save / Cancel)', async ({ freshContext }) => {
@@ -2003,6 +2012,8 @@ check('artifact-format file survives save then reopen', async ({ open, freshCont
   await openFile(a, 'art.shotref.json', JSON.stringify(file));
   await a.waitForFunction(() => window.__shotref.state.objects.length === 2);
   const before = await stateOf(a);
+  /* batch 9: saving brings the active shot's own copy in line with the live camera and length (this file's copy was a plain camera) */
+  before.shots[0].camera = before.camera; before.shots[0].duration = before.settings.duration;
   await fileCmd(a, 'save');
   const f = await downloads(a).wait('.shotref');
   const fc = await freshContext(); const b = await fc.open();
@@ -2048,7 +2059,7 @@ check('File menu has New, Open, Save, Save as and Export, and the old top bar bu
   for (const w of ['new=New', 'open=Open', 'save=Save', 'saveas=Save as', 'export=Export']) ok(items.some(i => i.startsWith(w)), 'File menu lacks ' + w + ' (has ' + items.join(', ') + ')');
   await p.keyboard.press('Escape');
   await fileCmd(p, 'export');
-  ok(await p.evaluate(() => !document.querySelector('#mExport').classList.contains('hidden')), 'File > Export did not open the Export window');
+  ok(await p.evaluate(() => window.__shotref.selected) === 'export' && await p.evaluate(() => document.querySelector('#mExport').classList.contains('hidden')), 'File > Export did not open the Export panel');
   await p.keyboard.press('Escape');
   await fileCmd(p, 'new');
   ok(await p.evaluate(() => !document.querySelector('#mStart').classList.contains('hidden')), 'File > New did not open the starter sets');
@@ -2095,11 +2106,11 @@ check('step bar: 1 Build, 2 Frame, 3 Export, with keys 1 2 3', async ({ open }) 
   ok(await on() === 'build', 'Build should be active again, got ' + await on());
   await p.keyboard.press('3');
   await p.waitForTimeout(150);
-  ok(await p.evaluate(() => !document.querySelector('#mExport').classList.contains('hidden')), 'key 3 did not open Export');
+  ok(await p.evaluate(() => window.__shotref.selected) === 'export', 'key 3 did not open the Export panel');
   ok(await on() === 'export', 'Export should be active, got ' + await on());
   await p.keyboard.press('Escape');
   await p.waitForTimeout(150);
-  ok(await on() === 'build', 'closing Export should return to Build, got ' + await on());
+  ok(await on() === 'frame', 'leaving Export (Esc) should land on Frame (the camera view stays), got ' + await on());
   await p.click('#stepSeg [data-step=frame]');
   ok(await p.evaluate(() => window.__shotref.view) === 'camera', 'the Frame pill did not open the camera view');
   await p.click('#stepSeg [data-step=build]');
@@ -3787,5 +3798,340 @@ check('sun gizmo: an object in front of the sun is picked first; the sun still p
   ok(await pickScr(p, [x, y]) === id, 'an object in front wins: ' + await pickScr(p, [x, y]));
   noErrors(p);
 });
+
+/* ======================= batch 9: shots, Export panel, prompt, frame pack, contact sheet ======================= */
+/* opens the old Export window through the panel's "Video options…" button */
+const exportDialog = async p => { await p.click('#bExport'); await p.click('#xoOptions'); };
+const chipNames = p => p.evaluate(() => [...document.querySelectorAll('#shotBar .shotchip:not(.add)')].map(c => c.firstChild.textContent + '|' + c.querySelector('small').textContent));
+/* the store-only zip: parse the central directory and check every CRC. Returns [{name, data, crc}] */
+const CRC_T = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+const crc32 = b => { let c = 0xFFFFFFFF; for (let i = 0; i < b.length; i++) c = CRC_T[(c ^ b[i]) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; };
+function readZip(buf) {
+  let e = -1; for (let i = buf.length - 22; i >= 0; i--) if (buf.readUInt32LE(i) === 0x06054b50) { e = i; break; }
+  ok(e >= 0, 'no end-of-central-directory record');
+  const n = buf.readUInt16LE(e + 10), cdSize = buf.readUInt32LE(e + 12), cdOff = buf.readUInt32LE(e + 16);
+  ok(cdOff + cdSize === e, 'central directory does not end where the end record starts');
+  const out = []; let q = cdOff;
+  for (let i = 0; i < n; i++) {
+    ok(buf.readUInt32LE(q) === 0x02014b50, 'bad central directory entry ' + i);
+    const method = buf.readUInt16LE(q + 10), crc = buf.readUInt32LE(q + 16), csize = buf.readUInt32LE(q + 20), usize = buf.readUInt32LE(q + 24), nl = buf.readUInt16LE(q + 28), xl = buf.readUInt16LE(q + 30), cl = buf.readUInt16LE(q + 32), lo = buf.readUInt32LE(q + 42);
+    const name = buf.toString('utf8', q + 46, q + 46 + nl);
+    ok(method === 0 && csize === usize, name + ' is not stored');
+    ok(buf.readUInt32LE(lo) === 0x04034b50, 'bad local header for ' + name);
+    const lnl = buf.readUInt16LE(lo + 26), lxl = buf.readUInt16LE(lo + 28), data = buf.subarray(lo + 30 + lnl + lxl, lo + 30 + lnl + lxl + usize);
+    ok(crc32(data) === crc, 'CRC mismatch for ' + name);
+    out.push({ name, data, crc }); q += 46 + nl + xl + cl;
+  }
+  return out;
+}
+const pngSize = b => ({ sig: b.subarray(0, 4).toString('hex'), w: b.readUInt32BE(16), h: b.readUInt32BE(20) });
+/* a scene with a known framing: one man in the middle, camera 4.5 m away */
+const promptScene = async p => {
+  await p.evaluate(() => {
+    const S = window.__shotref; S.state.objects.length = 0;
+    const c = S.state.camera; c.keys = []; c.base = { p: [0, 1.5, 4.5], tg: [0, 1.2, 0], f: 50, roll: 0, fd: 4.5 }; c.shake = 0; c.lookAtId = null; c.follow = false;
+    const o = S.addObject('person', null, false, [0, 0, 0]); c.lookAtId = o.id; S.changed(true, true);
+  });
+  await settle(p, 300);
+};
+
+check('shots: a plain project shows one Shot 1 chip, and saving it adds no shots', async ({ open, downloads }) => {
+  const p = await open(); await settle(p, 300);
+  const n = await chipNames(p);
+  ok(n.length === 1 && n[0] === 'Shot 1|5 s', 'chips: ' + JSON.stringify(n));
+  ok(await p.evaluate(() => !window.__shotref.state.shots), 'looking at the bar must not add shots to the project');
+  await fileCmd(p, 'save');
+  const f = JSON.parse((await downloads(p).wait('.shotref')).text());
+  ok(!f.state.shots && !f.state.shotId, 'saved file gained shots');
+  noErrors(p);
+});
+
+check('shots: + New shot starts from the framing with no keys; each shot keeps its own camera and length', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => { const S = window.__shotref; S.applyMove('dollyIn'); S.changed(true, true); });
+  await p.click('#shotBar .shotchip.add');
+  await settle(p, 200);
+  let s = await stateOf(p);
+  ok(s.shots.length === 2 && s.shotId === s.shots[1].id && s.shots[1].name === 'Shot 2', 'shots: ' + JSON.stringify(s.shots.map(x => x.name)));
+  ok(s.camera.keys.length === 0, 'the new shot should have no keys, has ' + s.camera.keys.length);
+  ok(s.shots[0].camera.keys.length >= 2, 'the first shot lost its move');
+  await p.fill('#inDur', '8'); await p.press('#inDur', 'Enter'); await settle(p, 200);
+  ok((await chipNames(p)).join() === 'Shot 1|5 s,Shot 2|8 s', 'chips after 8 s: ' + (await chipNames(p)).join());
+  await p.click('#shotBar .shotchip:not(.add) >> nth=0'); await settle(p, 200);
+  s = await stateOf(p);
+  ok(s.shotId === s.shots[0].id && s.settings.duration === 5 && s.camera.keys.length >= 2, 'back on shot 1: ' + JSON.stringify([s.settings.duration, s.camera.keys.length]));
+  ok(s.shots[1].duration === 8 && s.shots[1].camera.keys.length === 0, 'shot 2 lost its own length or camera');
+  ok(await p.evaluate(() => document.querySelector('#inDur').value) === '5', 'the length box did not follow the shot');
+  noErrors(p);
+});
+
+check('shots: rename by double-click, and Duplicate, Move, Delete from the chip menu', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => { const S = window.__shotref; S.applyMove('orbitL'); S.changed(true, true); });
+  await p.dblclick('#shotBar .shotchip:not(.add)');
+  await p.fill('#shotBar input', 'Opening wide'); await p.press('#shotBar input', 'Enter'); await settle(p, 150);
+  ok((await chipNames(p))[0] === 'Opening wide|5 s', 'rename: ' + (await chipNames(p)).join());
+  await p.click('#shotBar .shotchip:not(.add)', { button: 'right' });
+  const items = await p.evaluate(() => [...document.querySelectorAll('#ctxMenu button')].map(b => b.dataset.cmd + (b.disabled ? '!' : '')));
+  ok(['rename', 'dup', 'left!', 'right!', 'del!'].every(c => items.includes(c)), 'menu: ' + items.join());
+  await p.click('#ctxMenu [data-cmd="dup"]'); await settle(p, 200);
+  let s = await stateOf(p);
+  ok(s.shots.length === 2 && s.shots[1].name === 'Opening wide copy' && s.shotId === s.shots[1].id, 'duplicate: ' + JSON.stringify(s.shots.map(x => x.name)));
+  ok(s.camera.keys.length === s.shots[0].camera.keys.length && s.camera.keys.length >= 2, 'a duplicate keeps the same move');
+  await p.click('#shotBar .shotchip:not(.add) >> nth=1', { button: 'right' });
+  await p.click('#ctxMenu [data-cmd="left"]'); await settle(p, 150);
+  s = await stateOf(p);
+  ok(s.shots[0].name === 'Opening wide copy' && s.shots[1].name === 'Opening wide', 'move left: ' + JSON.stringify(s.shots.map(x => x.name)));
+  await p.click('#shotBar .shotchip:not(.add) >> nth=0', { button: 'right' });
+  await p.click('#ctxMenu [data-cmd="del"]'); await settle(p, 200);
+  s = await stateOf(p);
+  ok(s.shots.length === 1 && s.shotId === s.shots[0].id && s.shots[0].name === 'Opening wide', 'delete: ' + JSON.stringify(s.shots.map(x => x.name)));
+  await p.click('#shotBar .shotchip:not(.add)', { button: 'right' });
+  ok(await p.evaluate(() => document.querySelector('#ctxMenu [data-cmd="del"]').disabled), 'the last shot can be deleted');
+  await p.keyboard.press('Escape');
+  noErrors(p);
+});
+
+check('shots: undo and redo step through a new shot and a switch, and say what they undid', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(TOAST_LOG);
+  const cam0 = await p.evaluate(() => JSON.stringify(window.__shotref.state.camera));
+  await p.click('#shotBar .shotchip.add'); await settle(p, 150);
+  await p.evaluate(() => { const S = window.__shotref; S.applyMove('craneUp'); S.changed(true, true); });
+  await p.click('#shotBar .shotchip:not(.add) >> nth=0'); await settle(p, 150);
+  ok(await p.evaluate(() => window.__shotref.state.shotId === window.__shotref.state.shots[0].id), 'did not switch');
+  await p.click('#bUndo'); await settle(p, 150);
+  ok(await p.evaluate(() => window.__shotref.state.shotId === window.__shotref.state.shots[1].id && window.__shotref.state.camera.keys.length >= 2), 'undo did not bring back shot 2 with its move');
+  ok(await p.evaluate(() => window.__toasts.some(t => /Undo: switch to Shot 1/.test(t))), 'toast: ' + await p.evaluate(() => window.__toasts.join(' / ')));
+  await p.click('#bUndo'); await p.click('#bUndo'); await settle(p, 150);
+  ok(await p.evaluate(() => (window.__shotref.state.shots || []).length < 2), 'two undos should remove the new shot');
+  ok(await p.evaluate(c => JSON.stringify(window.__shotref.state.camera) === c, cam0), 'camera not restored');
+  ok(await p.evaluate(() => window.__toasts.some(t => /Undo: new shot/.test(t))), 'no "new shot" toast: ' + await p.evaluate(() => window.__toasts.join(' / ')));
+  await p.click('#bRedo'); await settle(p, 150);
+  ok(await p.evaluate(() => window.__shotref.state.shots.length === 2), 'redo did not bring the shot back');
+  noErrors(p);
+});
+
+check('shots: an artifact-made file with three shots opens with all of them, each with its own move and length', async ({ open, downloads, freshContext }) => {
+  const cam = (f, keys) => ({ base: { p: [3, 1.6, 6], tg: [0, 1, 0], f, roll: 0, fd: 7 }, keys: keys || [], shake: 0, lookAtId: null, follow: false, feel: 'gentle', dof: { on: false, fstop: 2.8, auto: true } });
+  const k = (t, x, f) => ({ t, p: [x, 1.6, 6], tg: [0, 1, 0], f, roll: 0, fd: 7 });
+  const c1 = cam(35), c2 = cam(50, [k(0, 0, 50), k(3, 2, 50)]), c3 = cam(24, [k(0, -1, 24), k(2, 1, 40)]);
+  const file = { app: 'ShotRef', version: 1, state: { v: 1, meta: { id: 'm1', name: 'Trio' }, settings: { duration: 3 }, camera: c2,
+    shots: [{ id: 'a', name: 'Wide', camera: c1, duration: 5 }, { id: 'b', name: 'Push in', camera: c2, duration: 3 }, { id: 'c', name: 'Reveal', camera: c3, duration: 2 }], shotId: 'b',
+    objects: [{ id: 'p1', type: 'person', name: 'Person 1', color: '#3d6fd8', base: { p: [0, 0, 0], r: [0, 0, 0], s: [1, 1, 1] }, keys: [], opts: {} }] }, assets: {} };
+  const p = await open();
+  await openFile(p, 'trio.shotref.json', JSON.stringify(file)); await settle(p, 400);
+  ok((await chipNames(p)).join() === 'Wide|5 s,Push in|3 s,Reveal|2 s', 'chips: ' + (await chipNames(p)).join());
+  ok(await p.evaluate(() => document.querySelector('#shotBar .shotchip.on').firstChild.textContent) === 'Push in', 'active chip');
+  let s = await stateOf(p);
+  ok(s.settings.duration === 3 && s.camera.keys.length === 2 && s.camera.keys[0].f === 50, 'the live camera is not the active shot');
+  await p.click('#shotBar .shotchip:not(.add) >> nth=2'); await settle(p, 200);
+  s = await stateOf(p);
+  ok(s.settings.duration === 2 && s.camera.keys[1].f === 40 && s.shotId === 'c', 'Reveal: ' + JSON.stringify([s.settings.duration, s.camera.keys.map(x => x.f)]));
+  await p.click('#shotBar .shotchip:not(.add) >> nth=0'); await settle(p, 200);
+  s = await stateOf(p);
+  ok(s.settings.duration === 5 && s.camera.keys.length === 0 && s.camera.base.f === 35, 'Wide');
+  await fileCmd(p, 'save');
+  const saved = JSON.parse((await downloads(p).wait('.shotref')).text());
+  ok(saved.state.shots.length === 3 && saved.state.shotId === 'a' && saved.state.shots[2].camera.keys.length === 2 && saved.state.shots[1].duration === 3, 'saved file lost shot data');
+  const fc = await freshContext(); const q = await fc.open();
+  await openFile(q, 'saved.shotref.json', JSON.stringify(saved)); await settle(q, 400);
+  ok((await chipNames(q)).join() === 'Wide|5 s,Push in|3 s,Reveal|2 s', 'reopened chips: ' + (await chipNames(q)).join());
+  noErrors(p);
+});
+
+check('shots: a shot stays after the page reloads (autosave)', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.click('#shotBar .shotchip.add'); await settle(p, 300);
+  await p.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+  await p.reload(); await p.waitForFunction(() => window.__shotref && window.__shotref.state); await settle(p, 500);
+  ok(await p.evaluate(() => (window.__shotref.state.shots || []).length) === 2, 'shots after reload: ' + await p.evaluate(() => JSON.stringify((window.__shotref.state.shots || []).map(s => s.name))));
+});
+
+check('Export step opens the Export panel (not a window) with output, this shot, all shots and the prompt', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.click('#bExport'); await settle(p, 200);
+  ok(await p.evaluate(() => document.querySelector('#mExport').classList.contains('hidden')), 'the Export window opened');
+  ok(await p.evaluate(() => window.__shotref.selected) === 'export', 'selected is ' + await p.evaluate(() => window.__shotref.selected));
+  ok(await p.evaluate(() => window.__shotref.view) === 'camera', 'the Export step shows the camera view');
+  ok(await p.evaluate(() => document.querySelector('#stepSeg .on').dataset.step) === 'export', 'step pill');
+  const heads = await p.evaluate(() => [...document.querySelectorAll('#props .sec > h3')].map(x => x.textContent));
+  for (const w of ['Export', 'This shot', 'All shots', 'Prompt for the AI model']) ok(heads.includes(w), 'no "' + w + '" section: ' + heads.join());
+  const btns = await p.evaluate(() => [...document.querySelectorAll('#props button')].map(b => b.textContent.trim()));
+  for (const w of ['Render video (MP4)', 'Frame pack (zip)', 'Current frame (PNG)', 'Copy frame', 'Video options…', 'Copy prompt', 'Rewrite from scene']) ok(btns.includes(w), 'no "' + w + '" button: ' + btns.join(' | '));
+  ok(!btns.some(b => /^Every shot/.test(b)), 'Every shot offered with one shot');
+  ok((await p.evaluate(() => document.querySelectorAll('#props .stylechips button').length)) === 4, 'four render style chips');
+  await p.click('#props .stylechips button >> nth=1'); await settle(p, 150);
+  ok(await p.evaluate(() => window.__shotref.state.settings.style) === 'clay', 'Clay chip did not set the style');
+  ok(await p.evaluate(() => document.querySelector('#props .stylechips button.on').textContent.includes('Clay')), 'chip not marked');
+  const sel = await p.evaluate(() => [...document.querySelectorAll('#props select')].map(s => s.options.length));
+  ok(sel.length === 2 && sel[0] === 7 && sel[1] === 4, 'aspect and size dropdowns: ' + sel);
+  await p.selectOption('#props select >> nth=0', '9:16'); await settle(p, 150);
+  ok(await p.evaluate(() => window.__shotref.state.settings.aspect) === '9:16', 'aspect');
+  const sum = await p.evaluate(() => document.querySelector('#props .sec .note').textContent);
+  ok(/1080×1920/.test(sum), 'summary line: ' + sum);
+  await p.click('#xoOptions'); await settle(p, 150);
+  ok(await p.evaluate(() => !document.querySelector('#mExport').classList.contains('hidden')), 'Video options did not open the window');
+  await p.keyboard.press('Escape');
+  await p.keyboard.press('Escape'); await settle(p, 150);
+  ok(await p.evaluate(() => document.querySelector('#stepSeg .on').dataset.step) !== 'export', 'Esc should leave the Export step');
+  await p.keyboard.press('3'); await settle(p, 150);
+  ok(await p.evaluate(() => window.__shotref.selected) === 'export', 'key 3');
+  await p.click('#stepSeg [data-step="build"]'); await settle(p, 150);
+  ok(await p.evaluate(() => window.__shotref.selected) === null && await p.evaluate(() => window.__shotref.view) === 'editor', 'Build leaves the panel');
+  noErrors(p);
+});
+
+check('Export panel offers Every shot and Contact sheet once there are two shots', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.click('#shotBar .shotchip.add'); await settle(p, 150);
+  await p.click('#bExport'); await settle(p, 200);
+  const btns = await p.evaluate(() => [...document.querySelectorAll('#props button')].map(b => b.textContent.trim()));
+  ok(btns.includes('Every shot (2 videos)') && btns.includes('Contact sheet'), btns.join(' | '));
+  ok((await p.evaluate(() => document.querySelector('#props .sec .note').textContent)).includes('Shot 2'), 'summary names the shot');
+  noErrors(p);
+});
+
+check('prompt: written from the scene (size, lens, angle, move, who does what, light, aspect and length)', async ({ open }) => {
+  const p = await open(); await promptScene(p);
+  let t = await p.evaluate(() => window.__shotref.promptText());
+  ok(/^[A-Z][A-Za-z -]* of the man in a blue top, 50mm normal lens, eye level\./.test(t), 'opening: ' + t);
+  ok(/The camera stays locked off \(static camera\)\./.test(t), 'static: ' + t);
+  ok(/A man in a blue top stands in the centre of frame\./.test(t), 'person: ' + t);
+  ok(/Daylight, high sun|Low sun|Golden hour/.test(t) && /16:9, 5 seconds\.$/.test(t), 'light/aspect: ' + t);
+  await p.evaluate(() => { const S = window.__shotref; S.addObject('car', null, false, [0, 0, -3]); S.changed(true, true); });
+  t = await p.evaluate(() => window.__shotref.promptText());
+  ok(/A red car is parked in the (centre|left|right) of frame./.test(t), 'car: ' + t);
+  await p.evaluate(() => { const S = window.__shotref; S.applyMove('dollyIn'); S.state.camera.shake = 1; S.ensureDof().on = true; S.ensureDof().fstop = 1.8; S.setLookAt(S.state.objects[0], 'camera'); S.state.settings.sunEl = 6; S.state.settings.env = 'sunset'; S.changed(true, true); });
+  t = await p.evaluate(() => window.__shotref.promptText());
+  ok(/The camera dollies in/.test(t) && /handheld with a slight shake/.test(t), 'move/shake: ' + t);
+  ok(/Shallow depth of field, strong background blur\./.test(t), 'dof: ' + t);
+  ok(/looking into the camera/.test(t), 'eyeline: ' + t);
+  ok(/Sun on the horizon, (front light|backlight|side light from the (left|right)), long shadows\./.test(t), 'light: ' + t);
+  /* a walking man and a car */
+  await p.evaluate(() => { const S = window.__shotref; const o = S.state.objects[0]; o.keys = [{ t: 0, p: [-2, 0, 0], r: [0, 90, 0], s: [1, 1, 1] }, { t: 4, p: [2, 0, 0], r: [0, 90, 0], s: [1, 1, 1] }]; o.opts.pose = 'walk'; o.opts.lookAt = null;
+    S.changed(true, true); });
+  t = await p.evaluate(() => window.__shotref.promptText());
+  ok(/walks (from the left of frame to the right of frame|from left to right)/.test(t), 'walk: ' + t);
+  noErrors(p);
+});
+
+check('prompt: your edits stay until you press Rewrite from scene', async ({ open }) => {
+  const p = await open(); await promptScene(p);
+  await p.click('#bExport'); await settle(p, 200);
+  const orig = await p.inputValue('#props textarea.promptbox');
+  ok(orig.length > 60 && orig === await p.evaluate(() => window.__shotref.promptText()), 'box holds the written prompt');
+  await p.fill('#props textarea.promptbox', 'My own words.');
+  await p.selectOption('#props select >> nth=0', '1:1'); await settle(p, 200);
+  ok(await p.inputValue('#props textarea.promptbox') === 'My own words.', 'the edit was lost when the panel rebuilt');
+  await p.keyboard.press('Escape'); await p.keyboard.press('3'); await settle(p, 200);
+  ok(await p.inputValue('#props textarea.promptbox') === 'My own words.', 'the edit was lost when the panel reopened');
+  await p.click('#xoRewrite'); await settle(p, 150);
+  const v = await p.inputValue('#props textarea.promptbox');
+  ok(v !== 'My own words.' && /1:1, 5 seconds\.$/.test(v), 'rewrite: ' + v);
+  await p.evaluate(TOAST_LOG);
+  await p.click('#xoCopyPrompt'); await settle(p, 300);
+  ok(await p.evaluate(() => window.__toasts.some(t => /Prompt copied|Ctrl\+C/.test(t))), 'no copy toast: ' + await p.evaluate(() => window.__toasts.join(' / ')));
+  noErrors(p);
+});
+
+check('frame pack: a zip with the start, middle and end frames and the prompt opens and every file is intact', async ({ open, downloads }) => {
+  const p = await open(); await promptScene(p);
+  await p.evaluate(() => { const S = window.__shotref; S.applyMove('orbitL'); S.state.settings.size = 1280; S.changed(true, true); });
+  await p.click('#bExport'); await p.click('#xoPack');
+  const z = await downloads(p).wait('.zip', 30000);
+  ok(/^shotref-shaded-\d{8}-\d{4}-frames\.zip$/.test(z.name), 'zip name ' + z.name);
+  const files = readZip(z.bytes), names = files.map(f => f.name);
+  ok(files.length === 4, 'files: ' + names.join());
+  for (const w of ['-1-start.png', '-2-middle.png', '-3-end.png', '-prompt.txt']) ok(names.some(n => n.endsWith(w) && n.startsWith('shotref-shaded-')), 'missing ' + w + ' in ' + names.join());
+  const png = n => files.find(f => f.name.endsWith(n)).data;
+  for (const n of ['-1-start.png', '-2-middle.png', '-3-end.png']) { const s = pngSize(png(n)); ok(s.sig === '89504e47' && s.w === 1280 && s.h === 720, n + ' ' + JSON.stringify(s)); }
+  ok(!png('-1-start.png').equals(png('-3-end.png')) && !png('-1-start.png').equals(png('-2-middle.png')), 'the three frames are identical: the camera did not move between them');
+  const txt = files.find(f => f.name.endsWith('-prompt.txt')).data.toString('utf8');
+  ok(txt === (await p.evaluate(() => window.__shotref.promptText())) + '\n', 'prompt.txt differs from the prompt: ' + txt);
+  noErrors(p);
+});
+
+check('frame pack: your edited prompt goes into the zip, and the shot name into the file names', async ({ open, downloads }) => {
+  const p = await open(); await promptScene(p);
+  await p.click('#shotBar .shotchip.add'); await settle(p, 150);
+  await p.evaluate(() => { window.__shotref.state.settings.size = 1280; window.__shotref.changed(true, true); });
+  await p.click('#bExport'); await p.fill('#props textarea.promptbox', 'Hand written prompt for Kling.');
+  await p.click('#xoPack');
+  const z = await downloads(p).wait('.zip', 30000);
+  ok(/^shotref-Shot_2-shaded-/.test(z.name), 'zip name ' + z.name);
+  const files = readZip(z.bytes);
+  ok(files.every(f => f.name.startsWith('shotref-Shot_2-shaded-')), files.map(f => f.name).join());
+  ok(files.find(f => f.name.endsWith('-prompt.txt')).data.toString('utf8') === 'Hand written prompt for Kling.\n', 'prompt not the edited one');
+  noErrors(p);
+});
+
+check('frame pack: stops with one message after a failed frame', async ({ open }) => {
+  const p = await open();
+  await p.evaluate(TOAST_LOG);
+  await p.evaluate(() => { HTMLCanvasElement.prototype.toBlob = function (cb) { cb(null); }; });
+  await p.click('#bExport'); await p.click('#xoPack');
+  await p.waitForTimeout(1500);
+  const n = await p.evaluate(() => window.__toasts.filter(t => /Could not make that frame/.test(t)).length);
+  ok(n === 1, 'error toast shown ' + n + ' times');
+  ok(await p.evaluate(() => (window.__dl || []).length) === 0, 'a zip was saved anyway');
+  noPageErrors(p);
+});
+
+check('current frame (PNG) names the shot when there are several', async ({ open, downloads }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => { window.__shotref.state.settings.size = 1280; window.__shotref.changed(true, true); });
+  await p.click('#bExport'); await p.click('#xoPng');
+  const a = await downloads(p).wait('.png', 30000);
+  ok(!/Shot/.test(a.name), 'one shot: no shot name: ' + a.name);
+  await p.keyboard.press('Escape');
+  await p.click('#shotBar .shotchip.add'); await settle(p, 150);
+  await p.evaluate(() => { window.__dl.length = 0; });
+  await p.click('#bExport'); await p.click('#xoPng');
+  const b = await downloads(p).wait('.png', 30000);
+  ok(/^shotref-Shot_2-frame0001-shaded-/.test(b.name), 'name ' + b.name);
+  noErrors(p);
+});
+
+check('contact sheet: first and last frame of every shot on one PNG, and the shots are left as they were', async ({ open, downloads }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => { const S = window.__shotref; S.applyMove('dollyIn'); S.changed(true, true); });
+  await p.click('#shotBar .shotchip.add'); await settle(p, 150);
+  await p.evaluate(() => { const S = window.__shotref; S.applyMove('craneUp'); S.state.meta = { id: 'm', name: 'Alley' }; S.changed(true, true); });
+  await p.click('#shotBar .shotchip:not(.add) >> nth=0'); await settle(p, 150);
+  await p.evaluate(() => window.__shotref.setT(1.5));
+  const before = await p.evaluate(() => JSON.stringify([window.__shotref.state.shotId, window.__shotref.state.camera, window.__shotref.state.settings.duration]));
+  await p.click('#bExport'); await p.click('#xoSheet');
+  await p.waitForFunction(() => !document.querySelector('#mSheet').classList.contains('hidden'), null, { timeout: 20000 });
+  await p.waitForFunction(() => { const i = document.querySelector('#sheetImg'); return i.complete && i.naturalWidth > 0; });
+  const d = await p.evaluate(() => { const i = document.querySelector('#sheetImg'); return { src: i.src.slice(0, 22), w: i.naturalWidth, h: i.naturalHeight }; });
+  ok(d.src === 'data:image/png;base64,' && d.w === 1028 && d.h === 544, 'sheet image ' + JSON.stringify(d));
+  ok(await p.evaluate(() => window.__shotref.T) === 1.5, 'the playhead moved');
+  ok(await p.evaluate(b => JSON.stringify([window.__shotref.state.shotId, window.__shotref.state.camera, window.__shotref.state.settings.duration]) === b, before), 'the active shot changed');
+  const diff = await p.evaluate(() => { const i = document.querySelector('#sheetImg'), c = document.createElement('canvas'); c.width = i.naturalWidth; c.height = i.naturalHeight; const g = c.getContext('2d'); g.drawImage(i, 0, 0); const px = (x, y, w, h) => g.getImageData(x, y, w, h).data; const a = px(16 + 376, 50, 360, 203), b = px(16 + 376, 50 + 247, 360, 203); let n = 0; for (let k = 0; k < a.length; k += 4) if (Math.abs(a[k] - b[k]) + Math.abs(a[k + 1] - b[k + 1]) > 12) n++; return n; });
+  ok(diff > 500, 'the last frames of the two shots look the same on the sheet (' + diff + ' px differ)');
+  await p.screenshot({ path: process.env.G_SHOTS ? path.join(process.env.G_SHOTS, 'g-sheet.png') : undefined });
+  await p.click('#sheetSave');
+  const png = await downloads(p).wait('.png', 20000);
+  ok(/contact-sheet/.test(png.name) && pngSize(png.bytes).w === 1028, 'saved ' + png.name);
+  noErrors(p);
+});
+
+check('every shot renders one video per shot, named after the shot, with each shot\'s own length', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => { const S = window.__shotref; S.state.settings.size = 1280; S.state.settings.duration = 1; S.changed(true, true); });
+  await p.click('#shotBar .shotchip.add'); await settle(p, 150);
+  await p.evaluate(() => { const S = window.__shotref; S.state.settings.duration = 2; S.changed(true, true); });
+  await p.click('#shotBar .shotchip:not(.add) >> nth=0'); await settle(p, 150);
+  await p.click('#bExport'); await p.click('#xoAll');
+  await p.waitForFunction(() => (window.__dl || []).filter(d => /\.(mp4|webm)$/.test(d.name)).length === 2, null, { timeout: 90000 });
+  const dl = await p.evaluate(() => window.__dl.map(d => ({ name: d.name, size: d.size })));
+  ok(/Shot_1/.test(dl[0].name) && /Shot_2/.test(dl[1].name) && dl.every(d => d.size > 1000), JSON.stringify(dl));
+  await p.waitForFunction(() => document.querySelector('#exCancel').hidden, null, { timeout: 10000 });
+  const s = await stateOf(p);
+  ok(s.shotId === s.shots[0].id && s.settings.duration === 1, 'the first shot is not active again: ' + JSON.stringify([s.shotId, s.settings.duration]));
+  ok(await p.evaluate(() => [...document.body.children].every(e => !e.inert)), 'page still locked');
+  noErrors(p);
+}, { timeout: 120000 });
 
 main().catch(e => { console.error(e && e.stack || e); process.exit(2); });

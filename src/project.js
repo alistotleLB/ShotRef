@@ -217,6 +217,13 @@ export function describeChange(beforeJSON, afterJSON) {
     if (!same(p.opts && p.opts.lookAt, o.opts && o.opts.lookAt)) return 'eyeline for ' + (o.name || 'item');
     return 'change ' + (o.name || 'item');
   }
+  /* shots: made, deleted, switched to, renamed or moved (their cameras change with the camera, so those are not compared here) */
+  const SH = s => (Array.isArray(s.shots) ? s.shots : []).filter(x => x && typeof x === 'object');
+  const sa = SH(a), sb = SH(b);
+  if (sa.length !== sb.length) return sb.length > sa.length ? 'new shot' : 'delete shot';
+  if (sa.map(x => x.id).join() !== sb.map(x => x.id).join()) return 'reorder shots';
+  if (a.shotId !== b.shotId) return 'switch to ' + ((sb.find(x => x.id === b.shotId) || {}).name || 'another shot');
+  if (sa.some((x, i) => x.name !== sb[i].name)) return 'rename shot';
   if (!same(a.groups, b.groups)) return 'rename group';
   if (!same(a.meta, b.meta)) return 'rename project';
   if (!same(a.camera, b.camera)) {

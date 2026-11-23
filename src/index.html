@@ -116,7 +116,24 @@ button.icon svg,.ib svg{width:17px;height:17px;stroke:currentColor;fill:none;str
 .keyline .kdia{color:var(--acc)}
 .sval{width:62px;text-align:right;color:#cdd1d6;font-variant-numeric:tabular-nums}
 /* timeline */
-#tl{grid-area:tl;background:var(--panel);border-top:1px solid var(--line);display:flex;flex-direction:column;min-height:90px;max-height:182px}
+#tl{grid-area:tl;background:var(--panel);border-top:1px solid var(--line);display:flex;flex-direction:column;min-height:90px;max-height:216px}
+#shotBar{display:flex;align-items:center;gap:4px;padding:5px 10px;border-bottom:1px solid var(--line);overflow-x:auto;min-height:34px;flex:none}
+#shotBar .lbl{color:var(--mute);font-size:11px;font-weight:600;margin-right:4px;width:auto}
+#shotBar input{width:130px;padding:2px 6px;font-size:12px}
+.shotchip{display:flex;align-items:center;gap:6px;padding:3px 10px;border-radius:14px;font-size:12px;background:var(--panel2);white-space:nowrap}
+.shotchip small{color:var(--mute);font-size:10.5px}
+.shotchip.on{background:var(--accd);border-color:var(--acc);color:#ffe3c6}
+.shotchip.on small{color:var(--acc2)}
+.shotchip.add{background:transparent;border-style:dashed;color:var(--mute)}
+#shotBar .sright{margin-left:auto;display:flex;gap:4px}
+#shotBar .sright button{padding:3px 9px;font-size:12px}
+.promptbox{width:100%;min-height:150px;resize:vertical;background:#15161a;border:1px solid var(--line2);border-radius:7px;color:#e7e9ec;font:12.5px/1.5 "Segoe UI",system-ui,sans-serif;padding:8px 9px}
+.expgrid{display:grid;grid-template-columns:1fr 1fr;gap:5px}
+.expgrid .wide{grid-column:span 2}
+.expgrid button{padding:8px 6px;white-space:normal;line-height:1.25}
+.stylechips{display:grid;grid-template-columns:repeat(4,1fr);gap:4px}
+.stylechips button{display:flex;flex-direction:column;align-items:stretch;gap:4px;padding:4px;font-size:11px}
+.stylechips .sw{height:22px;border-radius:4px}
 #tlBar{display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--line)}
 #tlBar label{display:flex;align-items:center;gap:5px;color:var(--mute)}
 #tlBar input[type=number]{width:58px}
@@ -351,6 +368,7 @@ button.icon{padding:5px 8px;min-width:32px;display:inline-flex;align-items:cente
   <aside id="right"><div id="props"></div></aside>
 
   <footer id="tl">
+    <div id="shotBar"></div>
     <div id="tlBar">
       <div class="tp">
         <button id="bStart" title="Go to start (Home)">⏮</button>
@@ -401,7 +419,7 @@ button.icon{padding:5px 8px;min-width:32px;display:inline-flex;align-items:cente
   <div class="exacts">
     <button id="exVideo" class="primary">Render video (MP4)</button>
     <button id="exFrame">Current frame (PNG)</button>
-    <button id="exEnds">Start + end frames (PNG)</button>
+    <button id="exEnds" title="Start, middle and end frames plus the prompt, in one zip">Frame pack (zip)</button>
     <button id="exCopy" style="grid-column:span 2">Copy current frame to clipboard</button>
   </div>
   <div class="prog" id="exProg" hidden>
@@ -409,6 +427,14 @@ button.icon{padding:5px 8px;min-width:32px;display:inline-flex;align-items:cente
     <div class="row" style="justify-content:space-between"><span id="exTxt" class="note"></span><button id="exCancel">Cancel</button></div>
   </div>
   <p class="note">Video renders frame by frame, so it is always smooth at the chosen FPS, whatever your PC's speed. Helpers like the camera icon and paths are never included.</p>
+</div></div>
+
+<div id="mSheet" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mSheetT"><div class="dlg" style="width:min(900px,96vw)">
+  <button class="x" data-close aria-label="Close">×</button>
+  <h2 id="mSheetT">Contact sheet</h2>
+  <p class="note" style="font-size:13px">The first and last frame of every shot.</p>
+  <img id="sheetImg" alt="Contact sheet" style="width:100%;border-radius:8px;border:1px solid var(--line2);display:block;margin-top:8px">
+  <div class="btns" style="margin-top:12px"><button data-close>Close</button><button id="sheetSave" class="primary">Save as PNG</button></div>
 </div></div>
 
 <div id="mHelp" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mHelpT"><div class="dlg scroll">

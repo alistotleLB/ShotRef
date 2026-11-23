@@ -174,7 +174,7 @@ const ok = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
     const { app, page } = await launch();
     await app.evaluate(async ({ clipboard }) => { globalThis.__clipText = String(await clipboard.readText()); await clipboard.clear(); });
     try {
-      await page.click('#bExport');
+      await page.click('#bExport'); await page.click('#xoOptions');
       await page.click('#exCopy');
       await page.waitForFunction(() => /Frame copied/.test(document.querySelector('#toast').textContent), null, { timeout: 15000 });
       ok(!(await page.evaluate(() => document.querySelector('#mCopy').classList.contains('hidden') === false)), 'fell back to the right-click dialog');
