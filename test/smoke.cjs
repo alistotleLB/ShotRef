@@ -3159,7 +3159,7 @@ check('artifact files: parent, free, mount and convertible shapes open and rende
   ok(by('Driver').parent === by('Roadster').id && by('Driver').opts.seated === by('Roadster').id, 'the driver rides in the roadster');
   ok(by('Drone').opts.free === true && Math.abs(by('Drone').base.p[1] - 4) < 0.01, 'a floating drone stays up (Can float): ' + by('Drone').base.p);
   ok(Math.abs(by('Cup').base.p[1] - 0.77) < 0.03, 'the cup rests on the table: ' + by('Cup').base.p);
-  ok(Math.abs(by('Crate').base.p[1]) < 0.02, 'a crate saved in the air without Can float drops to the floor, as in the artifact: ' + by('Crate').base.p);
+  ok(Math.abs(by('Crate').base.p[1] - 2) < 0.01 && by('Crate').opts.free === true, 'a crate saved in the air stays there and becomes Can float (opening never moves things): ' + by('Crate').base.p);
   const dw = await p.evaluate(i => { const S = window.__shotref; S.setT(2); S.applyAll(2); return S.viewOf(i).p; }, by('Driver').id);
   ok(near(dw, [5.72, 0.726, -0.4], 0.05), 'the driver is in the seat of the moving car at 2 s (car at 6,0,0 turned 90): ' + dw);
   const cam = await p.evaluate(() => window.__shotref.evalCam(2));
@@ -3185,6 +3185,91 @@ check('artifact files: the Desert overlook cast (woman, convertible, cacti) open
   ok(k[0][1] > 5 && Math.abs(k[1][1] / k[0][1] - 0.5) < 0.05, 'cacti are tall and the small one is half: ' + JSON.stringify(k));
   await p.evaluate(() => window.__shotref.setView('camera')); await settle(p, 500);
   await shotPng(p, 'e-desert-cast.png');
+  noErrors(p);
+});
+
+/* ---------------- Batch E fix round 1: opening never moves anything; ground switch; late models; timing ---------------- */
+const OLD_RAISED = () => {
+  const O = (id, type, p, extra = {}) => ({ id, type, name: id, color: '#cccccc', base: { p, r: [0, 0, 0], s: [1, 1, 1] }, keys: [], opts: {}, visible: true, ...extra });
+  const ball = O('ball1', 'ball', [1, 3, 1], { keys: [{ t: 0, p: [1, 3, 1], r: [0, 0, 0], s: [1, 1, 1] }, { t: 2, p: [4, 2.5, 1], r: [0, 0, 0], s: [1, 1, 1] }] });
+  return { app: 'ShotRef', version: 2, state: { v: 2, settings: { duration: 5, fps: 24 }, camera: { base: JSON.parse(CAM_BASE), keys: [] }, objects: [O('crate1', 'box', [-2, 2, 0]), ball, O('rest1', 'box', [5, 0, 5])] }, assets: {} };
+};
+const keysOf = st => st.objects.map(o => JSON.stringify([o.id, o.base.p, o.keys.map(k => [k.t, k.p])]));
+
+check('opening an old file never moves anything: a raised crate and a y-keyed ball stay where they were (Can float), and Undo still reaches the old scene', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const file = OLD_RAISED();
+  const before = keysOf(file.state);
+  await openFile(p, 'old.shotref', JSON.stringify(file));
+  await p.waitForFunction(() => window.__shotref.state.objects.some(o => o.id === 'crate1')); await settle(p, 900);
+  const st = await stateOf(p);
+  ok(JSON.stringify(keysOf(st)) === JSON.stringify(before), 'positions and keys identical: ' + JSON.stringify(keysOf(st)));
+  ok(st.objects.find(o => o.id === 'crate1').opts.free === true && st.objects.find(o => o.id === 'ball1').opts.free === true, 'the raised ones are Can float');
+  ok(!st.objects.find(o => o.id === 'rest1').opts.free, 'one resting on the floor is left alone');
+  await p.click('#bUndo'); await settle(p, 300);
+  ok((await p.evaluate(() => window.__shotref.state.objects.length)) === 3 && !(await p.evaluate(() => window.__shotref.state.objects.some(o => o.id === 'crate1'))), 'Undo goes back to the scene before Open');
+  await p.click('#bRedo'); await settle(p, 300);
+  ok(JSON.stringify(keysOf(await stateOf(p))) === JSON.stringify(before), 'Redo brings the opened file back unchanged');
+  noErrors(p);
+});
+
+check('restoring an autosave at start never moves anything either', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const file = OLD_RAISED(), before = keysOf(file.state);
+  await p.evaluate(s => localStorage.setItem('shotref.autosave', JSON.stringify({ state: s, assets: {}, assetIds: [], v: 2 })), file.state);
+  await p.reload(); await p.waitForFunction(() => window.__shotref && window.__shotref.state); await settle(p, 1000);
+  const st = await stateOf(p);
+  ok(st.objects.some(o => o.id === 'crate1'), 'the autosave was restored');
+  ok(JSON.stringify(keysOf(st)) === JSON.stringify(before), 'positions and keys identical: ' + JSON.stringify(keysOf(st)));
+  ok(st.objects.find(o => o.id === 'crate1').opts.free === true, 'raised items came up as Can float');
+  noErrors(p);
+});
+
+check('gear menu: "Keep things on the ground" switches the rule; switching on moves nothing', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.click('#bMenu');
+  ok(await p.evaluate(() => { const b = document.querySelector('#ctxMenu [data-cmd="ground"]'); return !!b && b.getAttribute('aria-checked') === 'true'; }), 'on by default, with a tick');
+  await p.click('#ctxMenu [data-cmd="ground"]'); await settle(p, 200);
+  ok(await p.evaluate(() => window.__shotref.getPref('ground', true)) === false, 'switched off');
+  const id = await mkObj(p, 'box', [3, 0, 3], { base: { p: [3, 2, 3], r: [0, 0, 0], s: [1, 1, 1] } }); await settle(p, 400);
+  ok(Math.abs((await objOf(p, id)).base.p[1] - 2) < 0.001, 'off: nothing is dropped');
+  await gearCmd(p, 'ground'); await settle(p, 700);
+  const o = await objOf(p, id);
+  ok(Math.abs(o.base.p[1] - 2) < 0.001 && o.opts.free === true, 'switching on leaves the raised box where it is, as Can float: ' + JSON.stringify([o.base.p, o.opts]));
+  noErrors(p);
+});
+
+check('models: a raised model in an opened file stays put (Can float) once it has loaded, and every item gets checked', async ({ open, fixtures }) => {
+  const p = await open(); await settle(p, 300);
+  const b64 = fs.readFileSync(path.join(fixtures, 'cube.glb')).toString('base64');
+  const file = { app: 'ShotRef', version: 2, state: { v: 2, settings: { duration: 5, fps: 24 }, camera: { base: JSON.parse(CAM_BASE), keys: [] }, objects: [
+    { id: 'mod1', type: 'model', name: 'Cube', color: '#ffffff', asset: 'a1', base: { p: [0, 3, 0], r: [0, 0, 0], s: [1, 1, 1] }, keys: [], opts: {}, visible: true },
+    { id: 'lo1', type: 'ball', name: 'Lo', color: '#ffffff', base: { p: [6, 0, 0], r: [0, 0, 0], s: [1, 1, 1] }, keys: [], opts: {}, visible: true }] }, assets: { a1: { kind: 'model', name: 'cube.glb', b64, mime: 'model/gltf-binary' } } };
+  await openFile(p, 'm.shotref', JSON.stringify(file));
+  await p.waitForFunction(() => window.__shotref.state.objects.some(o => o.id === 'mod1')); await settle(p, 1500);
+  const st = await stateOf(p), m = st.objects.find(o => o.id === 'mod1');
+  ok(Math.abs(m.base.p[1] - 3) < 1e-6 && m.opts.free === true, 'the raised model keeps its height and becomes Can float: ' + JSON.stringify([m.base.p, m.opts]));
+  ok(await p.evaluate(() => window.__shotref.groundMigrate()) === 0, 'every item was checked once the model had loaded');
+  noErrors(p);
+});
+
+check('models: a model imported after the first frame is rested on its real bounds, not on the placeholder', async ({ open, fixtures }) => {
+  const p = await open(); await settle(p, 400);
+  await p.setInputFiles('#fModel', path.join(fixtures, 'cube.glb')); await settle(p, 1200);
+  await p.mouse.click(700, 500); await settle(p, 300); /* click to place it */
+  const id = await p.evaluate(() => window.__shotref.state.objects.find(o => o.type === 'model').id);
+  await p.evaluate(i => { const S = window.__shotref; S.state.objects.find(o => o.id === i).base.p = [0, 0.4, 0]; S.changed(true, true); }, id); await settle(p, 600);
+  ok(Math.abs((await objOf(p, id)).base.p[1]) < 0.02, 'a loaded model rests on the floor: ' + (await objOf(p, id)).base.p);
+  noErrors(p);
+});
+
+check('timing: settling 123 objects after an edit takes under 20 ms', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => { const S = window.__shotref; for (let i = 0; i < 120; i++) { const o = S.addObject(i % 3 === 0 ? 'table' : i % 3 === 1 ? 'chair' : 'box', null, false, [(i % 12) * 2 - 12, 0, Math.floor(i / 12) * 2 - 10]); if (i % 4 === 0) o.keys = [0, 1, 2, 3].map(t => ({ t, p: [o.base.p[0] + t * 0.1, 0, o.base.p[2]], r: [0, 0, 0], s: [1, 1, 1] })); } S.changed(true, true); });
+  await settle(p, 800);
+  const ts = []; for (let i = 0; i < 5; i++) ts.push(await p.evaluate(() => window.__shotref.settleTime()));
+  console.log('   settle time for ' + (await p.evaluate(() => window.__shotref.state.objects.length)) + ' objects (ms): ' + ts.map(t => t.toFixed(1)).join(', '));
+  ok(Math.min(...ts) < 20, 'settle took ' + Math.min(...ts).toFixed(1) + ' ms');
   noErrors(p);
 });
 

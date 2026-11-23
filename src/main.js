@@ -362,15 +362,14 @@ function pushHistory() {
   histDoc = histDoc.slice(0, hi + 1); histDoc.push(platform.getDoc());
   if (hist.length > 100) { hist.shift(); histDoc.shift(); }
   hi = hist.length - 1;
-  groundDirty = true;
   platform.setDirty(true);
   autosave();
 }
-function changed(commit, props = false) { editRev++; uiDirty = true; if (props) propsDirty = true; if (commit) pushHistory(); }
+function changed(commit, props = false) { editRev++; uiDirty = true; if (props) propsDirty = true; if (commit) { groundDirty = true; pushHistory(); } } /* a real edit: things settle once it is over */
 function restore(s) {
   state = JSON.parse(s);
   sanitizeSel();
-  syncScene(); applyEnv(); editRev++; uiDirty = true; propsDirty = true; groundDirty = true; updateGizmo(); syncTopUI();
+  syncScene(); applyEnv(); editRev++; uiDirty = true; propsDirty = true; updateGizmo(); syncTopUI();
 }
 /* undo/redo autosave too, so an undone delete puts its photo or model back in the autosave */
 const changeLabel = (word, before, after) => { const d = describeChange(before, after); return d ? word + ': ' + d : word; };
@@ -810,7 +809,7 @@ const BUILD = {
       inner.position.sub(new THREE.Vector3(ctr.x, bb2.min.y, ctr.z));
       inner.traverse(m => { if (m.isMesh) { m.castShadow = m.receiveShadow = true; m.userData.shared = true; } });
       g.remove(ph); ph.geometry.dispose(); g.add(wrap);
-      const v = views.get(o.id); if (v) v.aimY = (bb2.max.y - bb2.min.y) * 0.6;
+      const v = views.get(o.id); if (v) { v.aimY = (bb2.max.y - bb2.min.y) * 0.6; v.pending = false; if (!groundMigrate.has(o.id)) groundDirty = true; } /* real bounds now: rest it (a new import) */
       editRev++; requestRender();
     }).catch(err => { console.error(err); toast(err && err.friendly || 'Could not read that model file', 4500); });
     return res;
@@ -1137,7 +1136,7 @@ function syncScene() {
     if (v.sig !== sig) {
       for (const c of [...v.group.children]) { v.group.remove(c); disposeTree(c); }
       const b = buildVisual(o);
-      v.group.add(b.root); v.person = b.person || null; v.wheels = b.wheels || null; v.aimY = b.aimY; v.isMark = !!b.isMark; v.sig = sig;
+      v.group.add(b.root); v.person = b.person || null; v.wheels = b.wheels || null; v.pending = !!b.async; v.aimY = b.aimY; v.isMark = !!b.isMark; v.sig = sig;
     }
     v.group.visible = o.visible !== false;
   }
@@ -1634,7 +1633,7 @@ function frame(now) {
   if (go) {
     needsRender = false; lastSig = sig;
     applyAll(T);
-    if (groundDirty && !dragActive && !placing && !pathMode && !playing && !gizmo.dragging && !rec) settleGround(); /* things come to rest on what is under them once the edit is over */
+    if ((groundDirty || groundMigrate.size) && !dragActive && !placing && !pathMode && !playing && !gizmo.dragging && !rec) { migrateGround(); if (groundDirty) settleGround(); } /* things come to rest on what is under them once the edit is over */
     if (rec && rec.phase === 'rec') recSample();
     updateHelpers(); updateSelBar();
     renderer.shadowMap.needsUpdate = true;
@@ -2468,6 +2467,7 @@ function fileMenuItems() {
 }
 function gearMenuItems() {
   return [{ id: 'advanced', label: 'Advanced controls', check: !simple, fn: () => setSimple(!simple) },
+    { id: 'ground', label: 'Keep things on the ground', check: groundOn(), fn: () => { const on = !groundOn(); setPref('ground', on); if (on) migrateAll(); requestRender(); propsDirty = true; updateGizmo(); toast(on ? 'Things now rest on the floor or on what is under them. Raised items were left where they are.' : 'Things are no longer kept on the ground.', 3500); } }, /* switching on never moves anything: raised items become "Can float" */
     { id: 'settings', label: 'Settings\u2026', fn: () => openModal('mSettings') },
     '-',
     { id: 'help', label: 'Quick start and shortcuts', fn: () => openModal('mHelp'), key: '?' },
@@ -2815,7 +2815,7 @@ function rideIds(o) { const set = new Set([o.id]); for (const q of state.objects
 function releaseRiders(gone) { for (const q of state.objects) if (!gone.has(q.id) && q.parent && gone.has(q.parent)) attachTo(q, null); }
 const _gr = new THREE.Raycaster(), _down = new THREE.Vector3(0, -1, 0), _gn = new THREE.Vector3(), _gb = new THREE.Box3();
 /* what an item can rest on: everything visible that is not a mark or a person (and not the item itself or what rides on it) */
-const restTargets = skip => [...views.values()].filter(v => v.group.visible && !v.isMark && !v.person && !skip.has(v.group.userData.objId)).map(v => v.group);
+const restTargets = skip => [...views.values()].filter(v => v.group.visible && !v.isMark && !v.person && !v.pending && !skip.has(v.group.userData.objId)).map(v => v.group);
 function firstUpFace(hits) {
   for (const h of hits) if (h.face) { _gn.copy(h.face.normal).transformDirection(h.object.matrixWorld); if (_gn.y > 0.5) return h.point; }
   return null;
@@ -2858,33 +2858,48 @@ function groundYFor(o, v, k) {
   const off = restOffset(v, k.r, k.s);
   return r4(surfaceUnder(k.p[0], k.p[2], v.person ? 50 : k.p[1] + off + 0.35, rideIds(o), !!v.person) - off);
 }
-/* settle every grounded item's base and keys onto what is under them. Returns the items that moved by more than 5 cm. */
+/* settle every grounded item's base and keys onto what is under them. */
 function solveGround() {
-  const moved = new Set();
   for (let pass = 0; pass < 2; pass++) {
     let any = false;
     scene.updateMatrixWorld(true);
     for (const o of state.objects) {
       if (!isGrounded(o)) continue;
-      const v = views.get(o.id); if (!v) continue;
+      const v = views.get(o.id); if (!v || v.pending) continue; /* a model still loading has no real bounds yet */
       for (const k of (o.keys.length ? o.keys : [o.base])) {
         const y = groundYFor(o, v, k);
-        if (Math.abs(y - k.p[1]) > 2e-3) { if (Math.abs(y - k.p[1]) > 0.05) moved.add(o.name); k.p = [k.p[0], y, k.p[2]]; any = true; }
+        if (Math.abs(y - k.p[1]) > 2e-3) { k.p = [k.p[0], y, k.p[2]]; any = true; }
       }
     }
     if (!any) break;
     editRev++; applyAll(T);
   }
-  return [...moved];
 }
-let groundDirty = true, groundNote = false; /* an edit or a new scene happened: settle things on the next calm frame; say so after Open */
+/* Settling happens only after a real edit (groundDirty). A project that was just opened, restored or switched on must never be
+   moved: groundMigrate holds the items not yet checked, and anything the rule would move there is set to "Can float" instead,
+   so it stays exactly where it was. */
+let groundDirty = false;
+const groundMigrate = new Set();
+const migrateAll = () => { for (const o of state.objects) groundMigrate.add(o.id); };
+function migrateGround() {
+  if (!groundMigrate.size) return;
+  let n = 0;
+  scene.updateMatrixWorld(true);
+  for (const id of [...groundMigrate]) {
+    const o = getObj(id), v = views.get(id);
+    if (!o || !isGrounded(o)) { groundMigrate.delete(id); continue; }
+    if (!v || v.pending) continue; /* try again when the model has loaded */
+    groundMigrate.delete(id);
+    if ((o.keys.length ? o.keys : [o.base]).some(k => Math.abs(groundYFor(o, v, k) - k.p[1]) > 2e-3)) { o.opts.free = true; n++; }
+  }
+  if (n) { hist[hi] = snapshot(); autosave(); uiDirty = true; propsDirty = true; toast(n === 1 ? 'A raised item was set to "Can float", so it stays where it is.' : n + ' raised items were set to "Can float", so they stay where they are.', 4500); }
+}
 function settleGround() {
   groundDirty = false;
   if (!groundOn()) return;
-  const before = editRev, names = solveGround();
-  if (editRev !== before) { hist[hi] = snapshot(); autosave(); uiDirty = true; propsDirty = true; pathRev = -1; }
-  if (groundNote && names.length) toast((names.length === 1 ? names[0] : names.length + ' things') + ' set down on the floor (or on what is under ' + (names.length === 1 ? 'it' : 'them') + '). Tick "Can float" to keep something in the air.', 5000);
-  groundNote = false;
+  const before = editRev;
+  solveGround();
+  if (editRev !== before) { hist[hi] = snapshot(); autosave(); uiDirty = true; propsDirty = true; pathRev = -1; } /* part of the edit's own undo step */
 }
 
 /* ---- shot sizes ---- */
@@ -3103,7 +3118,7 @@ function deleteSel() {
   releaseRiders(gone); /* what rode on a deleted item stays where it stood */
   if (state.camera.mount && gone.has(state.camera.mount)) setMount(null);
   state.objects = state.objects.filter(x => !gone.has(x.id));
-  for (const q of state.objects) { if (gone.has(q.opts.lookAt)) delete q.opts.lookAt; if (gone.has(q.opts.seated)) q.opts.seated = null; } /* nobody looks at or sits on what is gone */
+  for (const q of state.objects) { if (gone.has(q.opts.lookAt)) delete q.opts.lookAt; if (gone.has(q.opts.seated)) { q.opts.seated = null; if (q.opts.pose === 'sit') q.opts.pose = 'stand'; } } /* nobody looks at or sits on what is gone */
   selIds = selIds.filter(id => !gone.has(id)); selected = selIds[selIds.length - 1] || null;
   pruneGroups(); syncScene(); updateGizmo(); changed(true, true);
   toast((list.length === 1 ? list[0].name : list.length + ' items') + ' deleted' + (kept ? ' (' + kept + ' locked ' + (kept === 1 ? 'item' : 'items') + ' kept)' : ''));
@@ -3182,7 +3197,7 @@ function replaceProject(newState, newAssets = {}, label) {
   try {
     for (const [id, a] of Object.entries(newAssets)) if (assets[id] && assets[id].b64 !== (a && a.b64)) dropModel(id);
     assets = { ...assets, ...newAssets };
-    state = newState; selected = null; selIds = []; setTime(0); groundNote = true;
+    state = newState; selected = null; selIds = []; setTime(0); migrateAll();
     platform.startDoc(); /* Open, New and starters are a new document: Save must not reuse the previous file */
     restore(snapshot()); pushHistory(); resetEditorCam();
     if (label) toast(label);
@@ -4054,7 +4069,7 @@ function boot() {
     try { localStorage.removeItem('shotref.autosave'); localStorage.setItem('shotref.autosave.broken', raw); }
     catch (e) { console.error('ShotRef: could not keep a copy of the broken autosave', e); }
   }
-  pushHistory(); platform.setDirty(wasDirty); setSimple(simple);
+  migrateAll(); pushHistory(); platform.setDirty(wasDirty); setSimple(simple);
   /* only now: queued menu / file events from the desktop shell must see the restored scene and its unsaved mark */
   platform.onMenu(onDesktopMenu);
   platform.onOpenFile(f => { if (f && typeof f.text === 'string') { launchFile = true; closeModal($('#mStart')); loadProjectText(f.text, f, true); } });
@@ -4092,7 +4107,7 @@ function boot() {
     if (e.key === AUTOSAVE_KEY && !tabWarned) { tabWarned = true; toast('ShotRef is open in another tab. Changes here may overwrite it.', 6000); }
   });
   window.addEventListener('pagehide', flushAutosave);
-  window.__shotref = { get selection() { return selIds; }, pickAtScreen: (x, y) => { const rc = rayFromEvent({ clientX: x, clientY: y }); const h = rc && pickAt(rc); return h ? h.id : null; }, liftKnob: () => { if (!liftGrp.visible) return null; const q = liftPick.getWorldPosition(new THREE.Vector3()); return window.__shotref.project(q.x, q.y, q.z); }, attachTo, setMount, writeCam, shownObj: (id, t) => shownObj(getObj(id), t), viewOf: id => { const v = views.get(id); if (!v) return null; v.group.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(v.group), sz = bb.getSize(new THREE.Vector3()); return { p: v.group.position.toArray(), yaw: v.group.rotation.y * R2D, s: v.group.scale.toArray(), size: sz.toArray(), wheels: v.wheels ? v.wheels.list.map(w => ({ spin: w.spin.rotation.x, steer: w.piv.rotation.y, front: w.front })) : null }; }, ringKnob: () => ringGrp.visible ? ringKnob.getWorldPosition(new THREE.Vector3()).toArray() : null, getPref, setPref, showMenu, menuButton, hideMenu, project: (x, y, z) => { const r = canvas.getBoundingClientRect(); let cam = view === 'top' ? topCam : edCam, rr = { x: 0, y: 0, w: r.width, h: r.height }; if (view === 'camera') { cam = renderCam; rr = camRect(r.width, r.height); } const v = new THREE.Vector3(x, y, z).project(cam); return [r.left + rr.x + (v.x * 0.5 + 0.5) * rr.w, r.top + rr.y + (-v.y * 0.5 + 0.5) * rr.h]; }, get view() { return view; }, get selected() { return selected; }, get state() { return state; }, get assets() { return assets; }, setT: t => setTime(t, false), applyMove, addObject, select, setView, evalCam, exportVideo, exportPNG, pickCodec, _exportCanvas: () => exRenderer ? exRenderer.domElement : null, changed, writeObj, evalObj, setKey, get T() { return T; },
+  window.__shotref = { get selection() { return selIds; }, pickAtScreen: (x, y) => { const rc = rayFromEvent({ clientX: x, clientY: y }); const h = rc && pickAt(rc); return h ? h.id : null; }, settleTime: () => { const t0 = performance.now(); solveGround(); return performance.now() - t0; }, groundMigrate: () => groundMigrate.size, liftKnob: () => { if (!liftGrp.visible) return null; const q = liftPick.getWorldPosition(new THREE.Vector3()); return window.__shotref.project(q.x, q.y, q.z); }, attachTo, setMount, writeCam, shownObj: (id, t) => shownObj(getObj(id), t), viewOf: id => { const v = views.get(id); if (!v) return null; v.group.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(v.group), sz = bb.getSize(new THREE.Vector3()); return { p: v.group.position.toArray(), yaw: v.group.rotation.y * R2D, s: v.group.scale.toArray(), size: sz.toArray(), wheels: v.wheels ? v.wheels.list.map(w => ({ spin: w.spin.rotation.x, steer: w.piv.rotation.y, front: w.front })) : null }; }, ringKnob: () => ringGrp.visible ? ringKnob.getWorldPosition(new THREE.Vector3()).toArray() : null, getPref, setPref, showMenu, menuButton, hideMenu, project: (x, y, z) => { const r = canvas.getBoundingClientRect(); let cam = view === 'top' ? topCam : edCam, rr = { x: 0, y: 0, w: r.width, h: r.height }; if (view === 'camera') { cam = renderCam; rr = camRect(r.width, r.height); } const v = new THREE.Vector3(x, y, z).project(cam); return [r.left + rr.x + (v.x * 0.5 + 0.5) * rr.w, r.top + rr.y + (-v.y * 0.5 + 0.5) * rr.h]; }, get view() { return view; }, get selected() { return selected; }, get state() { return state; }, get assets() { return assets; }, setT: t => setTime(t, false), applyMove, addObject, select, setView, evalCam, exportVideo, exportPNG, pickCodec, _exportCanvas: () => exRenderer ? exRenderer.domElement : null, changed, writeObj, evalObj, setKey, get T() { return T; },
     get rebuilds() { return rebuilds; }, urlCacheIds: () => [...urlCache.keys()],
     get history() { return { at: hi, length: hist.length }; },
     /* batch D (people) hooks for the smoke test */
