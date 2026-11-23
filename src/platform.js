@@ -31,7 +31,11 @@ const dlReady = (async () => {
 })();
 
 /* where the open project lives (desktop only knows a path) and whether it has unsaved changes */
-const cur = { name: null, path: null, dirty: false, rev: 0 }; /* rev counts edits, so a save only clears the mark if nothing changed while it ran */
+/* history steps carry a document id; docs maps it to its file. Save / Save as update the current document's entry. */
+const docs = { 1: { name: null, path: null } };
+let docSeq = 1;
+const cur = { doc: 1, name: null, path: null, dirty: false, rev: 0 };
+const setFile = (name, path) => { cur.name = name || null; cur.path = path || null; docs[cur.doc] = { name: cur.name, path: cur.path }; }; /* rev counts edits, so a save only clears the mark if nothing changed while it ran */
 function updateTitle() {
   if (!desk) return; /* the page title stays "ShotRef" on the web */
   try { desk.setTitle((cur.dirty ? '• ' : '') + (cur.name ? cur.name + ' - ' : '') + 'ShotRef'); } catch (e) { console.error('ShotRef: could not set the window title', e); }
@@ -64,7 +68,7 @@ async function saveProject(text, opts = {}) {
   }
   try {
     const r = await desk.saveProject(text, { saveAs: !!opts.saveAs, path: opts.saveAs ? null : cur.path, name });
-    if (r && r.ok) { cur.name = r.name || cur.name; cur.path = r.path || cur.path; if (cur.rev === rev) cur.dirty = false; updateTitle(); }
+    if (r && r.ok) { setFile(r.name || cur.name, r.path || cur.path); if (cur.rev === rev) cur.dirty = false; updateTitle(); }
     return r || { ok: false, error: 'no answer' };
   } catch (e) { console.error('ShotRef: could not save the project', e); return { ok: false, error: errText(e) }; }
 }
@@ -81,15 +85,17 @@ export const platform = {
   saveBlob, saveProject, openProject,
   currentName: () => cur.name,
   currentPath: () => cur.path,
-  getFile: () => ({ name: cur.name, path: cur.path }),
+  getDoc: () => cur.doc,
+  /* Open / New / starters: a new document with no file yet */
+  startDoc() { cur.doc = ++docSeq; setFile(null, null); },
   /* undo/redo moved to a step that belongs to another file (or none) */
-  restoreFile(f) { if (!f) return; cur.name = f.name; cur.path = f.path; updateTitle(); },
+  restoreDoc(id) { const d = docs[id]; if (!d) return; cur.doc = id; cur.name = d.name; cur.path = d.path; updateTitle(); },
   isDirty: () => cur.dirty,
   setDirty(d) { d = !!d; if (d) cur.rev++; if (cur.dirty !== d) { cur.dirty = d; updateTitle(); } },
   /* a project was opened from a file (name/path may be missing, e.g. drag-drop has no path) */
-  setCurrent(name, path) { cur.name = name || null; cur.path = path || null; cur.dirty = false; updateTitle(); },
+  setCurrent(name, path) { setFile(name, path); cur.dirty = false; updateTitle(); },
   /* a new, unsaved project: forget the file */
-  newProject() { cur.name = null; cur.path = null; cur.dirty = true; updateTitle(); },
+  newProject() { cur.dirty = true; updateTitle(); },
   onMenu(cb) { if (desk && typeof desk.onMenu === 'function') desk.onMenu(cb); },
   onOpenFile(cb) { if (desk && typeof desk.onOpenFile === 'function') desk.onOpenFile(cb); },
   closeOk() { if (desk && typeof desk.closeOk === 'function') desk.closeOk(); },

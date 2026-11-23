@@ -253,14 +253,14 @@ function evalCam(t) {
 
 /* ---- history ---- */
 let hist = [], hi = -1;
-let histFile = []; /* the open file ({name, path}) for each history step, so undo across an Open can't make Save overwrite that file */
+let histDoc = []; /* the document id of each history step (platform.js maps it to the file), so undo across an Open can't make Save overwrite that file */
 function snapshot() { return JSON.stringify(state); }
 function pushHistory() {
   const s = snapshot();
   if (hist[hi] === s) return;
   hist = hist.slice(0, hi + 1); hist.push(s);
-  histFile = histFile.slice(0, hi + 1); histFile.push(platform.getFile());
-  if (hist.length > 100) { hist.shift(); histFile.shift(); }
+  histDoc = histDoc.slice(0, hi + 1); histDoc.push(platform.getDoc());
+  if (hist.length > 100) { hist.shift(); histDoc.shift(); }
   hi = hist.length - 1;
   platform.setDirty(true);
   autosave();
@@ -273,8 +273,8 @@ function restore(s) {
 }
 /* undo/redo autosave too, so an undone delete puts its photo or model back in the autosave */
 const changeLabel = (word, before, after) => { const d = describeChange(before, after); return d ? word + ': ' + d : word; };
-function undo() { if (exporting) return; if (hi > 0) { hi--; restore(hist[hi]); platform.restoreFile(histFile[hi]); platform.setDirty(true); autosave(); toast(changeLabel('Undo', hist[hi], hist[hi + 1])); } }
-function redo() { if (exporting) return; if (hi < hist.length - 1) { hi++; restore(hist[hi]); platform.restoreFile(histFile[hi]); platform.setDirty(true); autosave(); toast(changeLabel('Redo', hist[hi - 1], hist[hi])); } }
+function undo() { if (exporting) return; if (hi > 0) { hi--; restore(hist[hi]); platform.restoreDoc(histDoc[hi]); platform.setDirty(true); autosave(); toast(changeLabel('Undo', hist[hi], hist[hi + 1])); } }
+function redo() { if (exporting) return; if (hi < hist.length - 1) { hi++; restore(hist[hi]); platform.restoreDoc(histDoc[hi]); platform.setDirty(true); autosave(); toast(changeLabel('Redo', hist[hi - 1], hist[hi])); } }
 /* ---- autosave ----
    localStorage 'shotref.autosave' = { state, assets: {}, assetIds: [...], v: 2 } (small).
    Photos and models go to IndexedDB (db 'shotref', store 'assets', key = asset id).
@@ -2313,15 +2313,16 @@ function buildState(fill) {
 /* The one way to swap the whole scene. Keeps undo (pushes a step) and keeps old files in memory so undo can rebuild them.
    On any error the previous scene is put back and the error is rethrown. */
 function replaceProject(newState, newAssets = {}, label) {
-  const prev = { state, assets, selected, T, hist: hist.slice(), histFile: histFile.slice(), hi };
+  const prev = { state, assets, selected, T, hist: hist.slice(), histDoc: histDoc.slice(), doc: platform.getDoc(), hi };
   try {
     for (const [id, a] of Object.entries(newAssets)) if (assets[id] && assets[id].b64 !== (a && a.b64)) dropModel(id);
     assets = { ...assets, ...newAssets };
     state = newState; selected = null; setTime(0);
+    platform.startDoc(); /* Open, New and starters are a new document: Save must not reuse the previous file */
     restore(snapshot()); pushHistory(); resetEditorCam();
     if (label) toast(label);
   } catch (e) {
-    state = prev.state; assets = prev.assets; selected = prev.selected; setTime(prev.T); hist = prev.hist; histFile = prev.histFile; hi = prev.hi;
+    state = prev.state; assets = prev.assets; selected = prev.selected; setTime(prev.T); hist = prev.hist; histDoc = prev.histDoc; platform.restoreDoc(prev.doc); hi = prev.hi;
     try { restore(snapshot()); } catch (e2) { console.error('ShotRef: could not put the previous scene back', e2); }
     throw e;
   }
@@ -2330,7 +2331,7 @@ function loadStarter(kind) {
   let sel = null;
   const built = buildState(() => fillStarter(kind, id => { sel = id; }));
   replaceProject(built, {}, (STARTERS.find(x => x[0] === kind) || [, kind])[1] + ' ready');
-  platform.newProject(); histFile[hi] = platform.getFile();
+  platform.newProject();
   if (sel) { selected = sel; propsDirty = true; updateGizmo(); }
 }
 function fillStarter(kind, selectId) {
@@ -2442,7 +2443,7 @@ function loadProjectText(txt, file) {
   try { d = normalizeProject(JSON.parse(txt), projectDefaults()); }
   catch (e) { console.error('ShotRef: could not read the project file', e); toast(BAD_FILE, 4000); return; }
   const go = () => {
-    try { replaceProject(d.state, d.assets, 'Project opened'); platform.setCurrent(file && file.name, file && file.path); histFile[hi] = platform.getFile(); }
+    try { replaceProject(d.state, d.assets, 'Project opened'); platform.setCurrent(file && file.name, file && file.path); }
     catch (e) { console.error('ShotRef: could not open the project', e); toast(BAD_FILE, 4000); }
   };
   if (platform.kind === 'desktop' && platform.isDirty()) guardUnsaved(go);

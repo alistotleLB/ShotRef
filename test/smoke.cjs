@@ -1697,4 +1697,19 @@ check('desktop: undo back past an Open does not let Save overwrite the opened fi
   ok(c.o.path === 'D:/b.shotref', 'redo should bring B back with its path, got ' + c.o.path);
 });
 
+check('desktop: after Save as, undoing an edit still saves to that file', async ({ freshContext }) => {
+  const p = await desktopPage(freshContext);
+  await dirtyEdit(p);
+  await p.keyboard.press('Control+Shift+S');
+  await p.waitForFunction(() => window.__dsk.calls.length === 1);
+  const path = await p.evaluate(() => 'C:/shots/' + window.__dsk.calls[0].o.name);
+  await p.waitForTimeout(100);
+  await p.keyboard.press('Control+Z');
+  await p.waitForFunction(() => window.__shotref.state.objects.length === 3);
+  await p.click('#bSave');
+  await p.waitForFunction(() => window.__dsk.calls.length === 2);
+  const c = await p.evaluate(() => window.__dsk.calls[1]);
+  ok(c.o.path === path && !c.o.saveAs, 'Save after undo should write to ' + path + ', got ' + JSON.stringify(c.o));
+});
+
 main().catch(e => { console.error(e && e.stack || e); process.exit(2); });
