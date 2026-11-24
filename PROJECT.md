@@ -6,15 +6,15 @@ Read this before doing anything. Claude updates it at the end of every session.
 A "very dumbed-down Blender" in one offline HTML file: block people and props, move the camera, export reference clips and frames for AI video models.
 
 ## Current state            (rewritten every session, 15 lines max)
-IN PROGRESS: porting the newer claude.ai version's features (artifact 6uRy4QMBjvK9Rn5PLedSUq) into this code. Its source was lost; only the built page exists (reference/, git-ignored).
-Plan: docs/plans/2026-11-23-port-plan.md + docs/plans/2026-11-23-port-inventory.md (39 features, 11 batches).
-Done (built by Sonnet, reviewed by Opus, pushed): batch 1+3 (format, right-click menu, double-click lens focus), 2 (top bar, Build/Frame/Export steps, Add/Scene tabs, icon toolbar), 4 (multi-select, box select, lock, groups, selection toolbar), 5 (body types, eyeline, sitting, actions over time).
-Now:  batch 6 (parenting, ground stacking, camera mount, car wheels/convertible, cactus).
-Left: 7 camera UX, 8 light, 9 shots + export panel + prompt, 10 takes, 11 library/recent/settings/split view. Then rebuild the Windows app (npm run dist:win) and checklist C2/C3.
-Tests: npm test 140/140, npm run test:desktop 14/14 (after batch 5).
-Code: private GitHub https://github.com/alistotleLB/ShotRef (main).
-Known: walking feet slide slightly at heel strike (same in the claude.ai version; foot IK = later polish). Windows installer unsigned.
-Waiting on Ali: C1 (browser checklist) and C2 (desktop) — C2 should wait until the port is finished.
+Works:   ShotRef 1.2.0 = the claude.ai version's features (artifact 6uRy4QMBjvK9Rn5PLedSUq) rebuilt into this code, plus all earlier fixes, branding and the desktop app.
+         Right-click menus, double-click lens focus, Build/Frame/Export steps, takes + compare, shots + shot bar, Export panel + AI prompt, frame pack, contact sheet,
+         multi-select/lock/groups, people (body types, eyeline, sitting, actions), parenting/ground/camera mount, camera tabs, light/sun, My sets, Recent projects, Settings, split view.
+Builds:  dist/ShotRef.html (1.0 MB). Windows: release/ShotRef-Setup-1.2.0.exe (122 MB), release/ShotRef-1.2.0-portable.exe (111 MB), unsigned.
+Tests:   npm test 265/265 (~9 min), npm run test:desktop 14/14. Final whole-port review: Ready.
+Code:    private GitHub https://github.com/alistotleLB/ShotRef (main).
+Known:   walking feet slide slightly at heel strike (same in the claude.ai version). Minor parity leftovers listed in docs/plans (toolbar order, Add tab order, hint wording).
+Next:    Ali runs checklist C3 (replaces C1 and C2). Then: installable web app + website.
+Not yet tried by Ali: everything since 2026-11-22.
 
 ## Ali's goals              (his exact words, dated; never reworded)
 "Act as a principal software engineer leading a review of my application. Inspect the actual code, run the app and safe checks where possible, and give me a prioritized plan covering architecture, bugs and reliability, performance, and UI/UX." - Ali, 2026-11-22
@@ -77,7 +77,8 @@ Storage: build output in `dist/` (git-ignored).
 
 ### Ali's checklists
 - C1: build dist/ShotRef.html of 2026-11-23. Steps in the Handoff section. Result: (waiting)
-- C2: Windows app 1.1.0 (release/). Steps in the Handoff section. Result: (waiting)
+- C2: Windows app 1.1.0. Superseded by C3 (never run).
+- C3: ShotRef 1.2.0 web + Windows. Steps in the Handoff section. Result: (waiting)
 
 ## Ali's notes               (every request/feedback, word for word)
 | Id | Date | Ali's words | Status |
@@ -88,10 +89,16 @@ Storage: build output in `dist/` (git-ignored).
 
 | N-004 | 2026-11-23 | "Ok, Please orchestrate everything, Use Opus and Sonnet, However, do not go above the medium effort. Optimize for efficiency AND quality. Upload the project to github. And use all skills relevant to create a better output and more efficient workflow. Including Project Keeper and whatever you judge is helpful." | done 2026-11-23 (GitHub private repo; Phase 1 + 2 built; guessed: private repo, .shotref extension, autosave stays in browser storage) |
 
+| N-005 | 2026-11-23 | "The right click context menu doesnt work .. I need the same menu that is implemented in the webapp version .. the same with double click to focus. It doesnt work properly. Cant you please diagnose why the UI doesnt work like the webapp does, and fix the problem." | done 2026-11-24 (cause: the claude.ai version was a newer app whose source was lost; all its features rebuilt here in 9 reviewed batches) |
+| N-006 | 2026-11-23 | (asked where the newer version's source is) "Only on claude.ai" | done 2026-11-24 |
+| N-007 | 2026-11-23 | "dont forget to orchestrate the tasks across Opus and Sonnet for maximum efficiency" | done (Sonnet built, Opus reviewed, medium effort) |
+
 ### Approved and locked     (changing these needs Ali's yes)
 - 2026-11-22 "Approve all": every item in the review checklist, including adding playwright-core as a dev-only test tool.
 
 ## Lessons
+- The claude.ai artifact was edited in another conversation and drifted far ahead of this folder; the desktop app was built from the old code / cause: two copies of the app with no shared source / rule: this folder (GitHub) is the only source; never publish or edit ShotRef on claude.ai without building it from here, and republish from dist/ after changes.
+- Desktop tests left 72 Electron copies (288 processes) running, slowing every later run 2-3x / cause: killing only the main process on Windows / rule: kill the whole tree (taskkill /T /F); check `tasklist | grep -ci electron` = 0 after test runs.
 - Each review round on file handling found a new way to lose work (open over unsaved, undo past Open, Save as + undo, restored autosave) / cause: file identity and unsaved state interact with undo and autosave / rule: any change to save/open/undo/autosave gets a reviewer and a test per path.
 - Each fix's own review caught real problems the fix itself created (backup of a broken autosave lost on quota; IndexedDB clean-up deleting a broken session's photos; keyboard reaching buttons behind the export window; shortcut letters changing a focused dropdown) / cause: fixes that touch storage or keyboard interact with other features / rule: keep a review after every fix and a test for each review finding.
 - Mixed CRLF/LF line endings crept into test/smoke.cjs and made diffs unreadable / cause: different editing tools / rule: keep all files LF (check with `tr -cd '\r' < file | wc -c` = 0).
@@ -112,22 +119,22 @@ Not verified: the real claude.ai frame (downloads, clipboard), a normal non-head
 Proposed order: Step 0 backup + smoke test (needs OK) -> quick wins -> A1, then A2+S2 -> design/measure items -> optional tidy-ups.
 
 ## Handoff                   (replaced each session)
-STATE     Windows app 1.1.0 built and tested (13 desktop + 89 web checks). Code on GitHub (private).
-CHANGED   src/platform.js (one place for save/open per platform), electron/main.cjs + preload.cjs, test/desktop.cjs, .shotref extension, Save as (Ctrl+Shift+S), unsaved mark in the title, "Save changes first?" before replacing or closing.
-TESTS     npm test 89/89; npm run test:desktop 13/13; npm run dist:win builds both exes.
-OPEN      Minor leftovers in plan reviews: stale .tmp file after a crash mid-save; a file opened during an export is refused, not queued; no auto-update yet; installer unsigned.
-FINDINGS  Rename-over on Windows replaces the target atomically (tested with read-only target). Electron profile keeps autosave across restarts.
-NEXT      Ali runs C2:
-          Build: release/ShotRef-Setup-1.1.0.exe (or the portable .exe).
-          1. Run the installer (More info -> Run anyway) -> ShotRef appears in the Start menu with the orange icon.
-          2. Make a small scene, press Ctrl+S, pick a folder -> a .shotref file is saved; the window title shows its name.
-          3. Move something, Ctrl+S again -> it saves without asking where; the dot in the title disappears.
-          4. Close ShotRef, double-click the .shotref file -> ShotRef opens it straight away.
-          5. Change something, then double-click another .shotref file -> it asks "Save changes first?".
-          6. Close with unsaved changes -> it asks before closing.
-          7. Import a photo, then import again -> the dialog opens in the same folder.
-          8. Export an MP4 -> it asks where to save, and the clip plays.
-          9. Copy frame -> paste into another app works.
+STATE     ShotRef 1.2.0: claude.ai features rebuilt here; web + Windows builds; 265 web + 14 desktop checks pass; final review Ready.
+CHANGED   9 port batches (docs/plans/2026-11-23-port-plan.md, port-inventory.md). Rulings: opening/restoring never moves or changes anything (raised items become "Can float"); old files keep their blur/shadow look; with 2+ shots a length change re-times only that shot's camera; unreadable takes/sets kept byte-exact; recents never on the edit path; IndexedDB v2 (assets + projects).
+OPEN      claude.ai artifact still runs the OLD newer build (6uRy4QMBjvK9Rn5PLedSUq): republish dist/ShotRef.html there only with Ali's OK. Foot slide polish. Code signing. Auto-update. Web app install + website.
+FINDINGS  reference/ (git-ignored) holds the artifact build used for the port.
+NEXT      Ali runs C3:
+          Build: release/ShotRef-Setup-1.2.0.exe (or portable), and dist/ShotRef.html in Chrome/Edge.
+          1. Open a project you made on claude.ai (Save it there first) -> everything looks the same: people, cars, shots, takes.
+          2. Right-click a person, a prop, the floor and the camera -> the same menus as on claude.ai.
+          3. Double-click a person -> the lens focuses on them (depth of field on).
+          4. Shift-click two items, Ctrl+G, drag -> they move together; Ctrl+L locks one.
+          5. Drag a person onto a chair -> they sit; drag away -> they stand.
+          6. Add a shot (+ New shot), switch between shots -> each keeps its own camera move.
+          7. Take menu -> New take, change something, Compare takes -> side by side.
+          8. Export step -> Frame pack (zip) and Render video -> files open.
+          9. Desktop: Ctrl+S saves to the same file; close with changes -> it asks.
+          10. Reopen the app -> File > Open shows your recent projects.
           Reply with the numbers that didn't work, and what you saw.
 
 ## Log                       (append only, dated, real numbers; always last)
@@ -137,3 +144,4 @@ NEXT      Ali runs C2:
 - 2026-11-23 brand kit made in branding/ (BRAND.md + SVG/PNG/ICO). Logo = Ali's reference refined (frame corners + orange camera path); orange-tile app icon for web + Windows. Not yet applied to the app.
 - 2026-11-23 branding applied to the app: title "ShotRef", SVG+PNG tab icon (data: URLs), theme-color, top-bar mark + tagline (word hidden below 1100 px), first-launch welcome header "Start a shot" with slogan. New smoke check; npm test 79/79. Build 876 KB.
 - 2026-11-23 git + private GitHub repo. Phase 1 (src/platform.js, .shotref, Save as, unsaved mark) and Phase 2 (Electron 45.4.1, electron-builder 26.18.0) built by Sonnet implementers, reviewed by Opus (5 review rounds, 8 Important findings fixed). npm test 89/89, test:desktop 13/13. Installer 121 MB, portable 111 MB. Version 1.1.0.
+- 2026-11-24 port of the claude.ai version done: 9 batches + final fix wave (Sonnet built, Opus reviewed; 2 Critical and 14 Important found and fixed in review). npm test 265/265 (~9 min), test:desktop 14/14. Version 1.2.0, installer 122 MB, portable 111 MB. Desktop tests now kill Electron process trees.
