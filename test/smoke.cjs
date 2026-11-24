@@ -2614,9 +2614,9 @@ check('people: Eyeline panel, selection toolbar and right-click menu set where t
   const p = await open(); await p.waitForTimeout(400);
   const id = await idOfType(p, 'person'), xy = await starterXY(p);
   await p.mouse.click(...xy.person); await p.waitForTimeout(250);
-  const opts = await p.evaluate(() => { const s = [...document.querySelectorAll('#props .sec')].find(x => x.querySelector('h3').textContent === 'Eyeline'); return s ? [...s.querySelectorAll('option')].map(o => o.textContent) : null; });
+  const opts = await p.evaluate(() => { const s = [...document.querySelectorAll('#props .sec')].find(x => x.querySelector('h3').textContent.replace(/\?$/, '') === 'Eyeline'); return s ? [...s.querySelectorAll('option')].map(o => o.textContent) : null; });
   ok(opts && opts[0].startsWith('Ahead') && opts[1] === 'The camera' && opts.length >= 3, 'Eyeline options: ' + JSON.stringify(opts));
-  await p.selectOption('#props .sec:has(h3:text-is("Eyeline")) select', 'camera');
+  await p.selectOption('#props .sec:has(h3:text-matches("^Eyeline[?]?$")) select', 'camera');
   ok((await objOf(p, id)).opts.lookAt === 'camera', 'the panel sets look-at the camera');
   await p.waitForTimeout(200);
   ok(/eyeline/.test(await undoTitle(p)), 'undo names it: ' + await undoTitle(p));
@@ -3956,7 +3956,7 @@ check('Export step opens the Export panel (not a window) with output, this shot,
   ok(await p.evaluate(() => window.__shotref.selected) === 'export', 'selected is ' + await p.evaluate(() => window.__shotref.selected));
   ok(await p.evaluate(() => window.__shotref.view) === 'camera', 'the Export step shows the camera view');
   ok(await p.evaluate(() => document.querySelector('#stepSeg .on').dataset.step) === 'export', 'step pill');
-  const heads = await p.evaluate(() => [...document.querySelectorAll('#props .sec > h3')].map(x => x.textContent));
+  const heads = await p.evaluate(() => [...document.querySelectorAll('#props .sec > h3')].map(x => x.textContent.replace(/\?$/, '')));
   for (const w of ['Export', 'This shot', 'All shots', 'Prompt for the AI model']) ok(heads.includes(w), 'no "' + w + '" section: ' + heads.join());
   const btns = await p.evaluate(() => [...document.querySelectorAll('#props button')].map(b => b.textContent.trim()));
   for (const w of ['Render video (MP4)', 'Frame pack (zip)', 'Current frame (PNG)', 'Copy frame', 'Video options…', 'Copy prompt', 'Rewrite from scene']) ok(btns.includes(w), 'no "' + w + '" button: ' + btns.join(' | '));
@@ -5007,6 +5007,63 @@ check('settings: the title is visible at 1440 x 900, and the embed hook falls ba
   const q = await fc.open(); await q.evaluate(() => { const S = window.__shotref; S.addObject('box'); S.changed(true); }); await settle(q, 800);
   ok(await q.evaluate(() => localStorage.getItem('shotref.autosave') === null && localStorage.getItem('shotref.autosave.embed') !== null), 'fallback key not used');
   noPageErrors(q);
+});
+
+check('deleting an object keeps the camera of every other shot where it was (mount and aim)', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const car = await mkObj(p, 'car', [10, 0, 0]);
+  await p.evaluate(i => {
+    const S = window.__shotref, st = S.state, cam = (o) => ({ base: { p: [3, 1.6, 6], tg: [0, 1, 0], f: 35, roll: 0, fd: 7 }, keys: [], feel: 'gentle', dof: { on: false, fstop: 2.8, auto: true, strength: 3 }, shake: 0, lookAtId: null, follow: false, ...o });
+    st.camera = cam({ mount: i });
+    st.shots = [{ id: 'a', name: 'Shot 1', camera: JSON.parse(JSON.stringify(st.camera)), duration: st.settings.duration }, { id: 'b', name: 'Shot 2', camera: cam({ mount: i }), duration: st.settings.duration }, { id: 'c', name: 'Shot 3', camera: cam({ lookAtId: i }), duration: st.settings.duration }];
+    st.shotId = 'a'; S.changed(true, true); S.select(i);
+  }, car);
+  await p.keyboard.press('Delete'); await settle(p, 300);
+  const st = await stateOf(p), b = st.shots[1].camera, c = st.shots[2].camera;
+  ok(b.mount === null && near(b.base.p, [13, 1.6, 6], 0.05), 'the other shot rode on the car and moved: ' + JSON.stringify(b.base.p) + ' mount ' + b.mount);
+  ok(st.camera.mount === null && near(st.camera.base.p, [13, 1.6, 6], 0.05), 'the live camera moved: ' + JSON.stringify(st.camera.base.p));
+  ok(c.lookAtId === null && Math.abs(c.base.tg[0] - 10) < 0.05, 'the shot that looked at the car lost its aim: ' + JSON.stringify(c.base.tg));
+  noErrors(p);
+});
+
+check('blur strength: a file with depth of field off and no strength gets 3 like the artifact, one with it on keeps 1', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const mk = dof => JSON.stringify({ app: 'ShotRef', version: 1, state: { v: 1, settings: { duration: 5, fps: 24 }, camera: { base: JSON.parse(CAM_BASE), keys: [], dof }, objects: [] }, assets: {} });
+  await openFile(p, 'off.shotref.json', mk({ on: false, fstop: 2.8, auto: true }));
+  ok(await p.evaluate(() => window.__shotref.state.camera.dof.strength) === 3, 'DOF off, no strength should read 3');
+  await openFile(p, 'on.shotref.json', mk({ on: true, fstop: 2.8, auto: true }));
+  ok(await p.evaluate(() => window.__shotref.state.camera.dof.strength) === 1, 'DOF on, no strength should keep 1');
+  noErrors(p);
+});
+
+check('File menu on the web: Open shows the Recent grid with Open a file, and there is no second Recent projects item', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.click('#bFile');
+  const cmds = await p.evaluate(() => [...document.querySelectorAll('#ctxMenu button')].map(b => b.dataset.cmd));
+  ok(!cmds.includes('recent'), 'the web File menu still has Recent projects: ' + cmds);
+  await p.click('#ctxMenu [data-cmd="open"]');
+  await p.waitForSelector('#mRecent:not(.hidden)');
+  ok(await p.$('#recFile') !== null, 'no Open a file button in the Recent dialog');
+  noErrors(p);
+});
+
+check('right panel: notes fold into a ? on the heading, clicking a heading folds the section, and it is remembered', async ({ open, freshContext }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => window.__shotref.select(null)); await settle(p, 300);
+  ok(await p.$('#props .sec > h3 > .qtip') !== null, 'no ? bubble on a section heading');
+  ok(await p.$('#props .sec > p.note') === null && await p.$('#props .sec > div > p.note') === null, 'notes are still shown inline');
+  const q = await p.evaluate(() => document.querySelector('#props .sec > h3 > .qtip').dataset.q);
+  ok(q && q.length > 10, 'the ? has no text');
+  const head = '#props .sec:has(> h3 > .qtip) > h3';
+  await p.click(head); await settle(p, 200);
+  ok(await p.evaluate(() => !!document.querySelector('#props .sec.closed')), 'clicking the heading did not fold the section');
+  const saved = await p.evaluate(() => Object.keys(window.__shotref.getPref('closedSecs', {})));
+  ok(saved.length === 1, 'folded state not saved in prefs: ' + saved);
+  await p.evaluate(() => { window.__shotref.select('camera'); window.__shotref.select(null); }); await settle(p, 300);
+  ok(await p.evaluate(() => !!document.querySelector('#props .sec.closed')), 'the section opened again after the panel was rebuilt');
+  await p.click('#props .sec.closed > h3'); await settle(p, 200);
+  ok(await p.evaluate(() => !document.querySelector('#props .sec.closed') && Object.keys(window.__shotref.getPref('closedSecs', {})).length === 0), 'opening it did not forget it');
+  noErrors(p);
 });
 
 main().catch(e => { console.error(e && e.stack || e); process.exit(2); });

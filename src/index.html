@@ -92,6 +92,16 @@ button.icon svg,.ib svg{width:17px;height:17px;stroke:currentColor;fill:none;str
 #props{padding-bottom:20px}
 .sec{border-bottom:1px solid var(--line);padding:10px 12px}
 .sec h3{margin:0 0 8px;font-size:11px;font-weight:600;color:var(--mute);display:flex;justify-content:space-between;align-items:center}
+/* collapsible sections and ? hints */
+#props .sec{position:relative}
+#props .sec>h3{cursor:pointer;user-select:none;justify-content:flex-start;gap:6px}
+#props .sec>h3::before{content:"▾";font-size:9px;color:var(--dim);width:9px}
+#props .sec.closed>h3::before{content:"▸"}
+#props .sec.closed>:not(h3){display:none}
+#props .sec.closed{padding-bottom:6px}
+.qtip{margin-left:auto;width:17px;height:17px;border-radius:50%;border:1px solid var(--line2);color:var(--mute);font-size:10.5px;display:inline-flex;align-items:center;justify-content:center;cursor:help;flex:none}
+.qtip:hover,.qtip:focus{color:#1b1206;background:var(--acc2);border-color:var(--acc2);outline:none}
+.qtip:hover::after,.qtip:focus::after{content:attr(data-q);position:absolute;left:10px;right:10px;top:30px;background:#0f1013;border:1px solid var(--line2);color:#d9dce0;font-size:12px;font-weight:400;line-height:1.45;padding:8px 10px;border-radius:8px;white-space:pre-line;z-index:30;box-shadow:0 10px 30px rgba(0,0,0,.5);text-align:left}
 .row{display:flex;align-items:center;gap:6px;margin:5px 0}
 .row>label,.lbl{width:78px;flex:none;color:#b8bdc4}
 .row .grow{flex:1}
@@ -499,7 +509,7 @@ button.icon.on{background:var(--accd);color:var(--acc2)}
     <li><b>Right-click</b> anything for what you can do with it: add a person here, walk them to a mark, frame a medium shot, face the camera, duplicate, hide. Right-click the floor to add things or aim the camera there. Right-drag still pans.</li>
     <li><b>Frame the shot.</b> In <b>Camera view</b> (<span class="kbd">C</span>) drag to orbit, right-drag to pan, scroll to dolly, <span class="kbd">W A S D Q E</span> to fly. Or use a shot size: Wide, Medium, Close-up… The <b>split view</b> button (top bar) puts the editor on the left and the camera on the right: whichever half the pointer is over is the one you steer.</li>
     <li><b>Make the move.</b> Press <b>Set start</b>, reframe, press <b>Set end</b>. Or pick a one-click move, or <b>● Record</b> and operate the camera live.</li>
-    <li><b>Export</b> (step 3, or press <span class="kbd">3</span>): an MP4, the current frame, or start + end frames for image-to-video models.</li>
+    <li><b>Export</b> (step 3, or press <span class="kbd">3</span>): an MP4, the current frame, or a frame pack (start, middle and end frames plus the prompt) for image-to-video models. Several shots? Add them with + New shot.</li>
   </ol>
   <h2 style="margin-top:16px">Shortcuts</h2>
   <div class="help-grid">

@@ -29,8 +29,8 @@ function cleanDof(v, d) {
   const x = isObj(v) ? v : {};
   const bool = (a, b) => (typeof a === 'boolean' ? a : b);
   const out = { ...copy(d), ...x, on: bool(x.on, bool(d.on, false)), auto: bool(x.auto, bool(d.auto, true)), fstop: num(x.fstop, 0) > 0 ? x.fstop : (num(d.fstop, 0) > 0 ? d.fstop : 2.8) };
-  /* blur strength: a new scene gets 3. A file that has depth of field settings but no strength was made before it existed, so it keeps its old look (1 = the old blur). */
-  if (isObj(v)) out.strength = num(x.strength, 0) > 0 ? x.strength : 1;
+  /* blur strength: a new scene gets 3. A file with depth of field settings but no strength: if blur was on, it was made before strength existed and keeps its old look (1 = the old blur); if blur was off, nothing shows yet, so it gets 3 like the web app. */
+  if (isObj(v)) out.strength = num(x.strength, 0) > 0 ? x.strength : (x.on === true ? 1 : 3);
   else if ('strength' in out) out.strength = num(out.strength, 0) > 0 ? out.strength : 3;
   return out;
 }
@@ -47,6 +47,7 @@ function cleanCamera(c, defaults, ids) {
   const cb = isObj(c.base) ? c.base : {};
   const base = { ...cb, p: vec3(cb.p, dcb.p), tg: vec3(cb.tg, dcb.tg), f: num(cb.f, dcb.f), roll: num(cb.roll, dcb.roll) };
   base.fd = num(cb.fd, Math.hypot(base.p[0] - base.tg[0], base.p[1] - base.tg[1], base.p[2] - base.tg[2]));
+  /* a mount or aim target that is not in the file is let go with the stored values kept as they are: its pose is not in the file, so there is nothing to convert from */
   const out = {
     ...c,
     base,

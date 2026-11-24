@@ -40,7 +40,7 @@ import { platform } from './platform.js';
  * layout, pane                  single or split view (Settings, #bSplit: setLayout), and the half the pointer is in: setPane (paneOf)
  * libraryMem, libraryBad           My sets kept for this visit when storage is blocked, and unreadable stored text: writeLibrary
  * placeRest, placeSetName          the rest of a set being placed and its name: placeSet, commitPlacing, cancelPlacing
- * recentSession, recentTimer       id of a project without meta.id (renewed by replaceProject), recent-list save timer: scheduleRecent
+ * recentSession, recentTimer       id of a project without meta.id (renewed by replaceProject), recent-list save timer: markRecentDirty / recentTick
  * focusPick, lastWorkView        picking focus in the view: start/finishFocusPick; last non-camera view: setView
  * exRenderer                     offscreen export renderer: getExportRenderer (dropped on context loss)
  * copyBlob                       last copied frame: copyFrame
@@ -2147,7 +2147,33 @@ function keySection(kind) {
     h('p', { class: 'note' }, keys.length ? 'Move the playhead, then change anything. A key is added for you at that time.' : 'Press ◆ Add key to start animating. Then move the playhead and change position. A second key is added for you.'));
 }
 
+/* the right panel's sections: explanatory notes fold into a "?" on the heading, and clicking a heading folds the section (remembered per heading in prefs.closedSecs) */
+function decorateSections(root) {
+  const closed = getPref('closedSecs', {}) || {};
+  for (const sc of root.querySelectorAll('.sec')) {
+    const hd = sc.querySelector(':scope > h3'); if (!hd) continue;
+    const name = (hd.firstChild && hd.firstChild.nodeType === 3 ? hd.firstChild.textContent : hd.textContent).trim();
+    const notes = [...sc.querySelectorAll(':scope > p.note, :scope > div > p.note')].filter(n => !n.classList.contains('keep'));
+    const rest = [...sc.children].filter(n => n !== hd && !notes.includes(n));
+    if (notes.length && rest.length) {
+      const text = notes.map(n => n.textContent.trim()).filter(Boolean).join('\n\n');
+      notes.forEach(n => n.remove());
+      if (text) hd.append(h('span', { class: 'qtip', tabindex: 0, 'data-q': text, onclick: e => e.stopPropagation() }, '?'));
+    }
+    if (!name) continue;
+    if (closed[name]) sc.classList.add('closed');
+    hd.addEventListener('click', () => {
+      const on = sc.classList.toggle('closed'), now = { ...(getPref('closedSecs', {}) || {}) };
+      if (on) now[name] = true; else delete now[name];
+      setPref('closedSecs', now);
+    });
+  }
+}
 function renderProps() {
+  renderPropsInner();
+  decorateSections($('#props'));
+}
+function renderPropsInner() {
   live.length = 0;
   const p = $('#props'); p.innerHTML = '';
   /* in Camera view with nothing selected, show the camera tools; the selection stays empty (U3) */
@@ -2806,7 +2832,7 @@ function fileMenuItems() {
   return [{ head: 'Project' },
     { id: 'new', label: 'New\u2026', fn: () => openStarters() },
     { id: 'open', label: 'Open\u2026', fn: openProjectUI, key: 'Ctrl O' },
-    { id: 'recent', label: 'Recent projects\u2026', fn: openRecent },
+    ...(platform.kind === 'desktop' ? [{ id: 'recent', label: 'Recent projects\u2026', fn: openRecent }] : []), /* on the web, Open\u2026 already shows the recent projects */
     '-',
     { id: 'save', label: 'Save', fn: () => saveProject(false), key: 'Ctrl S' },
     { id: 'saveas', label: 'Save as\u2026', fn: () => saveProject(true), key: 'Ctrl Shift S' },
@@ -3503,16 +3529,39 @@ function camToEditorView() {
 }
 /* what Delete, Duplicate and the menus act on: every selected object, or the one main item */
 const targetObjs = () => selIds.length ? selObjs() : (selected && getObj(selected) ? [getObj(selected)] : []);
+/* the live camera (state.camera) frees itself from deleted items without moving: read everything in world space while they still exist */
+function freeCamera(gone) {
+  const c = state.camera, mGone = !!c.mount && gone.has(c.mount), sGone = !!c.lookAtId && gone.has(c.lookAtId);
+  if (!mGone && !sGone) return;
+  const subj = sGone ? subject() : null;
+  if (subj) { /* the aim, read while the subject still exists (A11); the other ends of the move are converted below */
+    const aim = [{ k: c.base, t: T }, ...c.keys.map(k => ({ k, t: k.t }))].map(r => ({ r, tg: aimPoint(subj, r.t) }));
+    if (mGone) setMount(null);
+    else if (c.follow) { c.base.p = camToWorld(c.base.p, T).map(r4); for (const k of c.keys) k.p = camToWorld(k.p, k.t).map(r4); }
+    for (const a of aim) a.r.k.tg = a.tg.map(r4);
+    c.lookAtId = null; c.follow = false;
+  } else if (mGone) setMount(null);
+}
+/* the same for every other shot's saved camera: swap each in as the live camera for a moment */
+function keepCamerasPut(gone) {
+  const live = state.camera;
+  try {
+    for (const s of state.shots || []) {
+      if (s.id === state.shotId || !s.camera) continue;
+      state.camera = s.camera; try { freeCamera(gone); } finally { s.camera = state.camera; }
+    }
+  } finally { state.camera = live; }
+  freeCamera(gone);
+}
 function deleteSel() {
   const all = targetObjs(); if (!all.length) return;
   /* locked items are never deleted by accident: unlock them first */
   const list = all.filter(o => !o.locked), kept = all.length - list.length;
   if (!list.length) { toast((all.length === 1 ? all[0].name + ' is locked' : 'Those are locked') + '. Unlock ' + (all.length === 1 ? 'it' : 'them') + ' first (Ctrl+L).', 3500); return; }
   const gone = new Set(list.map(o => o.id));
-  /* read the aim while the subject still exists, so the framing stays put (A11) */
-  if (gone.has(state.camera.lookAtId)) { state.camera.base.tg = evalCam(T).tg; state.camera.lookAtId = null; state.camera.follow = false; }
+  /* every shot's camera that rides on or looks at a deleted item keeps its place in the world (the live one and the saved copies of the other shots) */
+  keepCamerasPut(gone);
   releaseRiders(gone); /* what rode on a deleted item stays where it stood */
-  if (state.camera.mount && gone.has(state.camera.mount)) setMount(null);
   state.objects = state.objects.filter(x => !gone.has(x.id));
   for (const q of state.objects) { if (gone.has(q.opts.lookAt)) delete q.opts.lookAt; if (gone.has(q.opts.seated)) { q.opts.seated = null; if (q.opts.pose === 'sit') q.opts.pose = 'stand'; } } /* nobody looks at or sits on what is gone */
   selIds = selIds.filter(id => !gone.has(id)); selected = selIds[selIds.length - 1] || null;
@@ -3723,13 +3772,13 @@ const BAD_FILE = "This isn't a ShotRef project, or the file is damaged.";
 /* Open a .shotref / .json project (Open button, Ctrl+O, drag-drop and the desktop app's file events all come here). Asks first if the scene has anything in it.
    `file` is { name, path } when the desktop app knows where it came from. */
 let launchFile = false; /* a file came from the desktop shell (launch, double-click, Recent): the starter sets must not open over it */
-function loadProjectText(txt, file, fromShell = false) {
+function loadProjectText(txt, file, fromShell = false, unsaved = false) {
   if (exporting) { toast('Wait for the export to finish.'); return; }
   let d;
   try { d = normalizeProject(JSON.parse(txt), projectDefaults()); }
   catch (e) { console.error('ShotRef: could not read the project file', e); toast(BAD_FILE, 4000); return; }
   const go = () => {
-    try { replaceProject(d.state, d.assets, 'Project opened'); platform.setCurrent(file && file.name, file && file.path); }
+    try { replaceProject(d.state, d.assets, 'Project opened'); platform.setCurrent(file && file.name, file && file.path); if (unsaved) platform.setDirty(true); }
     catch (e) { console.error('ShotRef: could not open the project', e); toast(BAD_FILE, 4000); }
   };
   if (platform.kind === 'desktop' && platform.isDirty()) guardUnsaved(go);
@@ -4521,7 +4570,7 @@ async function exportVideo(opts = {}) {
     }
   } catch (e) {
     console.error(e);
-    const msg = e && e.plain ? e.message : e && e.mp4 ? "Your PC couldn't make an MP4 at this size. Try 1280 px, or use Start + end frames." : 'The export stopped because of an error. Try again, or try a smaller size.';
+    const msg = e && e.plain ? e.message : e && e.mp4 ? "Your PC couldn't make an MP4 at this size. Try 1280 px, or use Frame pack (zip)." : 'The export stopped because of an error. Try again, or try a smaller size.';
     toast(msg, 6000); exProgress(0, msg);
   } finally {
     if (vf) { try { vf.close(); } catch (e) { } }
@@ -4898,7 +4947,7 @@ function openRecentRow(r, readable, cur) {
   if (!readable) { toast("This project can't be opened here (damaged, or made by a newer ShotRef). It stays in the list until you remove it.", 5000); return; }
   closeModal($('#mRecent'));
   if (cur) return;
-  loadProjectText(r.data, undefined, false);
+  loadProjectText(r.data, undefined, false, platform.kind === 'desktop'); /* a copy kept inside the app has no file: on the desktop it counts as unsaved, so Save asks where to put it */
 }
 /* Open: the recent projects (web, claude.ai); the desktop app keeps its own native dialog (File > Recent projects shows the list) */
 const openProjectUI = () => platform.kind === 'desktop' ? openDialog() : openRecent();
