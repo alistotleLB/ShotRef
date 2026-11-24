@@ -3280,7 +3280,8 @@ function setDuration(v) {
   v = clamp(v, 1, 120);
   const old = lastT(); state.settings.duration = v; const nw = lastT(), k = old > 0 ? nw / old : 1;
   if (Math.abs(k - 1) > 1e-6) {
-    resnapAll(t => t * k);
+    /* with several shots the action is shared: only this shot's camera is re-timed */
+    if (state.shots && state.shots.length > 1) resnapKeys(state.camera.keys, t => t * k); else resnapAll(t => t * k);
     setTime(clamp(snapT(T * k), 0, nw));
   }
   changed(true, true); syncTopUI();
@@ -3723,7 +3724,7 @@ function renderShotBar() {
     bar.append(chip);
   }
   bar.append(h('button', { class: 'shotchip add', onclick: () => newShot(false), title: 'A new camera setup on the same scene and action, starting from the current framing' }, '+ New shot'));
-  bar.append(h('div', { class: 'sright' }, list.length > 1 ? h('button', { id: 'bSheet', onclick: makeContactSheet, title: 'First and last frame of every shot on one page' }, 'Contact sheet') : null));
+  bar.append(h('div', { class: 'sright' }, list.length > 1 ? h('span', { id: 'lenNote', class: 'note', style: 'margin:0;align-self:center' }, "Changes this shot's camera move only. The action stays the same in every shot.") : null, list.length > 1 ? h('button', { id: 'bSheet', onclick: makeContactSheet, title: 'First and last frame of every shot on one page' }, 'Contact sheet') : null));
 }
 
 /* ============================== the prompt for the AI model ============================== */
@@ -3910,9 +3911,20 @@ function zipStore(files) {
   end.setUint32(0, 0x06054b50, true); end.setUint16(8, files.length, true); end.setUint16(10, files.length, true); end.setUint32(12, cdSize, true); end.setUint32(16, offset, true);
   return new Blob([...parts, ...central, new Uint8Array(end.buffer)], { type: 'application/zip' });
 }
+/* the page is locked (as during a video export) while frames are being made, and always unlocked afterwards */
+async function whileLocked(fn) {
+  exporting = true; setExportLock(true);
+  try { return await fn(); } finally { exporting = false; setExportLock(false); requestRender(); }
+}
 /* the first, middle and last frame as PNG plus the prompt, in one zip */
 async function exportFramePack() {
   if (exporting) { toast('Wait for the export to finish.'); return false; }
+  const r = await whileLocked(buildFramePack);
+  if (!r) return false;
+  await saveFile(r.name, r.blob);
+  return true;
+}
+async function buildFramePack() {
   setPlaying(false); toast('Rendering the frame pack…', 8000);
   const { w, h: hh } = exportSize(), last = lastT(), base = outName(state.settings.style), files = [];
   try {
@@ -3926,13 +3938,16 @@ async function exportFramePack() {
   } catch (e) { console.error(e); applyAll(T); requestRender(); toast('Could not make that frame. Try a smaller export size.', 4000); return false; }
   applyAll(T); requestRender();
   files.push({ name: base + '-prompt.txt', data: new TextEncoder().encode(currentPrompt() + '\n') });
-  await saveFile(base + '-frames.zip', zipStore(files));
-  return true;
+  return { name: base + '-frames.zip', blob: zipStore(files) };
 }
 /* one PNG with the first and last frame of every shot, its name, length, size and move */
 let sheetBlob = null;
 async function makeContactSheet() {
   if (exporting) { toast('Wait for the export to finish.'); return; }
+  const url = await whileLocked(buildContactSheet);
+  if (url) { $('#toast').classList.remove('show'); $('#sheetImg').src = url; openModal('mSheet'); }
+}
+async function buildContactSheet() {
   setPlaying(false);
   const list = ensureShots().slice(); syncShot();
   const keepId = state.shotId, keepT = T, ar = arOf(state.settings.aspect), cw = 360, ch = Math.round(cw / ar), pad = 16, top = 34, cap = 28, rows = [];
@@ -3949,7 +3964,7 @@ async function makeContactSheet() {
     }
   } catch (e) { console.error(e); toast('Could not make the contact sheet. Try a smaller export size.', 4000); rows.length = 0; }
   loadShot(state.shots.find(s => s.id === keepId) || state.shots[0]); setTime(keepT); applyAll(T); requestRender(); syncTopUI();
-  if (!rows.length) return;
+  if (!rows.length) return null;
   const W = pad * 3 + cw * 2 + 260, H = top + pad + rows.length * (ch + cap + pad), c = document.createElement('canvas'); c.width = W; c.height = H;
   const g = c.getContext('2d');
   g.fillStyle = '#141518'; g.fillRect(0, 0, W, H); g.fillStyle = '#ffb870'; g.font = '600 18px Segoe UI, Arial, sans-serif';
@@ -3966,7 +3981,7 @@ async function makeContactSheet() {
     y += ch + cap + pad;
   }
   sheetBlob = await canvasBlob(c);
-  $('#toast').classList.remove('show'); $('#sheetImg').src = c.toDataURL('image/png'); openModal('mSheet');
+  return c.toDataURL('image/png');
 }
 /* a video for every shot in turn, in one go: the page stays locked between them */
 async function exportAllShots() {

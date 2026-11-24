@@ -4134,4 +4134,46 @@ check('every shot renders one video per shot, named after the shot, with each sh
   noErrors(p);
 }, { timeout: 120000 });
 
+/* ---- batch G fix round 1 ---- */
+const keyedBox = p => p.evaluate(() => { const S = window.__shotref, o = S.addObject('box'); S.setKey(o.keys, 0, { p: [0, 0, 0], r: [0, 0, 0], s: [1, 1, 1] }); S.setKey(o.keys, 4, { p: [4, 0, 0], r: [0, 0, 0], s: [1, 1, 1] }); S.changed(true, true); return o.id; });
+check('shot length: with one shot the whole animation still stretches', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const id = await keyedBox(p);
+  await p.fill('#inDur', '10'); await p.press('#inDur', 'Enter'); await settle(p, 200);
+  const o = await objOf(p, id);
+  ok(Math.abs(o.keys[1].t - 8) < 0.1, 'object key at ' + o.keys[1].t + ', expected about 8');
+  ok(await p.evaluate(() => !document.querySelector('#lenNote')), 'the note shows with one shot');
+});
+check('shot length: with two shots only this shot camera is re-timed; the action stays the same', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const id = await keyedBox(p);
+  await p.evaluate(() => { const S = window.__shotref; S.applyMove('dollyIn'); S.changed(true, true); });
+  await p.click('#shotBar .shotchip.add'); await settle(p, 150);
+  await p.evaluate(() => { const S = window.__shotref; S.applyMove('craneUp'); S.changed(true, true); });
+  await p.fill('#inDur', '10'); await p.press('#inDur', 'Enter'); await settle(p, 200);
+  let s = await stateOf(p);
+  ok(s.settings.duration === 10 && Math.max(...s.camera.keys.map(k => k.t)) > 8, 'shot 2 camera should stretch to about 10 s: ' + JSON.stringify(s.camera.keys.map(k => k.t)));
+  const o = await objOf(p, id);
+  ok(o.keys[1].t === 4, 'the shared action was re-timed: ' + o.keys[1].t);
+  ok(s.shots[0].duration === 5 && Math.max(...s.shots[0].camera.keys.map(k => k.t)) <= 5, 'shot 1 changed: ' + s.shots[0].duration);
+  ok(/Changes this shot's camera move only. The action stays the same in every shot./.test(await p.evaluate(() => (document.querySelector('#lenNote') || {}).textContent || '')), 'no note under the length control');
+  noErrors(p);
+});
+check('contact sheet and frame pack lock the page while they build, and unlock afterwards (also on failure)', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.click('#shotBar .shotchip.add'); await settle(p, 150);
+  await p.evaluate(() => { window.__locked = []; const orig = HTMLCanvasElement.prototype.toDataURL; HTMLCanvasElement.prototype.toDataURL = function () { window.__locked.push([...document.body.children].some(e => e.inert)); return orig.apply(this, arguments); }; });
+  await p.click('#bExport'); await p.click('#xoSheet');
+  await p.waitForFunction(() => !document.querySelector('#mSheet').classList.contains('hidden'), null, { timeout: 20000 });
+  const l = await p.evaluate(() => window.__locked);
+  ok(l.length >= 2 && l.slice(0, 2).every(Boolean), 'page not locked while rendering: ' + JSON.stringify(l));
+  ok(await p.evaluate(() => [...document.body.children].every(e => !e.inert)), 'still locked after the sheet');
+  await p.keyboard.press('Escape');
+  await p.evaluate(() => { window.__lk = []; HTMLCanvasElement.prototype.toBlob = function (cb) { window.__lk.push([...document.body.children].some(e => e.inert)); cb(null); }; });
+  await p.click('#xoPack'); await settle(p, 800);
+  ok(await p.evaluate(() => window.__lk[0]) === true, 'frame pack not locked while rendering');
+  ok(await p.evaluate(() => [...document.body.children].every(e => !e.inert)), 'still locked after a failed pack');
+  noPageErrors(p);
+});
+
 main().catch(e => { console.error(e && e.stack || e); process.exit(2); });
