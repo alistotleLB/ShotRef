@@ -5110,7 +5110,7 @@ check('tour engine: shows corners around the target and a bubble that stays on s
     ok(g.b.l >= 0 && g.b.t >= 0 && g.b.r <= g.vw && g.b.b <= g.vh, w + ': the bubble leaves the window ' + JSON.stringify(g.b));
     ok(g.b.r <= g.t.l || g.b.l >= g.t.r || g.b.b <= g.t.t || g.b.t >= g.t.b, w + ': the bubble covers the target');
     ok(g.b.r - g.b.l <= 340.5, w + ': the bubble is wider than 340 px');
-    ok(g.role === 'dialog' && g.lab === 'tourTitle' && g.live === 'polite' && g.z === '50', 'bubble attributes: ' + JSON.stringify(g));
+    ok(g.role === 'dialog' && g.lab === 'tourTitle' && g.live === 'polite' && g.z === '55', 'bubble attributes: ' + JSON.stringify(g));
     ok(g.focus, 'the bubble does not take focus');
     await p.evaluate(() => window.__t.end());
   }
@@ -5241,6 +5241,17 @@ check('tour engine: refuses to start over a dialog', async ({ open }) => {
   await p.evaluate(() => document.querySelector('#mHelp').classList.add('hidden'));
   ok(await p.evaluate(() => !!window.__shotref.tour.run([{ id: 'a', target: null, title: 'T', text: 't' }], {})), 'the tour does not start once the dialog is closed');
   await p.evaluate(() => window.__shotref.tour.end());
+  noErrors(p);
+});
+
+check('tour engine: refuses to start during an export, and an empty stop list does nothing', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  ok(await p.evaluate(() => window.__shotref.tour.run([], {}) === null && !document.querySelector('#tour')), 'an empty stop list added a tour');
+  await p.evaluate(() => { window.__ex = window.__shotref.exportVideo(); });
+  const res = await p.evaluate(() => { const r = window.__shotref.tour.run([{ id: 'a', target: null, title: 'T', text: 't' }], {}); const t = document.querySelector('#toast'); return { r, tour: !!document.querySelector('#tour'), shown: t.classList.contains('show'), text: t.textContent }; });
+  ok(res.r === null && !res.tour, 'a tour started during an export');
+  ok(res.shown && /export/i.test(res.text), 'no toast about the export: ' + res.text);
+  await p.evaluate(() => window.__ex).catch(() => { });
   noErrors(p);
 });
 

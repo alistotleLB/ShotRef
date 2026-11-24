@@ -1831,10 +1831,10 @@ function frameSig() {
 }
 function frame(now) {
   requestAnimationFrame(frame);
-  if (tourActive()) tourTick();
   const dt = Math.min(0.1, (now - lastNow) / 1000); lastNow = now;
   if (exporting) { wasExporting = true; return; } // the export owns the scene and the renderers until it finishes
   if (wasExporting) { wasExporting = false; needsRender = true; }
+  if (tourActive()) tourTick();
   if (rec && rec.phase === 'count') { const left = Math.ceil((rec.until - now) / 1000); $('#countdown').textContent = left > 0 ? left : ''; if (now >= rec.until) { rec.phase = 'rec'; setTime(0, false); setPlaying(true); $('#countdown').textContent = ''; recSample(); showModeBar('● Recording. Steer the camera until the shot ends.', [['Cancel', cancelRecord]]); } }
   if (playing) {
     setTime(T + dt, false);

@@ -33,12 +33,19 @@ function el(tag, cls, attrs, text) {
 const tourActive = () => !!cur;
 
 function runTour({ stops, ui, interactive = false, onEnd = null, canKey = null }) {
+  if (!stops || !stops.length) return null;
   if (cur) cur.end('external');
   const prevFocus = document.activeElement;
   const root = el('div', null, { id: 'tour' });
   const dim = el('div', 'tour-dim');
   const corners = el('div', 'tour-corners');
-  for (const c of ['tl', 'tr', 'bl', 'br']) corners.appendChild(el('i', 'tc ' + c));
+  /* each corner is a small L with round caps, like the logo's frame corners */
+  const NS = 'http://www.w3.org/2000/svg';
+  for (const [c, d] of [['tl', 'M2 15V6a4 4 0 0 1 4-4h9'], ['tr', 'M1 2h9a4 4 0 0 1 4 4v9'], ['bl', 'M2 1v9a4 4 0 0 0 4 4h9'], ['br', 'M1 14h9a4 4 0 0 0 4-4V1']]) {
+    const sv = document.createElementNS(NS, 'svg'), pa = document.createElementNS(NS, 'path');
+    sv.setAttribute('class', 'tc ' + c); sv.setAttribute('viewBox', '0 0 16 16'); sv.setAttribute('aria-hidden', 'true');
+    pa.setAttribute('d', d); sv.appendChild(pa); corners.appendChild(sv);
+  }
   const hits = ['t', 'b', 'l', 'r', 'c'].map(k => el('div', 'tour-hit ' + k));
   const bubble = el('div', 'tour-bubble', { role: 'dialog', 'aria-labelledby': 'tourTitle', 'aria-live': 'polite', tabindex: '-1' });
   const title = el('div', 'tour-title', { id: 'tourTitle' });
@@ -183,6 +190,7 @@ function runTour({ stops, ui, interactive = false, onEnd = null, canKey = null }
         done = true; labels();
         tick.hidden = false; tick.textContent = '';
         tick.append(el('i', 'tour-tick'), el('span', null, null, s.done || ''));
+        measure(true); /* the bubble grew: place it again so it cannot cover its target */
         doneTimer = setTimeout(nextStop, DONE_MS);
       }
     }
@@ -197,12 +205,12 @@ function runTour({ stops, ui, interactive = false, onEnd = null, canKey = null }
       if (canKey && canKey(e)) return;
       e.preventDefault(); e.stopPropagation(); finish('esc'); return;
     }
-    if (k === 'Tab') {
-      /* keep Tab inside the bubble */
+    if (k === 'Tab' && (!interactive || inBubble)) {
+      /* keep Tab inside the bubble (hands-on stops leave Tab to the app unless focus is already here) */
       const f = [...bubble.querySelectorAll('button:not(:disabled)')]; if (!f.length) return;
       e.preventDefault(); e.stopPropagation();
       const j = f.indexOf(document.activeElement);
-      f[(j + (e.shiftKey ? -1 : 1) + f.length) % f.length].focus();
+      f[j < 0 ? (e.shiftKey ? f.length - 1 : 0) : (j + (e.shiftKey ? -1 : 1) + f.length) % f.length].focus();
       return;
     }
     const onButton = inBubble && e.target.tagName === 'BUTTON';
