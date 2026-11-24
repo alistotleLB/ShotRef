@@ -42,7 +42,10 @@ async function stubDialogs(app, saveAnswers, openAnswers = []) {
 const dlgCounts = app => app.evaluate(() => globalThis.__dlg);
 const objCount = page => page.evaluate(() => window.__shotref.state.objects.length);
 /* a dirty app asks before closing, so tests end apps by killing them */
-const kill = async app => { try { app.process().kill(); } catch (e) { /* gone */ } };
+/* Windows: killing only the main process leaves Electron's GPU, network and renderer children running, so kill the whole tree */
+const killTree = pid => { try { require('child_process').execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' }); } catch (e) { /* already gone */ } };
+const kill = async app => { try { const pid = app.process().pid; if (process.platform === 'win32') killTree(pid); else app.process().kill(); } catch (e) { /* gone */ } };
+process.on('exit', () => { for (const a of apps) { try { const pid = a.process().pid; if (process.platform === 'win32') killTree(pid); else a.process().kill(); } catch (e) { /* gone */ } } });
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 const results = [];
