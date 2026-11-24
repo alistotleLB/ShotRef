@@ -69,7 +69,9 @@ function startFeed(version) {
 async function stubMsg(app, answers) {
   await app.evaluate(({ dialog }, a) => {
     globalThis.__msg = [];
-    dialog.showMessageBox = async (...args) => { globalThis.__msg.push(args[args.length - 1]); return { response: a.length ? a.shift() : 0 }; };
+    /* message boxes go through ShotRef's own box (electron/popup.cjs); the native one must never be used */
+    globalThis.__shotrefPopup.show = async (parent, o) => { globalThis.__msg.push(o); return { response: a.length ? a.shift() : 0 }; };
+    dialog.showMessageBox = async (...args) => { globalThis.__msg.push({ message: 'NATIVE: ' + (args[args.length - 1] || {}).message }); return { response: 0 }; };
   }, answers);
 }
 const msgs = app => app.evaluate(() => globalThis.__msg.map(m => [m.message, m.detail || '', (m.buttons || []).join('/')]));
@@ -420,6 +422,108 @@ const ok = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
     ok(r === 'blocked', 'page fetch to the feed got through');
     ok(!feed.hits.length, 'feed saw a request from the page');
     await kill(app); feed.close();
+  });
+
+  /* ---- ShotRef's own message boxes (electron/popup.cjs) and What's new ---- */
+  async function popupPage(app, ms = 10000) {
+    const t0 = Date.now();
+    for (;;) {
+      const w = app.windows().find(p => !p.isClosed() && /popup\.html$/.test(p.url()));
+      if (w) { await w.waitForSelector('#btns button'); return w; }
+      if (Date.now() - t0 > ms) return null;
+      await sleep(150);
+    }
+  }
+  /* the box closes during the key press, so the press itself may report the page as gone: that is the expected result */
+  const pressKey = (p, k) => p.keyboard.press(k).catch(e => { if (!/closed/.test(String(e && e.message))) throw e; });
+  const openBoxes = app => app.evaluate(() => globalThis.__shotrefPopup.openCount());
+  async function waitNoBox(app, ms = 5000) { const t0 = Date.now(); while (await openBoxes(app)) { if (Date.now() - t0 > ms) throw new Error('box still open'); await sleep(100); } }
+  const stubNative = app => app.evaluate(({ dialog }) => { globalThis.__native = 0; dialog.showMessageBox = async () => { globalThis.__native++; return { response: 0 }; }; });
+  const writeSettings = (dir, s) => { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, 'shotref-settings.json'), JSON.stringify(s)); };
+  const readSettings = dir => JSON.parse(fs.readFileSync(path.join(dir, 'shotref-settings.json'), 'utf8'));
+  const NOTES = JSON.parse(fs.readFileSync(path.join(ROOT, 'electron', 'whats-new.json'), 'utf8'));
+  const cmpV = (a, b) => { const x = a.split('.').map(Number), y = b.split('.').map(Number); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] - y[i]; return 0; };
+  const expectHeads = since => NOTES.filter(n => cmpV(n.version, appVersion) <= 0 && (!since || cmpV(n.version, since) > 0))
+    .sort((a, b) => cmpV(b.version, a.version)).map(n => 'ShotRef ' + n.version);
+
+  await check('message boxes are ShotRef\'s own: About opens a branded box, not the native one, and Esc closes it', async () => {
+    const { app } = await launch();
+    await stubNative(app);
+    await helpClick(app, 'About ShotRef');
+    const pp = await popupPage(app);
+    ok(pp, 'no ShotRef box opened');
+    const look = await pp.evaluate(() => ({
+      text: document.body.innerText, bg: getComputedStyle(document.body).backgroundColor,
+      main: getComputedStyle(document.querySelector('button.primary')).backgroundColor, focus: document.activeElement && document.activeElement.className,
+      mark: !!document.querySelector('svg.mark'),
+    }));
+    ok(look.text.includes('ShotRef ' + appVersion) && /Block the shot/.test(look.text), look.text);
+    ok(look.bg === 'rgb(27, 29, 33)' && look.main === 'rgb(255, 154, 60)' && look.mark, JSON.stringify(look));
+    ok(look.focus === 'primary', 'main button not focused');
+    const frame = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().map(w => [w.isVisible(), w.isModal()]));
+    ok(frame.length === 2 && frame.every(f => f[0]) && frame.some(f => f[1]), JSON.stringify(frame));
+    await pressKey(pp, 'Escape');
+    await waitNoBox(app);
+    ok((await app.evaluate(() => globalThis.__native)) === 0, 'a native message box was used');
+    await kill(app);
+  });
+
+  await check('message boxes wait their turn: a second box opens only after the first is answered, with the chosen button', async () => {
+    const { app } = await launch();
+    await app.evaluate(() => {
+      globalThis.__ans = [];
+      globalThis.__shotrefPopup.show(null, { message: 'First box', buttons: ['Yes', 'No'], defaultId: 0, cancelId: 1 }).then(r => globalThis.__ans.push(r.response));
+      globalThis.__shotrefPopup.show(null, { message: 'Second box', buttons: ['OK'] }).then(r => globalThis.__ans.push(r.response));
+    });
+    const p1 = await popupPage(app);
+    ok(/First box/.test(await p1.innerText('#msg')) && (await openBoxes(app)) === 1, 'first box');
+    ok((await p1.$$eval('#btns button', b => b.map(x => x.textContent))).join('/') === 'No/Yes', 'main button not on the right');
+    await p1.click('text=No');
+    await sleep(300);
+    const p2 = await popupPage(app);
+    ok(/Second box/.test(await p2.innerText('#msg')), 'second box did not follow');
+    await pressKey(p2, 'Enter');
+    await waitNoBox(app);
+    ok(JSON.stringify(await app.evaluate(() => globalThis.__ans)) === '[1,0]', 'answers: ' + JSON.stringify(await app.evaluate(() => globalThis.__ans)));
+    await kill(app);
+  });
+
+  await check('What\'s new after an update lists every version since the one the user had, once', async () => {
+    const userData = path.join(tmp, 'prof-new');
+    writeSettings(userData, { folders: {}, recent: [], autoUpdate: false, lastVersion: '1.3.0' });
+    const first = await launch([], { userData });
+    const pp = await popupPage(first.app);
+    ok(pp, 'no What\'s new box');
+    const heads = await pp.$$eval('#notes h2', h => h.map(x => x.textContent));
+    ok(JSON.stringify(heads) === JSON.stringify(expectHeads('1.3.0')) && heads.length >= 2, 'versions: ' + heads.join(', '));
+    ok((await pp.innerText('#msg')).includes(appVersion) && /since 1\.3\.0/.test(await pp.innerText('#detail')), 'heading/detail');
+    await pp.click('text=Start working');
+    await waitNoBox(first.app);
+    ok(readSettings(userData).lastVersion === appVersion, 'version not remembered');
+    await kill(first.app);
+    const second = await launch([], { userData });
+    ok(!(await popupPage(second.app, 2500)), 'What\'s new showed again on the next launch');
+    await kill(second.app);
+  });
+
+  await check('What\'s new: settings from before it was tracked show every version; a fresh install shows nothing; Help shows this version', async () => {
+    const userData = path.join(tmp, 'prof-old');
+    writeSettings(userData, { folders: {}, recent: [], autoUpdate: false });
+    const old = await launch([], { userData });
+    const pp = await popupPage(old.app);
+    ok(pp, 'no box for settings without a version');
+    const heads = await pp.$$eval('#notes h2', h => h.map(x => x.textContent));
+    ok(JSON.stringify(heads) === JSON.stringify(expectHeads(null)), 'versions: ' + heads.join(', '));
+    await pressKey(pp, 'Escape'); await waitNoBox(old.app);
+    await kill(old.app);
+    const fresh = await launch();
+    ok(!(await popupPage(fresh.app, 2500)), 'a fresh install showed What\'s new');
+    ok(readSettings(fresh.userData).lastVersion === appVersion, 'fresh install did not remember its version');
+    await helpClick(fresh.app, 'What\'s new');
+    const hp = await popupPage(fresh.app);
+    const hh = await hp.$$eval('#notes h2', h => h.map(x => x.textContent));
+    ok(hh.length === 1 && hh[0] === expectHeads(null)[0], 'Help showed: ' + hh.join(', '));
+    await kill(fresh.app);
   });
 
   for (const a of apps) await kill(a);

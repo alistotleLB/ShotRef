@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src data:">
+<title>ShotRef</title>
+<!-- ShotRef's own message box (electron/popup.cjs). Same colours as src/index.html :root and branding/BRAND.md. -->
+<style>
+:root{--bg:#141518;--panel:#1b1d21;--panel2:#222429;--line:#30333a;--line2:#3a3e46;--ink:#e7e9ec;--mute:#8f959e;--acc:#ff9a3c;--acc2:#ffb870;--err:#ef5b5b;--warn:#f2c14e}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--panel);color:var(--ink);font:13px/1.45 "Segoe UI",system-ui,-apple-system,Helvetica,Arial,sans-serif;overflow:hidden;user-select:none}
+body{-webkit-app-region:drag}
+#box{position:relative;border:1px solid var(--line2);padding:22px 26px 22px 24px}
+/* the viewfinder corners from the logo mark: top left and bottom right, in brand orange */
+#box::before,#box::after{content:"";position:absolute;width:18px;height:18px;border:2px solid var(--acc);pointer-events:none}
+#box::before{left:7px;top:7px;border-right:0;border-bottom:0;border-top-left-radius:3px}
+#box::after{right:7px;bottom:7px;border-left:0;border-top:0;border-bottom-right-radius:3px}
+.head{display:flex;gap:14px;align-items:flex-start}
+.mark{width:30px;height:30px;flex:none;margin-top:1px}
+.txt{min-width:0;flex:1}
+h1{margin:0;font-size:15px;font-weight:600;letter-spacing:-.1px;line-height:1.35;overflow-wrap:anywhere}
+h1 i{display:inline-block;width:8px;height:8px;border-radius:50%;margin:0 8px 2px 0;vertical-align:middle}
+.error h1 i{background:var(--err)}.warning h1 i{background:var(--warn)}
+#detail{margin:6px 0 0;color:#c3c7cd;white-space:pre-line;overflow-wrap:anywhere}
+#detail:empty{display:none}
+#notes{margin:14px 0 0;max-height:340px;overflow:auto;-webkit-app-region:no-drag;user-select:text;padding-right:6px}
+#notes:empty{display:none}
+#notes section+section{margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
+#notes h2{margin:0 0 6px;font-size:12px;font-weight:600;color:var(--acc)}
+#notes ul{margin:0;padding:0;list-style:none}
+#notes li{position:relative;padding-left:16px;margin:5px 0;color:#d5d8dc}
+#notes li::before{content:"";position:absolute;left:2px;top:7px;width:6px;height:6px;border-radius:50%;background:var(--acc)}
+#notes::-webkit-scrollbar{width:8px}#notes::-webkit-scrollbar-thumb{background:var(--line2);border-radius:4px}
+.btns{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
+button{-webkit-app-region:no-drag;font:inherit;color:var(--ink);background:var(--panel2);border:1px solid var(--line2);border-radius:6px;padding:6px 14px;min-width:84px;cursor:pointer}
+button:hover{border-color:#4a4f58;background:#292c32}
+button.primary{background:var(--acc);border-color:var(--acc);color:#1b1206;font-weight:600}
+button.primary:hover{background:var(--acc2);border-color:var(--acc2)}
+button:focus{outline:none}
+.kb button:focus-visible{outline:2px solid var(--acc2);outline-offset:2px} /* only once the keyboard is used to move between buttons */
+@media (prefers-reduced-motion:no-preference){#box{animation:in .14s ease-out}@keyframes in{from{opacity:0;transform:translateY(4px)}}}
+</style>
+</head>
+<body>
+<div id="box" role="alertdialog" aria-modal="true" aria-labelledby="msg" aria-describedby="detail">
+  <div class="head">
+    <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
+      <path d="M5 12V5h7M20 27h7v-7" fill="none" stroke="#E7E9EC" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M8 23C13 15 19 22 24 9" fill="none" stroke="#FF9A3C" stroke-width="2.4" stroke-linecap="round"/>
+      <circle cx="8" cy="23" r="2.4" fill="#FF9A3C"/><circle cx="24" cy="9" r="2.4" fill="#FF9A3C"/>
+    </svg>
+    <div class="txt">
+      <h1 id="msg"></h1>
+      <p id="detail"></p>
+      <div id="notes"></div>
+    </div>
+  </div>
+  <div class="btns" id="btns"></div>
+</div>
+<script src="popup-page.js"></script>
+</body>
+</html>

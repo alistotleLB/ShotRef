@@ -1,0 +1,29 @@
+[
+  {
+    "version": "1.5.0",
+    "items": [
+      "After an update, this box lists what changed since the version you had.",
+      "ShotRef's messages (updates, About, file errors) now look like ShotRef and open without the Windows alert sound."
+    ]
+  },
+  {
+    "version": "1.4.0",
+    "items": [
+      "A quick tour of the screen: orange viewfinder corners frame each part, with a line or two on each. It changes nothing in your scene.",
+      "Take the tour again any time from the Help menu or the top of the Quick start page."
+    ]
+  },
+  {
+    "version": "1.3.1",
+    "items": [
+      "Editor, Top and Camera (and split view) moved into a View group in the row under the picture, so the top bar is cleaner."
+    ]
+  },
+  {
+    "version": "1.3.0",
+    "items": [
+      "The Windows app updates itself: it checks for a new version shortly after launch and asks before downloading or restarting.",
+      "Help, Check for updates checks on demand. Help, Check for updates automatically turns the launch check off."
+    ]
+  }
+]

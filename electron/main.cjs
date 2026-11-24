@@ -4,6 +4,7 @@ const { app, BrowserWindow, Menu, dialog, ipcMain, session } = require('electron
 const fs = require('fs');
 const path = require('path');
 const updater = require('./updater.cjs');
+const popup = require('./popup.cjs'); /* ShotRef's own message boxes, in place of dialog.showMessageBox (no Windows look, no alert sound) */
 
 const PAGE = path.join(__dirname, '..', 'dist', 'ShotRef.html');
 const ICON = path.join(__dirname, '..', 'branding', 'shotref.ico');
@@ -11,6 +12,7 @@ const PROJECT_FILTERS = [{ name: 'ShotRef project', extensions: ['shotref', 'jso
 const isProjectFile = p => /\.(shotref|json)$/i.test(p);
 
 let win = null;
+const WHATS_NEW_DELAY_MS = 700; /* let the window paint first */
 let closeAllowed = false;
 let pageReady = false; /* the page registered its menu callback, so it can answer a close request */
 let pendingFile = null; /* a file that arrived before the window existed */
@@ -18,7 +20,8 @@ const allowedPaths = new Set(); /* paths the page may write to: only ones that c
 
 /* ---------- small settings file: last folder per kind + recent list ---------- */
 const settingsFile = () => path.join(app.getPath('userData'), 'shotref-settings.json');
-let settings = { folders: {}, recent: [], autoUpdate: true };
+let settings = { folders: {}, recent: [], autoUpdate: true, lastVersion: null };
+let hadSettings = false; /* a settings file existed before this launch: ShotRef ran here before (so this may be an update) */
 function loadSettings() {
   try {
     const s = JSON.parse(fs.readFileSync(settingsFile(), 'utf8'));
@@ -26,7 +29,9 @@ function loadSettings() {
       folders: s && typeof s.folders === 'object' && s.folders ? s.folders : {},
       recent: Array.isArray(s && s.recent) ? s.recent.filter(p => typeof p === 'string').slice(0, 8) : [],
       autoUpdate: !(s && s.autoUpdate === false), /* on unless the user turned it off in Help */
+      lastVersion: s && typeof s.lastVersion === 'string' ? s.lastVersion : null, /* the version that last ran: drives What's new */
     };
+    hadSettings = true;
   } catch (e) { /* first run or unreadable: start fresh */ }
 }
 function saveSettings() {
@@ -84,7 +89,7 @@ async function openPath(file) { /* argv, second launch, recent menu */
   try { send('shotref:open-file', await readProject(file)); }
   catch (e) {
     if (e && e.code === 'ENOENT') { settings.recent = settings.recent.filter(p => p !== file); saveSettings(); buildMenu(); }
-    dialog.showMessageBox(win, { type: 'error', message: 'Could not open that file.', detail: String((e && e.message) || e) });
+    popup.show(win, { type: 'error', title: 'Open', message: 'Could not open that file.', detail: String((e && e.message) || e) });
   }
 }
 const fileFromArgs = args => args.slice(1).find(a => typeof a === 'string' && !a.startsWith('-') && isProjectFile(a) && fs.existsSync(a));
@@ -129,7 +134,7 @@ ipcMain.handle('shotref:open-project', async () => {
     return await readProject(r.filePaths[0]);
   } catch (err) {
     console.error('ShotRef: open failed', err);
-    dialog.showMessageBox(win, { type: 'error', message: 'Could not open that file.', detail: String((err && err.message) || err) });
+    popup.show(win, { type: 'error', title: 'Open', message: 'Could not open that file.', detail: String((err && err.message) || err) });
     return null;
   }
 });
@@ -150,6 +155,43 @@ ipcMain.on('shotref:page-ready', () => { pageReady = true; if (pendingFile) { co
 ipcMain.on('shotref:set-title', (e, t) => { if (typeof t === 'string' && win && !win.isDestroyed()) win.setTitle(t.slice(0, 200)); });
 ipcMain.on('shotref:close-ok', () => { closeAllowed = true; if (win && !win.isDestroyed()) win.close(); });
 ipcMain.on('shotref:version-sync', e => { e.returnValue = app.getVersion(); });
+
+/* ---------- What's new ----------
+   After an update, list every change between the version that last ran here and this one: all of them, newest first.
+   The notes are in whats-new.json, shipped with the app, so this works offline.
+   A fresh install shows nothing (the page welcomes the user). A settings file without lastVersion comes from 1.4.0 or older,
+   before the version was remembered: there is no way to know which one, so every listed version up to this one is shown. */
+const verParts = v => String(v || '').split(/[.+-]/).slice(0, 3).map(n => parseInt(n, 10) || 0);
+function verCmp(a, b) { const x = verParts(a), y = verParts(b); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] < y[i] ? -1 : 1; return 0; }
+function readNotes() {
+  try {
+    const list = JSON.parse(fs.readFileSync(path.join(__dirname, 'whats-new.json'), 'utf8'));
+    return (Array.isArray(list) ? list : []).filter(n => n && typeof n.version === 'string' && Array.isArray(n.items) && n.items.length)
+      .sort((a, b) => verCmp(b.version, a.version));
+  } catch (e) { console.error("ShotRef: could not read What's new", e); return []; }
+}
+/* fromUpdate: every version after `since` (null = unknown: all) up to this one. From the Help menu: this version's notes only. */
+function showWhatsNew(since, fromUpdate) {
+  const cur = app.getVersion();
+  const upTo = readNotes().filter(n => verCmp(n.version, cur) <= 0);
+  const notes = fromUpdate ? upTo.filter(n => since === null || verCmp(n.version, since) > 0) : upTo.slice(0, 1);
+  if (!notes.length) return Promise.resolve(null);
+  return popup.show(win, {
+    type: 'info', title: "What's new", width: 520,
+    message: fromUpdate ? 'ShotRef is updated to ' + cur + '.' : "What's new in ShotRef " + notes[0].version,
+    detail: !fromUpdate ? '' : since ? 'Everything that changed since ' + since + ':' : 'Here is what changed in recent versions:',
+    notes, buttons: ['Start working'], defaultId: 0, cancelId: 0,
+  });
+}
+/* once per launch, after the window is up: remember this version, and show the notes if it went up */
+function whatsNewOnLaunch() {
+  const cur = app.getVersion(), prev = settings.lastVersion;
+  if (prev === cur) return;
+  settings.lastVersion = cur; saveSettings();
+  if (!hadSettings) return; /* first run on this computer */
+  if (prev && verCmp(prev, cur) >= 0) return; /* same or an older build: nothing new to say */
+  showWhatsNew(prev, true).catch(e => console.error("ShotRef: What's new", e));
+}
 
 /* ---------- menu ---------- */
 const HANDS_TOUR = false; /* mirrors HANDS_TOUR_DEFAULT in src/main.js: the hands-on tour is switched off for now */
@@ -177,8 +219,10 @@ function buildMenu() {
       { label: 'Check for updates…', click: () => updater.checkNow(true) },
       { label: 'Check for updates automatically', type: 'checkbox', checked: settings.autoUpdate, click: i => { settings.autoUpdate = i.checked; saveSettings(); } },
       { type: 'separator' },
-      { label: 'About ShotRef', click: () => dialog.showMessageBox(win, {
-        type: 'info', title: 'About ShotRef', message: 'ShotRef', detail: 'Version ' + app.getVersion() + '\nBlocking and camera moves for AI video reference.' }) },
+      { label: "What's new", click: () => showWhatsNew(null, false) },
+      { label: 'About ShotRef', click: () => popup.show(win, {
+        type: 'info', title: 'About ShotRef', message: 'ShotRef ' + app.getVersion(),
+        detail: 'Block the shot. Move the camera. Guide the AI.\nA simple 3D tool for blocking scenes and camera moves, then exporting reference clips for AI video models.' }) },
     ] },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(tpl));
@@ -219,7 +263,7 @@ function createWindow(startFile) {
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false },
   });
   const wc = win.webContents;
-  win.once('ready-to-show', () => win.show());
+  win.once('ready-to-show', () => { win.show(); setTimeout(whatsNewOnLaunch, WHATS_NEW_DELAY_MS); });
   win.on('page-title-updated', e => e.preventDefault()); /* the page's setTitle decides */
   wc.on('will-navigate', e => e.preventDefault());
   wc.setWindowOpenHandler(() => ({ action: 'deny' }));

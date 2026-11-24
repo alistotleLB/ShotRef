@@ -1,12 +1,13 @@
 /* ShotRef desktop updates. Checks the GitHub Releases of alistotleLB/ShotRef (set in package.json "build.publish").
- * Everything runs in the main process with native dialogs: the page never talks to the network and has no update code.
+ * Everything runs in the main process, with ShotRef's own message boxes (popup.cjs): the page never talks to the network and has no update code.
  *
  * Flow: check -> "update available" -> download (taskbar progress) -> "restart now" or "install when I close ShotRef".
  * "Restart now" closes the window the normal way, so the page still asks about unsaved work first.
  * The portable .exe cannot replace itself, so it only offers to open the download page.
  * Tests (unpackaged only): SHOTREF_UPDATE_URL points the check at a local folder that serves latest.yml. */
-const { app, dialog, shell } = require('electron');
+const { app, shell } = require('electron');
 const { autoUpdater } = require('electron-updater');
+const popup = require('./popup.cjs');
 
 const RELEASES_PAGE = 'https://github.com/alistotleLB/ShotRef/releases/latest';
 const TEST_URL = !app.isPackaged && process.env.SHOTREF_UPDATE_URL ? process.env.SHOTREF_UPDATE_URL : null;
@@ -19,7 +20,7 @@ let installOnClose = false;
 let ready = null; /* version that is downloaded and waiting */
 
 const available = () => app.isPackaged || !!TEST_URL; /* an unpackaged dev run has nothing to update */
-const box = o => { const w = ctx && ctx.getWin(); return w && !w.isDestroyed() ? dialog.showMessageBox(w, o) : dialog.showMessageBox(o); };
+const box = o => { const w = ctx && ctx.getWin(); return popup.show(w && !w.isDestroyed() ? w : null, o); };
 const setProgress = v => { const w = ctx && ctx.getWin(); if (w && !w.isDestroyed()) w.setProgressBar(v); };
 
 /* The page session blocks all network (hardenSession in main.cjs). The updater's own requests come from the main process,

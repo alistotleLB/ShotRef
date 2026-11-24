@@ -11,10 +11,12 @@ Works:   ShotRef 1.4.0, RELEASED 2026-11-24 (https://github.com/alistotleLB/Shot
 Off:     the hands-on tour (16 stops, practice stage) is built and tested but switched off (Ali: needs a lot of improvement).
          Turn on: HANDS_TOUR_DEFAULT in src/main.js + HANDS_TOUR in electron/main.cjs (or the hidden pref handsTour for one browser).
 Builds:  dist/ShotRef.html 1034 KB; release/ShotRef-Setup-1.4.0.exe (122 MB), ShotRef-1.4.0-portable.exe (111 MB), unsigned.
-Tests:   npm test 318/318 (628 s), npm run test:desktop 23/23, 0 Electron left (run before merging; merge changed no code).
+Tests:   npm test 318/318 (631 s), npm run test:desktop 27/27, 0 Electron left (2026-11-24, 1.5.0 working copy).
 Code:    PUBLIC GitHub main = release 1.4.0. Branch feature/onboarding-tour merged (its GitHub copy is stale, 3 commits; PR #1 closed).
 Known:   walking feet slide slightly at heel strike. claude.ai artifact 6uRy4QMBjvK9Rn5PLedSUq republished from 1.4.0 (version 10, private).
-Next:    Ali tries checklist C4 (quick tour). Then: improve the hands-on tour (what Ali disliked: to ask), installable web app + website.
+Built:   1.5.0 (NOT released, not committed): What's new box after an update (every version since the one you had) and ShotRef-styled
+         desktop message boxes with no Windows alert sound (electron/popup.cjs). npm test 318/318, test:desktop 27/27.
+Next:    Ali OKs commit/release of 1.5.0, then checklist C5. Also C4 (quick tour). Then: improve the hands-on tour (what Ali disliked: to ask), installable web app + website.
 Not yet tried by Ali: the quick tour; everything since 2026-11-22.
 
 ## Ali's goals              (his exact words, dated; never reworded)
@@ -82,6 +84,7 @@ Storage: build output in `dist/` (git-ignored).
 - C1: build dist/ShotRef.html of 2026-11-23. Steps in the Handoff section. Result: (waiting)
 - C2: Windows app 1.1.0. Superseded by C3 (never run).
 - C3: ShotRef 1.2.0 web + Windows. Steps in the Handoff section. Result: (waiting)
+- C5: What's new + ShotRef message boxes, 1.5.0 (after release). Steps in the Handoff section. Result: (waiting)
 - C4: quick tour, ShotRef 1.4.0 (released). Steps in the Handoff section. Result: (waiting). Hands-on items dropped (tour switched off, N-012).
 
 ## Ali's notes               (every request/feedback, word for word)
@@ -102,6 +105,8 @@ Storage: build output in `dist/` (git-ignored).
 | N-012 | 2026-11-24 | "I didn't like the long tour, it needs a lot of improvement, is there a way to keep the code, but disable the feature for now until we improve it?" | done 2026-11-24 (hands-on tour switched off: all entry points hidden, code and tests kept; quick tour stays; guessed: "the long tour" = the hands-on tour) |
 | N-013 | 2026-11-24 | "publish the release when ready" | done 2026-11-24 (v1.4.0 published) |
 | N-014 | 2026-11-24 | "Yes, republish" (the claude.ai version, from 1.4.0) | done 2026-11-24 (same link, version 10) |
+| N-015 | 2026-11-24 | "1 - Add a what's new dialogue box when updating the app. 2 - Fix app popups so they follow the branding. And remove the sound that happens when they open. Use all the relevant skills that could improve the efficiency and qualty of the output. Use Project keeper if needed." | built 2026-11-24 as 1.5.0, not released (guessed: "popups" = the desktop app's native Windows message boxes, which played the alert sound; the in-page dialogs were already branded. What's new is desktop-only. Settings from 1.4.0 or older can't tell which version they had, so they see every listed version from 1.3.0) |
+| N-016 | 2026-11-24 | "Make sure that the \"What's New\" includes all the cumulative changes since the user's current version." | done 2026-11-24 (lists every version after the one you had, newest first, scrolls when long; tested from 1.3.0) |
 | N-007 | 2026-11-23 | "dont forget to orchestrate the tasks across Opus and Sonnet for maximum efficiency" | done (Sonnet built, Opus reviewed, medium effort) |
 
 ### Approved and locked     (changing these needs Ali's yes)
@@ -131,24 +136,24 @@ Not verified: the real claude.ai frame (downloads, clipboard), a normal non-head
 Proposed order: Step 0 backup + smoke test (needs OK) -> quick wins -> A1, then A2+S2 -> design/measure items -> optional tidy-ups.
 
 ## Handoff                   (replaced each session)
-STATE     ShotRef 1.4.0 released with the quick tour; the hands-on tour is built but switched off. 318/318 web, 23/23 desktop.
-CHANGED   src/tour.js (spotlight engine: orange viewfinder corners, bubble, camera-path progress, keyboard, pauses while a dialog is open),
-          src/tour-copy.js (all tour words; copywriter helper + controller edits), src/main.js (BASIC_STOPS, handsStops(), startTour, first-run #mTour,
-          practice stage enterPractice/leavePractice/endPracticeFirst, guards on autosave/recents/platform.hold), electron/main.cjs (Help menu items),
-          docs (GUIDE "Tours", README line, CLAUDE.md). Design: docs/superpowers/specs/2026-11-24-onboarding-tour-design.md; plan: docs/superpowers/plans/2026-11-24-onboarding-tour.md.
-TESTS     npm test 317/317 (640 s) and test:desktop 23/23 on a build newer than the last commit, run by Claude 2026-11-24.
-OPEN      Parked minors: refusal toast is generic during the brief boot photo load; after a dialog closes mid-tour, keyboard focus is on the page not the bubble;
-          a photo decode can flash on the practice stage for one frame; drop test doesn't assert the image; one timing check allows 1.2 s.
-          Hands-on tour off until improved. Unsigned builds as before.
-FINDINGS  Review rounds found 2 work-loss races (see Lessons) and a dialog-under-tour bug; all fixed with tests.
-NEXT      Ali runs C4 (1.4.0: the Windows app updates itself, or the release page has ShotRef.html):
-          1. Open ShotRef.html in an InPrivate window -> "Take a look round the set?" appears before the starter sets; it offers the quick tour and Not now.
-          2. Click Take the quick tour -> orange corners frame each part; Next, Back and End tour work; at the end the starter sets open.
-          3. Reload -> the question does not appear again.
-          4. Gear menu -> Help -> Take the quick tour runs it again; press ? -> Quick start has the tour button at the top.
-          5. Windows app: Help menu -> Take the quick tour works; there is no hands-on item.
-          6. Read the tour wording -> tell me any line you would change.
-          Also: tell me what you disliked about the hands-on tour, so it can be improved.
+STATE     1.5.0 built in the working copy, not committed or released. 1.4.0 is the public release.
+CHANGED   electron/popup.cjs + popup.html + popup-page.js + popup-preload.cjs: ShotRef's own message box (small frameless window, logo mark,
+          orange viewfinder corners, orange main button on the right, Esc = cancel, boxes queue). Replaces every dialog.showMessageBox
+          (update flow, About, file-open errors), so no Windows alert sound. Native Save/Open file pickers unchanged.
+          electron/whats-new.json (notes for 1.3.0, 1.3.1, 1.4.0, 1.5.0) + main.cjs: settings.lastVersion; after a version goes up, one box lists
+          every version since the old one. Help menu: new "What's new" item. About now shows version + slogan. Version 1.5.0. CLAUDE.md, GUIDE updated.
+TESTS     npm test 318/318 (631 s); test:desktop 27/27 (4 new: branded About box not native; boxes queue and return the right button;
+          What's new from 1.3.0 lists 1.5.0/1.4.0/1.3.1 once and not again; old settings show all, fresh install none, Help shows this version).
+          Screenshots of What's new, update offer, warning and About boxes checked by Claude.
+OPEN      Not tested: a real update from installed 1.4.0 to 1.5.0 (needs the release). The web/claude.ai versions have no What's new (no update step there).
+FINDINGS  The only off-brand popups were the Windows native message boxes; in-page dialogs already used the ShotRef style (screenshot).
+          Playwright reports "page closed" when a key press closes the box: expected, the test tolerates it.
+NEXT      Ali: OK to commit and release 1.5.0? Then C5 on the installed Windows app (updated from 1.4.0):
+          1. Start ShotRef after the update -> a dark ShotRef box "ShotRef is updated to 1.5.0." lists 1.5.0 and anything since your version. No ding.
+          2. Click Start working, close and reopen ShotRef -> the box does not come back.
+          3. Help -> What's new -> shows the 1.5.0 notes again.
+          4. Help -> About ShotRef -> ShotRef box with the version and slogan, no ding; Esc closes it.
+          5. Help -> Check for updates... -> "ShotRef is up to date" in the same style, no ding.
           Reply with the numbers that didn't work, and what you saw.
 
 ## Log                       (append only, dated, real numbers; always last)
@@ -166,3 +171,4 @@ NEXT      Ali runs C4 (1.4.0: the Windows app updates itself, or the release pag
 - 2026-11-24 onboarding tours (N-011): design approved, 6-task plan, built by Sonnet helpers (copywriter + 5 builders), each task reviewed by Opus; 4 fix rounds + 1 final fix wave. Reviews caught 2 work-loss races and a dialog-under-tour bug. npm test 317/317 (640 s), test:desktop 23/23. Build 1034 KB. Branch feature/onboarding-tour, not merged. PR #1 opened by mistake and closed.
 - 2026-11-24 hands-on tour switched off (N-012: code and tests kept, entry points hidden, one-tour wording). npm test 318/318 (628 s), test:desktop 23/23. Merged into main, version 1.4.0, installers built (setup 122 MB, portable 111 MB), released v1.4.0 on GitHub (Ali: "publish the release when ready"); latest.yml serves 1.4.0.
 - 2026-11-24 claude.ai artifact 6uRy4QMBjvK9Rn5PLedSUq republished from 1.4.0 (Ali: "Yes, republish"), Desert overlook demo embed kept (same method as 1.2.0). Checked headless under the claude.ai CSP first: 23 objects + photo, 0 errors, no first-run question, quick tour runs, no hands-on item.
+- 2026-11-24 1.5.0 built (N-015, N-016): ShotRef message boxes replace native ones (no alert sound), What's new lists every version since the user's. npm test 318/318 (631 s), test:desktop 27/27 (+4), 0 Electron left. Not committed, not released.

@@ -134,6 +134,7 @@ The installed Windows app looks for a new version a few seconds after it starts.
 
 - **Help, Check for updates…** checks on demand.
 - **Help, Check for updates automatically** switches the check on launch off.
+- After an update, ShotRef shows **What's new**: every change since the version you had. **Help, What's new** shows it again for this version.
 - The portable version can't update itself. It opens the download page instead.
 - The browser version (`ShotRef.html`) has no updater: download the new file from the [Releases page](https://github.com/alistotleLB/ShotRef/releases/latest).
 
