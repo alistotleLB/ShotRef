@@ -16,6 +16,7 @@
 const PAD = 6;       /* gap between the target and the corners */
 const GAP = 12;      /* gap between the corners and the bubble */
 const MARGIN = 12;   /* clearance from the window edge */
+const LARGE = 0.4;   /* a target covering more than this share of the window gets the bubble inside its top-left corner */
 const NARROW = 900;  /* below this width the bubble pins to the bottom */
 const DONE_MS = 700; /* how long the tick shows before a hands-on stop moves on */
 const MISSING_MS = 400; /* a target that is still missing after this shows as a centred bubble, with a warning */
@@ -94,6 +95,7 @@ function runTour({ stops, ui, interactive = false, onEnd = null, canKey = null }
     const pinned = () => { x = narrow ? 8 : (vw - w) / 2; y = vh - (narrow ? 8 : MARGIN) - h; };
     if (!c) { x = (vw - w) / 2; y = (vh - h) / 2; }
     else if (narrow) pinned();
+    else if ((c.right - c.left) * (c.bottom - c.top) > LARGE * vw * vh) { x = c.left + 16; y = c.top + 16; } /* a target this big leaves no room beside it: the bubble sits in its top-left corner */
     else {
       const cx = (c.left + c.right) / 2, cy = (c.top + c.bottom) / 2;
       const clampX = v => Math.min(Math.max(v, MARGIN), vw - MARGIN - w);

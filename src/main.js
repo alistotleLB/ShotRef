@@ -4643,7 +4643,7 @@ function startTour(kind, opts = {}) {
     return null;
   }
   const tab = $('#leftTabs .on') ? $('#leftTabs .on').dataset.lt : 'add';
-  return runStops(basicStops(), {
+  const handle = runStops(basicStops(), {
     ui: TOUR_COPY.ui,
     onEnd: reason => {
       setLeftTab(tab, false);
@@ -4652,12 +4652,15 @@ function startTour(kind, opts = {}) {
       if (firstRun) openStarters(true);
     },
   });
+  /* refused (a dialog is open, an export runs): a first run must still get its picker */
+  if (!handle && firstRun) openStarters(true);
+  return handle;
 }
 /* the first-run question and the buttons that start a tour from a dialog: close the dialog first, since a tour will not start over one */
 /* while the first-run question is open, any way of closing it other than the two tour buttons counts as Not now (Esc, a click outside) */
 let tourAsk = false;
 function tourFromDialog(modalId, kind, firstRun) {
-  tourAsk = false;
+  if (modalId === 'mTour') tourAsk = false;
   closeModal($('#' + modalId));
   startTour(kind, { firstRun });
 }
@@ -5511,7 +5514,7 @@ function boot() {
   cleanTakes(); migrateAll(); pushHistory(); platform.setDirty(wasDirty); setSimple(simple);
   /* only now: queued menu / file events from the desktop shell must see the restored scene and its unsaved mark */
   platform.onMenu(onDesktopMenu);
-  platform.onOpenFile(f => { if (f && typeof f.text === 'string') { launchFile = true; closeModal($('#mStart')); loadProjectText(f.text, f, true); } });
+  platform.onOpenFile(f => { if (f && typeof f.text === 'string') { launchFile = true; tourAsk = false; closeModal($('#mTour')); closeModal($('#mStart')); loadProjectText(f.text, f, true); } });
  applyPrefs(); setView('editor'); setGizmoMode('translate');
   requestAnimationFrame(frame);
   let seen = false; try { seen = localStorage.getItem('shotref.seenHelp'); localStorage.setItem('shotref.seenHelp', '1'); } catch (e) { }

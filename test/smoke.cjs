@@ -5443,4 +5443,42 @@ check('first run: Esc on the tour question counts as Not now and opens the start
   ok(await p.evaluate(() => !window.__shotref.tour.active()), 'a tour started');
 });
 
+check('first run: a file opened while the tour question is up closes it and keeps the file', async ({ freshContext }) => {
+  const fc = await freshContext({ firstLaunch: true });
+  await fc.ctx.addInitScript(FAKE_DESKTOP);
+  const p = await fc.open();
+  await waitOpen(p, 'mTour');
+  const st = await stateOf(p); st.objects = st.objects.slice(0, 2);
+  const text = JSON.stringify({ app: 'ShotRef', version: 2, state: st, assets: {} });
+  await p.evaluate(t => window.__dsk.openCb({ text: t, name: 'late.shotref', path: 'E:/late.shotref' }), text);
+  await p.waitForFunction(() => window.__shotref.state.objects.length === 2, null, { timeout: 4000 }).catch(() => { throw new Error('the opened project did not load'); });
+  await settle(p, 500);
+  ok(!(await isOpen(p, 'mTour')), 'the tour question stayed open over the opened project');
+  ok(!(await isOpen(p, 'mStart')), 'the starter picker opened over the opened project');
+  noPageErrors(p);
+});
+
+check('first run: a refused tour start still opens the starter picker', async ({ freshContext }) => {
+  const fc = await freshContext({ firstLaunch: true });
+  const p = await fc.open();
+  await waitOpen(p, 'mTour'); await p.click('#tourNo'); await waitOpen(p, 'mStart');
+  await p.click('#mStart .x'); await gearCmd(p, 'help'); ok(await isOpen(p, 'mHelp'), 'Quick start did not open');
+  const r = await p.evaluate(() => { const h = window.__shotref.startTour('basic', { firstRun: true }); return h === null; });
+  ok(r, 'the tour started over a dialog');
+  ok(await isOpen(p, 'mStart'), 'a refused first-run tour did not open the starter picker');
+});
+
+check('basic tour: the picture stop puts the bubble in the top-left corner of the picture', async ({ freshContext }) => {
+  for (const vp of [{ width: 1600, height: 900 }, { width: 1280, height: 720 }]) {
+    const fc = await freshContext({ viewport: vp });
+    const p = await fc.open(); await settle(p, 300);
+    await p.evaluate(() => window.__shotref.startTour('basic'));
+    for (let n = 0; n < 3; n++) { await p.click('#tourNext'); await settle(p, 60); }
+    await settle(p, 500);
+    const g = await p.evaluate(() => { const t = document.querySelector('#vp').getBoundingClientRect(), b = document.querySelector('.tour-bubble').getBoundingClientRect(); return { id: window.__shotref.tour.current().stop.id, t: [t.left, t.top, t.width, t.height], b: [b.left, b.top, b.right, b.bottom] }; });
+    ok(g.id === 'b-picture', 'not at b-picture');
+    ok(g.b[0] >= g.t[0] && g.b[1] >= g.t[1] && g.b[2] <= g.t[0] + g.t[2] / 2 && g.b[3] <= g.t[1] + g.t[3] / 2, vp.width + ': the bubble ' + JSON.stringify(g.b) + ' is not inside the top-left quadrant of ' + JSON.stringify(g.t));
+  }
+});
+
 main().catch(e => { console.error(e && e.stack || e); process.exit(2); });
