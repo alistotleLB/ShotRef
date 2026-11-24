@@ -5939,4 +5939,107 @@ check('first run: Try it hands-on runs the practice tour, then the starter picke
   noPageErrors(p);
 });
 
+/* ---------------- final review: dialogs over a tour, boot asset load vs practice, non-file drops ---------------- */
+const aboveTour = (p, sel) => p.evaluate(s => { const b = document.querySelector(s).getBoundingClientRect(), e = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2); return !!e && !!e.closest(s.split(' ')[0]); }, sel);
+const tourShown = p => p.evaluate(() => { const t = document.querySelector('#tour'); return !!t && getComputedStyle(t).visibility !== 'hidden' && document.querySelector('.tour-bubble').offsetWidth > 0; });
+
+check('tours: a dialog opened during the hands-on tour is clickable, Esc closes only it, and the tour carries on', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await handsStart(p); await handsSkipTo(p, 'h-drag');
+  await p.keyboard.press('?'); await settle(p, 200);
+  ok(await isOpen(p, 'mHelp'), '? did not open Quick start');
+  ok(!(await tourShown(p)), 'the tour is still drawn over the dialog');
+  ok(await aboveTour(p, '#mHelp .x'), 'the dialog close button is covered');
+  await p.click('#mHelp .x'); await settle(p, 300);
+  ok(!(await isOpen(p, 'mHelp')), 'clicking x did not close the dialog');
+  ok(await p.evaluate(() => window.__shotref.tour.active() && window.__shotref.practicing()), 'the tour or practice ended with the dialog');
+  ok(await handsId(p) === 'h-drag' && await tourShown(p), 'the tour did not come back on the same stop');
+  await p.keyboard.press('?'); await settle(p, 200);
+  ok(await isOpen(p, 'mHelp'), '? did not open Quick start the second time');
+  await p.keyboard.press('Escape'); await settle(p, 300);
+  ok(!(await isOpen(p, 'mHelp')), 'Esc did not close the dialog');
+  ok(await p.evaluate(() => window.__shotref.tour.active() && window.__shotref.practicing()) && await handsId(p) === 'h-drag' && await tourShown(p), 'Esc ended the tour as well');
+  await p.click('#tourEnd'); await settle(p, 200);
+  noErrors(p);
+});
+
+check('tours: a dialog opened during the basic tour is clickable, Esc closes only it; a file from Windows ends the tour and loads', async ({ freshContext }) => {
+  const p = await desktopPage(freshContext); await settle(p, 300);
+  await p.evaluate(() => window.__shotref.startTour('basic')); await settle(p, 300);
+  const id0 = await handsId(p);
+  await p.evaluate(() => window.__dsk.menu('help')); await settle(p, 200);
+  ok(await isOpen(p, 'mHelp'), 'the native Help command did not open Quick start');
+  ok(!(await tourShown(p)), 'the tour is still drawn over the dialog');
+  ok(await aboveTour(p, '#mHelp .x'), 'the dialog close button is covered');
+  await p.click('#mHelp .x'); await settle(p, 300);
+  ok(!(await isOpen(p, 'mHelp')) && await p.evaluate(() => window.__shotref.tour.active()) && await handsId(p) === id0 && await tourShown(p), 'the tour did not come back on the same stop');
+  await p.evaluate(() => window.__dsk.menu('help')); await settle(p, 200);
+  await p.keyboard.press('Escape'); await settle(p, 300);
+  ok(!(await isOpen(p, 'mHelp')), 'Esc did not close the dialog');
+  ok(await p.evaluate(() => window.__shotref.tour.active()) && await handsId(p) === id0, 'Esc ended the basic tour as well');
+  const st = await stateOf(p); st.objects = st.objects.slice(0, 2);
+  const text = JSON.stringify({ app: 'ShotRef', version: 2, state: st, assets: {} });
+  await p.evaluate(t => window.__dsk.openCb({ text: t, name: 'late.shotref', path: 'E:/late.shotref' }), text);
+  await p.waitForFunction(() => window.__shotref.state.objects.length === 2, null, { timeout: 4000 }).catch(() => { throw new Error('the opened file did not load'); });
+  await settle(p, 300);
+  ok(await noTour(p) && !(await p.evaluate(() => window.__shotref.tour.active())), 'the basic tour kept running over the opened file');
+  ok(await p.evaluate(() => window.__shotref.getPref('tourBasicDone', false)) === true, 'tourBasicDone was not set when the tour ended externally');
+  noPageErrors(p);
+});
+
+const idbKeys = p => p.evaluate(() => new Promise(res => { const r = indexedDB.open('shotref'); r.onsuccess = () => { const q = r.result.transaction('assets').objectStore('assets').getAllKeys(); q.onsuccess = () => { r.result.close(); res(q.result.map(String)); }; }; r.onerror = () => res(null); }));
+/* a session with a stored photo, reloaded with the IndexedDB open held back for 1.1 s (idbOpen gives up at 1.5 s) */
+const slowRestore = async (freshContext, fixtures) => {
+  const fc = await freshContext();
+  await fc.ctx.addInitScript(`(() => { let d = 0; try { d = Number(sessionStorage.getItem('idbDelay') || 0); } catch (e) { }
+    if (!d) return; const o = IDBFactory.prototype.open;
+    IDBFactory.prototype.open = function (...a) { const rq = o.apply(this, a); let cb = null;
+      Object.defineProperty(rq, 'onsuccess', { configurable: true, set(f) { cb = f; }, get() { return cb; } });
+      rq.addEventListener('success', ev => setTimeout(() => cb && cb.call(rq, ev), d)); return rq; }; })();`);
+  const p = await fc.open(); await settle(p, 300);
+  await p.setInputFiles('#fPlate', path.join(fixtures, 'location.jpg'));
+  await p.waitForFunction(() => window.__shotref.state.plate && window.__shotref.state.plate.asset);
+  const id = await p.evaluate(() => window.__shotref.state.plate.asset);
+  await settle(p, 1500);
+  ok((await idbKeys(p)).includes(id), 'set-up: the photo is not stored');
+  await p.evaluate(() => sessionStorage.setItem('idbDelay', '1100'));
+  await p.reload(); await p.waitForFunction(() => window.__shotref && window.__shotref.state);
+  return { p, id };
+};
+
+check('practice: the hands-on tour will not start while boot is still loading the stored photos', async ({ freshContext, fixtures }) => {
+  const { p, id } = await slowRestore(freshContext, fixtures);
+  ok(await p.evaluate(() => !window.__shotref.assets[window.__shotref.state.plate.asset]), 'set-up: the photo was already loaded');
+  const r = await p.evaluate(() => { const h = window.__shotref.startTour('hands'); return { h: h === null, practicing: window.__shotref.practicing(), toast: document.querySelector('#toast').textContent }; });
+  ok(r.h && !r.practicing, 'the hands-on tour started before the stored photos were loaded');
+  ok(r.toast.length > 3, 'no toast said why');
+  await p.waitForFunction(i => window.__shotref.assets[i], id, { timeout: 8000 }).catch(() => { throw new Error('the photo never loaded'); });
+  await settle(p, 300);
+  ok(await p.evaluate(() => !!window.__shotref.startTour('hands')), 'the hands-on tour did not start once boot had loaded');
+  await p.click('#tourEnd'); await settle(p, 300);
+  noErrors(p);
+});
+
+check('practice: photos that finish loading mid-practice belong to the real scene and stay stored', async ({ freshContext, fixtures }) => {
+  const { p, id } = await slowRestore(freshContext, fixtures);
+  ok(await p.evaluate(() => window.__shotref.practice.enterEarly()), 'practice did not start (test hook)');
+  await p.evaluate(() => window.__shotref.tour.run([{ id: 'a', target: null, title: 'T', text: 't' }], { interactive: true, onEnd: () => window.__shotref.practice.leave() }));
+  await settle(p, 2200); /* the load lands while the stage is up */
+  ok(await p.evaluate(i => !window.__shotref.assets[i], id), 'the stored photo went into the practice stage');
+  await p.click('#tourEnd'); await settle(p, 1500);
+  ok(await p.evaluate(i => !!window.__shotref.assets[i] && window.__shotref.state.plate.asset === i, id), 'the real scene lost its photo');
+  ok((await idbKeys(p)).includes(id), 'the photo was deleted from IndexedDB');
+  noErrors(p);
+});
+
+check('practice: dropping text or a link on the picture does not end the tour', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await handsStart(p);
+  await p.evaluate(() => { const dt = new DataTransfer(); dt.setData('text/plain', 'hello'); document.querySelector('#vp').dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true })); });
+  await settle(p, 400);
+  ok(await p.evaluate(() => window.__shotref.tour.active() && window.__shotref.practicing()), 'a text drop ended the tour');
+  await p.click('#tourEnd'); await settle(p, 200);
+  noErrors(p);
+});
+
 main().catch(e => { console.error(e && e.stack || e); process.exit(2); });

@@ -15,6 +15,8 @@
  * ui: { next, back, end, finish, skip, progress(n, total) }, the labels (src/tour-copy.js).
  * onEnd(reason): 'finish' | 'end' | 'esc' | 'external'.
  * canKey(e): true when an app key must reach the app (Esc while there is something to cancel).
+ * paused(): true while something else owns the screen (an open dialog): the tour hides, ignores every key and does not measure or advance;
+ *   it shows again, re-measured, on the same stop when paused() turns false.
  * tourTick() runs from main.js frame() while a tour is active: it re-measures and evaluates waitFor. */
 
 const PAD = 6;       /* gap between the target and the corners */
@@ -37,7 +39,7 @@ function el(tag, cls, attrs, text) {
 
 const tourActive = () => !!cur;
 
-function runTour({ stops, ui, interactive = false, onEnd = null, canKey = null }) {
+function runTour({ stops, ui, interactive = false, onEnd = null, canKey = null, paused = null }) {
   if (!stops || !stops.length) return null;
   if (cur) cur.end('external');
   const prevFocus = document.activeElement;
@@ -72,6 +74,8 @@ function runTour({ stops, ui, interactive = false, onEnd = null, canKey = null }
   root.append(dim, corners, ...hits, bubble);
   document.body.appendChild(root);
 
+  const isPaused = () => { try { return !!paused && !!paused(); } catch (e) { return false; } };
+  let wasPaused = false;
   let i = -1, snap = null, done = false, doneTimer = 0, stopAt = 0, warned = false, lastKey = '', hadRect = false, ended = false;
   const stopOf = () => stops[i];
   const stopInteractive = () => !!interactive && stopOf().interactive !== false;
@@ -197,6 +201,9 @@ function runTour({ stops, ui, interactive = false, onEnd = null, canKey = null }
 
   function tickOnce() {
     if (ended) return;
+    const p = isPaused();
+    if (p !== wasPaused) { wasPaused = p; root.style.visibility = p ? 'hidden' : ''; if (!p) lastKey = ''; } /* hidden: no hit areas either */
+    if (p) return;
     const s = stopOf();
     if (s.keep && !done) { let kept = true; try { kept = s.keep() !== false; } catch (e) { kept = true; } if (!kept && s.before) { try { s.before(); } catch (e) { console.error('tour: before() failed for stop "' + (s.id || i) + '"', e); } } }
     measure(false);
@@ -208,7 +215,8 @@ function runTour({ stops, ui, interactive = false, onEnd = null, canKey = null }
         tick.hidden = false; tick.textContent = '';
         tick.append(el('i', 'tour-tick'), el('span', null, null, s.done || ''));
         measure(true); /* the bubble grew: place it again so it cannot cover its target */
-        doneTimer = setTimeout(nextStop, DONE_MS);
+        const later = () => { if (ended) return; if (isPaused()) doneTimer = setTimeout(later, 100); else nextStop(); };
+        doneTimer = setTimeout(later, DONE_MS);
       }
     }
   }
@@ -217,6 +225,7 @@ function runTour({ stops, ui, interactive = false, onEnd = null, canKey = null }
 
   /* capture phase: this runs before the app's own shortcut handler */
   function onKey(e) {
+    if (isPaused()) return; /* a dialog owns the keyboard */
     const inBubble = bubble.contains(e.target), k = e.key;
     if (k === 'Escape') {
       if (canKey && canKey(e)) return;

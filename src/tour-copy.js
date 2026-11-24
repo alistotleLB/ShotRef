@@ -130,7 +130,7 @@ export const TOUR_COPY = {
     },
     'h-play': {
       title: 'Play the shot',
-      text: 'Click Play, or press Space, to watch the move run from start to end.',
+      text: 'Click Play, or press Space, to run the shot from start to end.',
       done: 'Playing',
     },
     'h-key': {
