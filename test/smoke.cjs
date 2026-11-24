@@ -1766,7 +1766,8 @@ check('artifact-format fields survive opening; dangling references are dropped',
   ok(!(by('x1').parent && by('x2').parent), 'a parent loop was kept');
   ok(s.camera.mount === null && s.camera.dof.strength === 1, 'camera mount/blur strength (junk strength in a file with depth of field reads as 1, the old look): ' + JSON.stringify([s.camera.mount, s.camera.dof]));
   ok(s.shots.length === 1 && s.shots[0].camera.lookAtId === null && s.shotId === 's1', 'shots not repaired');
-  ok(s.takes.length === 2 && s.takes[1].snap === null && s.takeId === 't1', 'takes not repaired');
+  /* batch H: Take 2 has no readable copy of its scene, so it can't be used and is left out (it was kept with an empty copy before takes could be switched to) */
+  ok(s.takes.length === 1 && s.takes[0].id === 't1' && s.takes[0].snap === null && s.takeId === 't1', 'takes not repaired: ' + JSON.stringify(s.takes));
   ok(!('shadows' in s.settings) && s.settings.shadowSoft === 1 && s.settings.tod === 5 && s.settings.interp === 'natural', 'sun settings: ' + JSON.stringify(s.settings));
   noErrors(p);
 });
@@ -4174,6 +4175,201 @@ check('contact sheet and frame pack lock the page while they build, and unlock a
   ok(await p.evaluate(() => window.__lk[0]) === true, 'frame pack not locked while rendering');
   ok(await p.evaluate(() => [...document.body.children].every(e => !e.inert)), 'still locked after a failed pack');
   noPageErrors(p);
+});
+
+/* ---- batch H: takes ---- */
+const takeCmd = (p, cmd) => menuCmd(p, '#bTake', cmd);
+const nObj = p => p.evaluate(() => window.__shotref.state.objects.length);
+const addBoxes = (p, n) => p.evaluate(n => { const S = window.__shotref; for (let i = 0; i < n; i++) S.addObject('box'); S.changed(true, true); }, n);
+const undoN = async (p, n) => { for (let i = 0; i < n; i++) { await p.click('#bUndo'); await p.waitForTimeout(60); } };
+const takeNames = p => p.evaluate(() => (window.__shotref.state.takes || []).map(t => t.name));
+const takeBtnText = p => p.evaluate(() => document.querySelector('#bTake').textContent.trim());
+const snapObjs = (p, name) => p.evaluate(n => { const t = window.__shotref.state.takes.find(x => x.name === n); return t && t.snap ? JSON.parse(t.snap).objects.length : -1; }, name);
+check('takes: a Take button sits between the project name and File, and says Take 1 on a plain project', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const order = await p.evaluate(() => [...document.querySelector('#top').querySelectorAll('#projName, #bTake, #bFile')].map(e => e.id).join());
+  ok(order === 'projName,bTake,bFile', 'top bar order: ' + order);
+  ok(await takeBtnText(p) === 'Take 1', 'label: ' + await takeBtnText(p));
+  await p.click('#bTake');
+  const items = await p.evaluate(() => [...document.querySelectorAll('#ctxMenu button')].map(b => ({ c: b.dataset.cmd || '', t: b.textContent.trim(), d: b.disabled })));
+  ok(items.some(i => /^New take/.test(i.t)) && items.some(i => /^Rename this take/.test(i.t)) && items.some(i => /^Compare takes/.test(i.t) && i.d) && items.some(i => /^Delete this take/.test(i.t) && i.d) && items.some(i => /^Duplicate this take/.test(i.t)), JSON.stringify(items));
+  ok(await p.evaluate(() => !window.__shotref.state.takes), 'just opening the menu changed the project');
+  noErrors(p);
+});
+check('takes: New take is a copy that becomes the active take; the first take stays as it was', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const n0 = await nObj(p);
+  await takeCmd(p, 'newtake'); await settle(p, 200);
+  ok(await takeBtnText(p) === 'Take 2', 'label ' + await takeBtnText(p));
+  const s = await stateOf(p);
+  ok(s.takes.length === 2 && s.takeId === s.takes[1].id && s.takes[1].snap === null && typeof s.takes[0].snap === 'string', 'shape ' + JSON.stringify(s.takes.map(t => [t.name, typeof t.snap])));
+  ok(await nObj(p) === n0, 'the copy has different content');
+  await addBoxes(p, 2); await settle(p, 100);
+  await takeCmd(p, 'take:' + s.takes[0].id); await settle(p, 300);
+  ok(await takeBtnText(p) === 'Take 1' && await nObj(p) === n0, 'Take 1 changed: ' + await nObj(p));
+  ok(await snapObjs(p, 'Take 2') === n0 + 2, 'Take 2 not kept');
+  ok(await p.evaluate(() => window.__shotref.state.takes.find(t => t.id === window.__shotref.state.takeId).snap === null), 'active take keeps a stale copy');
+  noErrors(p);
+});
+check('takes: switching, new, rename and delete are undo steps; undo and redo never lose or mix up a take', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const n0 = await nObj(p);                       /* Take 1: n0 objects */
+  await takeCmd(p, 'newtake'); await addBoxes(p, 2);        /* Take 2: n0+2 */
+  const ids = (await stateOf(p)).takes.map(t => t.id);
+  await takeCmd(p, 'take:' + ids[0]); await settle(p, 150);
+  await addBoxes(p, 1);                           /* Take 1 edited: n0+1 */
+  ok(await nObj(p) === n0 + 1, 'edit lost');
+  await undoN(p, 1);                              /* edit undone */
+  ok(await nObj(p) === n0, 'undo of the edit: ' + await nObj(p));
+  await undoN(p, 1);                              /* switch undone: back in Take 2 */
+  let s = await stateOf(p);
+  ok(s.takeId === ids[1] && await takeBtnText(p) === 'Take 2' && await nObj(p) === n0 + 2, 'undo of a switch: ' + s.takeId + ' ' + await nObj(p));
+  ok(await snapObjs(p, 'Take 1') === n0, 'Take 1 mixed up after undo: ' + await snapObjs(p, 'Take 1'));
+  await takeCmd(p, 'take:' + ids[0]); await settle(p, 150);   /* switch again (history after undo is cut) */
+  ok(await nObj(p) === n0, 'Take 1 shows the undone edit: ' + await nObj(p));
+  await undoN(p, 1); await p.click('#bRedo'); await settle(p, 100);
+  ok(await nObj(p) === n0 && (await stateOf(p)).takeId === ids[0], 'redo of a switch');
+  /* rename and delete */
+  await takeCmd(p, 'renametake'); await p.fill('#nmInput', 'Wide version'); await p.click('#nmOk'); await settle(p, 100);
+  ok((await takeNames(p)).includes('Wide version') && await takeBtnText(p) === 'Wide version', 'rename: ' + await takeBtnText(p));
+  await undoN(p, 1);
+  ok((await takeNames(p)).join() === 'Take 1,Take 2', 'undo rename: ' + (await takeNames(p)).join());
+  await takeCmd(p, 'take:' + ids[1]); await settle(p, 150);
+  await takeCmd(p, 'deltake'); await settle(p, 200);
+  s = await stateOf(p);
+  ok(s.takes.length === 1 && s.takeId === ids[0] && await nObj(p) === n0, 'delete: ' + JSON.stringify([s.takes.length, await nObj(p)]));
+  await undoN(p, 1); await settle(p, 100);
+  s = await stateOf(p);
+  ok(s.takes.length === 2 && s.takeId === ids[1] && await nObj(p) === n0 + 2, 'undo delete: ' + JSON.stringify([s.takes.length, await nObj(p)]));
+  ok(await snapObjs(p, 'Take 1') === n0, 'Take 1 after undo delete');
+  noErrors(p);
+});
+check('takes: many switches and edits, then undo part of the way back, keep every take exact', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const n0 = await nObj(p);
+  await takeCmd(p, 'newtake'); await takeCmd(p, 'newtake');
+  const ids = (await stateOf(p)).takes.map(t => t.id);
+  const expect = [n0, n0, n0];
+  for (let i = 0; i < 30; i++) {
+    const k = i % 3;
+    await p.evaluate(id => window.__shotref.switchTake(id), ids[k]);
+    await addBoxes(p, 1); expect[k]++;
+  }
+  ok(await p.evaluate(() => window.__shotref.snapPoolSize()) <= 40, 'copies pile up in the undo pool: ' + await p.evaluate(() => window.__shotref.snapPoolSize()));
+  await undoN(p, 12);
+  /* undone 12 steps = the last 6 loop passes (a switch and an edit each) */
+  const want = [...expect]; for (let i = 24; i < 30; i++) want[i % 3]--;
+  for (let k = 0; k < 3; k++) {
+    await p.evaluate(id => window.__shotref.switchTake(id), ids[k]);
+    ok(await nObj(p) === want[k], 'take ' + k + ' has ' + await nObj(p) + ', expected ' + want[k]);
+  }
+  noErrors(p);
+}, { timeout: 90000 });
+check('takes: undo snapshots leave the inactive takes out (3 takes of a 50-object scene stay small)', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await addBoxes(p, 50);
+  await p.evaluate(() => { const S = window.__shotref; S.state.objects.forEach((o, i) => { o.base.p = [i * 0.5, 0, i * 0.3]; }); S.changed(true, true); });
+  await takeCmd(p, 'newtake'); await takeCmd(p, 'newtake'); await settle(p, 200);
+  await addBoxes(p, 1);
+  const m = await p.evaluate(() => { const S = window.__shotref; return { step: S.history.bytes, full: JSON.stringify(S.state).length, live: JSON.stringify({ ...S.state, takes: undefined }).length, takes: S.state.takes.length }; });
+  ok(m.takes === 3 && m.full > 2.5 * m.live, 'setup: ' + JSON.stringify(m));
+  ok(m.step < 1.25 * m.live, 'an undo step holds the inactive takes: ' + JSON.stringify(m));
+  noErrors(p);
+});
+check('takes: save then open keeps every take exactly (and the active scene)', async ({ open, freshContext, downloads }) => {
+  const a = await open(); await settle(a, 300);
+  await addBoxes(a, 3);
+  await takeCmd(a, 'newtake'); await addBoxes(a, 2); await a.evaluate(() => window.__shotref.applyMove('dollyIn'));
+  await takeCmd(a, 'newtake'); await a.evaluate(() => { const S = window.__shotref; S.state.objects.pop(); S.state.settings.style = 'clay'; S.changed(true, true); });
+  const ids = (await stateOf(a)).takes.map(t => t.id);
+  await takeCmd(a, 'take:' + ids[1]); await settle(a, 200);
+  const before = await stateOf(a);
+  await fileCmd(a, 'save');
+  const file = await downloads(a).wait('.shotref');
+  const fc = await freshContext(); const b = await fc.open();
+  await openFile(b, file.name, file.text());
+  await b.waitForFunction(n => window.__shotref.state.takes && window.__shotref.state.takes.length === n, 3);
+  const after = await stateOf(b);
+  ok(canon(after) === canon(before), 'saved and reopened project differs');
+  for (const t of before.takes) { const u = after.takes.find(x => x.id === t.id); ok(u && u.name === t.name && u.snap === t.snap, 'take ' + t.name + ' changed'); }
+  await takeCmd(b, 'take:' + ids[2]); await settle(b, 200);
+  ok((await stateOf(b)).settings.style === 'clay', 'Take 3 content lost');
+  noErrors(b);
+});
+check('takes: the autosave keeps all takes', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await takeCmd(p, 'newtake'); await addBoxes(p, 2); await settle(p, 900);
+  const n = await nObj(p);
+  await p.reload(); await p.waitForFunction(() => window.__shotref && window.__shotref.state); await settle(p, 500);
+  const s = await stateOf(p);
+  ok(s.takes && s.takes.length === 2 && s.takeId === s.takes[1].id && s.objects.length === n && typeof s.takes[0].snap === 'string', 'after reload: ' + JSON.stringify(s.takes && s.takes.map(t => [t.name, typeof t.snap])));
+  noErrors(p);
+});
+check('takes: an artifact-made file with takes opens with all of them; the stale copy of the active take is dropped', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const cam = { base: JSON.parse(CAM_BASE), keys: [], feel: 'gentle', shake: 0, lookAtId: null, follow: false, dof: { on: false, fstop: 2.8, auto: true } };
+  const scene = n => ({ settings: {}, camera: cam, objects: Array.from({ length: n }, (_, i) => ({ id: 'o' + n + i, type: 'box', name: 'Box ' + i, color: '#888888', opts: {}, base: { p: [i, 0, 0], r: [0, 0, 0], s: [1, 1, 1] }, keys: [], visible: true })), plate: null });
+  const file = { app: 'ShotRef', version: 1, state: { ...scene(2), v: 1, takes: [{ id: 'ta', name: 'Hero', snap: JSON.stringify(scene(9)) }, { id: 'tb', name: 'Alt', snap: JSON.stringify(scene(4)) }, { id: 'tc', name: 'Wide', snap: JSON.stringify(scene(1)) }], takeId: 'ta' }, assets: {} };
+  await openFile(p, 'art.shotref', JSON.stringify(file));
+  const s = await stateOf(p);
+  ok(s.takes.length === 3 && s.takeId === 'ta' && s.takes[0].snap === null && s.objects.length === 2, 'opened: ' + JSON.stringify([s.takes.map(t => t.name), s.objects.length]));
+  ok(await takeBtnText(p) === 'Hero', 'label ' + await takeBtnText(p));
+  await takeCmd(p, 'take:tb'); await settle(p, 200);
+  ok(await nObj(p) === 4 && await takeBtnText(p) === 'Alt', 'Alt not loaded');
+  await takeCmd(p, 'take:ta'); await settle(p, 200);
+  ok(await nObj(p) === 2, 'switching back gives ' + await nObj(p));
+  const lab = await p.evaluate(() => document.querySelector('#bUndo').title);
+  ok(/switch to Hero/i.test(lab), 'undo title: ' + lab);
+  noErrors(p);
+});
+check('takes: a photo used only by an inactive take is kept in the saved file', async ({ open, downloads }) => {
+  const p = await open(); await settle(p, 300);
+  const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==';
+  const id = await p.evaluate(png => { const S = window.__shotref; S.assets.photo1 = { kind: 'image', name: 'a.png', b64: png, mime: 'image/png' }; const o = S.addObject('image', { asset: 'photo1' }); S.changed(true, true); return o.id; }, PNG);
+  await takeCmd(p, 'newtake');
+  await p.evaluate(i => { const S = window.__shotref; S.state.objects = S.state.objects.filter(o => o.id !== i); S.changed(true, true); }, id);
+  await fileCmd(p, 'save');
+  const f = JSON.parse((await downloads(p).wait('.shotref')).text());
+  ok(f.assets.photo1, 'asset of the inactive take dropped from the file: ' + Object.keys(f.assets));
+});
+check('compare takes: needs two takes; renders both without blob: URLs, locks the page, plays side by side, and Use right take switches', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => { window.__locked = []; const orig = HTMLCanvasElement.prototype.toDataURL; HTMLCanvasElement.prototype.toDataURL = function () { window.__locked.push([...document.body.children].some(e => e.inert)); return orig.apply(this, arguments); }; });
+  await p.click('#bTake');
+  ok(await p.evaluate(() => document.querySelector('#ctxMenu [data-cmd="compare"]').disabled), 'compare offered with one take');
+  await p.keyboard.press('Escape');
+  const n0 = await nObj(p);
+  await takeCmd(p, 'newtake'); await addBoxes(p, 3); await p.evaluate(() => window.__shotref.applyMove('dollyIn')); await settle(p, 200);
+  const before = await stateOf(p);
+  await takeCmd(p, 'compare');
+  await p.waitForFunction(() => !document.querySelector('#mCompare').classList.contains('hidden'));
+  await p.waitForFunction(() => !document.querySelector('#cmpView').hidden, null, { timeout: 30000 });
+  const info = await p.evaluate(() => ({ a: document.querySelector('#cmpImgA').src.slice(0, 22), b: document.querySelector('#cmpImgB').src.slice(0, 22), la: document.querySelector('#cmpLA').textContent, lb: document.querySelector('#cmpLB').textContent, opts: [...document.querySelectorAll('#cmpA option')].map(o => o.textContent), locked: window.__locked.slice(), inert: [...document.body.children].some(e => e.inert), cmpInert: document.querySelector('#mCompare').inert }));
+  ok(/^data:image\//.test(info.a) && /^data:image\//.test(info.b), 'not data: URLs ' + info.a + ' ' + info.b);
+  ok(info.opts.join() === 'Take 1,Take 2' && /^Take 2/.test(info.la) && /^Take 1/.test(info.lb), 'labels ' + JSON.stringify(info));
+  ok(info.locked.length >= 4 && info.locked.every(Boolean), 'page not locked while rendering: ' + JSON.stringify(info.locked));
+  ok(!info.inert && !info.cmpInert, 'still locked afterwards');
+  ok(canon(await stateOf(p)) === canon(before), 'rendering changed the live scene');
+  const a1 = await p.evaluate(() => { const l = document.querySelector('#cmpPlay'); if (l.textContent.trim() !== '▶') l.click(); return document.querySelector('#cmpImgA').src; });
+  await p.evaluate(() => { const r = document.querySelector('#cmpScrub'); r.value = 1; r.dispatchEvent(new Event('input', { bubbles: true })); });
+  await settle(p, 200);
+  const a2 = await p.evaluate(() => document.querySelector('#cmpImgA').src);
+  ok(a1 !== a2, 'scrub bar did not change the frame');
+  ok(await p.evaluate(() => document.querySelector('#cmpImgA').src !== document.querySelector('#cmpImgB').src), 'both takes look the same');
+  await p.click('#cmpUseB'); await settle(p, 300);
+  ok(await takeBtnText(p) === 'Take 1' && await nObj(p) === n0, 'Use right take: ' + await takeBtnText(p));
+  ok(await p.evaluate(() => document.querySelector('#mCompare').classList.contains('hidden')), 'dialog stays open');
+  noErrors(p);
+}, { timeout: 90000 });
+check('compare takes: a failure while rendering puts the scene back and unlocks the page', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await takeCmd(p, 'newtake'); await addBoxes(p, 2); await settle(p, 100);
+  const before = await stateOf(p);
+  await p.evaluate(() => { HTMLCanvasElement.prototype.toDataURL = function () { throw new Error('boom'); }; });
+  await takeCmd(p, 'compare'); await settle(p, 1500);
+  ok(await p.evaluate(() => [...document.body.children].every(e => !e.inert)), 'page stays locked after a failed render');
+  ok(canon(await stateOf(p)) === canon(before), 'scene changed after a failed render');
+  ok(await p.evaluate(() => /Could not/.test(document.querySelector('#cmpMsg').textContent)), 'no plain message: ' + await p.evaluate(() => document.querySelector('#cmpMsg').textContent));
 });
 
 main().catch(e => { console.error(e && e.stack || e); process.exit(2); });

@@ -257,7 +257,12 @@ body.simple #vpRight [data-g],body.simple #vpRight [data-g2]{display:none}
 body.simple .adv{display:none!important}
 /* top bar: project name, File menu, step bar */
 #top{gap:8px}
-#projName{background:transparent;border:1px solid transparent;color:#e9ebee;font-weight:600;width:170px;padding:4px 6px;border-radius:5px;flex:0 1 170px}
+#projName{background:transparent;border:1px solid transparent;color:#e9ebee;font-weight:600;width:140px;padding:4px 6px;border-radius:5px;flex:0 1 140px}
+#bTake{color:var(--acc2);max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cmpgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:6px}
+.cmpgrid figure{margin:0}
+.cmpgrid img{width:100%;display:block;border-radius:6px;background:#0f1012;border:1px solid var(--line2)}
+.cmpgrid figcaption{font-size:12px;color:var(--mute);margin-top:4px}
 #projName::placeholder{color:var(--mute);font-weight:400}
 #projName:hover{border-color:var(--line2)}
 #projName:focus{background:#15161a;border-color:var(--acc);outline:none}
@@ -307,6 +312,7 @@ button.icon{padding:5px 8px;min-width:32px;display:inline-flex;align-items:cente
   <header id="top">
     <div class="brand" title="ShotRef"><svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M5 12V5h7M20 27h7v-7" fill="none" stroke="#E7E9EC" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 23C13 15 19 22 24 9" fill="none" stroke="#FF9A3C" stroke-width="2.4" stroke-linecap="round"/><circle cx="8" cy="23" r="2.4" fill="#FF9A3C"/><circle cx="24" cy="9" r="2.4" fill="#FF9A3C"/></svg><span class="name">Shot<span class="r">Ref</span></span> <small>Camera moves for AI video</small></div>
     <input id="projName" type="text" placeholder="Untitled scene" aria-label="Project name" title="Project name (click to rename)" spellcheck="false" maxlength="80" autocomplete="off">
+    <button id="bTake" class="menubtn" aria-haspopup="menu" title="Takes: alternative versions of this scene you can switch between and compare">Take 1</button>
     <button id="bFile" class="menubtn" aria-haspopup="menu" title="New, open, save and export">File</button>
     <div class="grp">
       <button id="bUndo" class="icon" aria-label="Undo" title="Undo (Ctrl+Z)">↶</button>
@@ -427,6 +433,25 @@ button.icon{padding:5px 8px;min-width:32px;display:inline-flex;align-items:cente
     <div class="row" style="justify-content:space-between"><span id="exTxt" class="note"></span><button id="exCancel">Cancel</button></div>
   </div>
   <p class="note">Video renders frame by frame, so it is always smooth at the chosen FPS, whatever your PC's speed. Helpers like the camera icon and paths are never included.</p>
+</div></div>
+
+<div id="mName" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mNameT"><div class="dlg" style="width:min(380px,94vw)">
+  <button class="x" data-close aria-label="Close">×</button>
+  <h2 id="mNameT">Rename take</h2>
+  <input id="nmInput" type="text" style="width:100%;margin-top:10px;padding:7px 9px" maxlength="60" aria-label="Take name" autocomplete="off" spellcheck="false">
+  <div class="btns" style="margin-top:14px"><button data-close>Cancel</button><button id="nmOk" class="primary">OK</button></div>
+</div></div>
+
+<div id="mCompare" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mCompareT"><div class="dlg" style="width:min(940px,96vw)">
+  <button class="x" data-close aria-label="Close">×</button>
+  <h2 id="mCompareT">Compare takes</h2>
+  <div class="row" style="gap:10px;margin-top:8px"><select id="cmpA" class="grow" aria-label="Left take"></select><span class="note" style="margin:0">vs</span><select id="cmpB" class="grow" aria-label="Right take"></select><button id="cmpGo" class="primary">Render</button></div>
+  <p class="note" id="cmpMsg" role="status"></p>
+  <div id="cmpView" hidden>
+    <div class="cmpgrid"><figure><img id="cmpImgA" alt="Left take"><figcaption id="cmpLA"></figcaption></figure><figure><img id="cmpImgB" alt="Right take"><figcaption id="cmpLB"></figcaption></figure></div>
+    <div class="row" style="gap:8px;margin-top:8px"><button id="cmpPlay" aria-label="Play or pause">❚❚</button><input id="cmpScrub" type="range" min="0" max="1" step="0.001" class="grow" aria-label="Position in the shot"><button id="cmpUseB" title="Switch the scene to the right-hand take">Use right take</button></div>
+  </div>
+  <p class="note">Each take plays its current shot from the same camera timing, side by side, so you can pick the better version.</p>
 </div></div>
 
 <div id="mSheet" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mSheetT"><div class="dlg" style="width:min(900px,96vw)">

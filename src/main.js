@@ -12,6 +12,8 @@ import { platform } from './platform.js';
  * T, playing, view, selected,  playhead: setTime; playing: setPlaying; view: setView; selected ('camera', 'target', 'sun' or an object id), selIds: select, sanitizeSel; pipOn: #bPip;
  *   pipOn, editRev, ...Dirty     editRev counts edits: changed, quietChange; uiDirty/propsDirty ask frame() to rebuild lists/panel
  * hist, hi                       undo snapshots and position: pushHistory, undo, redo, replaceProject
+ * snapPool, snapById, snapLive   the take copies the undo steps refer to, and how many are in use: snapRef, pruneSnapPool
+ * cmp, cmpBusy                   the Compare takes dialog's frames and playhead, and whether it is rendering: openCompare, renderCompare
  * toastTimer                   toast hide timer: toast (downloads capability and the open file/unsaved mark live in platform.js)
  * sizeWarned                     autosave size warning shown once: warnSize
  * autosaveReady, autosaveWaiting boot has loaded stored assets / a save is waiting for that: boot, writeAutosave
@@ -357,7 +359,34 @@ function setMount(id) {
 /* ---- history ---- */
 let hist = [], hi = -1;
 let histDoc = []; /* the document id of each history step (platform.js maps it to the file), so undo across an Open can't make Save overwrite that file */
-function snapshot() { return JSON.stringify(state); }
+/* Takes keep a full copy of the scene in take.snap (a JSON string) for every take that is not the one on screen. An undo step must not
+   hold those copies again and again, so a step stores a short reference ("@3") and the text itself lives once in snapPool. A step
+   only ever refers to a copy by its number, so undo and redo bring back exactly the take copies that step had. */
+const snapPool = new Map(), snapById = []; /* copy text -> number, and number -> text (null once nothing refers to it) */
+let snapLive = 0, snapPruneAt = 12;
+function snapRef(text) {
+  let i = snapPool.get(text);
+  if (i === undefined) { i = snapById.length; snapById.push(text); snapPool.set(text, i); snapLive++; }
+  return '@' + i;
+}
+/* forget the copies no step refers to any more (steps older than 100 or cut off by a new edit) */
+function pruneSnapPool() {
+  const used = new Set();
+  for (const s of hist) { const re = /"snap":"@(d+)"/g; let m; while ((m = re.exec(s))) used.add(+m[1]); }
+  snapById.forEach((text, i) => { if (text !== null && !used.has(i)) { snapPool.delete(text); snapById[i] = null; snapLive--; } });
+  snapPruneAt = Math.max(12, snapLive * 2);
+}
+/* the undo step for the current project: the live scene in full, other takes by reference */
+function snapshot() {
+  if (!state.takes) return JSON.stringify(state);
+  return JSON.stringify({ ...state, takes: state.takes.map(t => ({ ...t, snap: t.id !== state.takeId && typeof t.snap === 'string' ? snapRef(t.snap) : null })) });
+}
+/* read a step back: references become the take copies again. A reference that can't be found drops that take (never a wrong one). */
+function parseStep(s) {
+  const st = JSON.parse(s);
+  if (st.takes) st.takes = st.takes.filter(t => { if (typeof t.snap === 'string' && t.snap[0] === '@') t.snap = snapById[+t.snap.slice(1)] || null; return t.id === st.takeId || t.snap; });
+  return st;
+}
 function pushHistory() {
   const s = snapshot();
   if (hist[hi] === s) return;
@@ -365,12 +394,13 @@ function pushHistory() {
   histDoc = histDoc.slice(0, hi + 1); histDoc.push(platform.getDoc());
   if (hist.length > 100) { hist.shift(); histDoc.shift(); }
   hi = hist.length - 1;
+  if (snapLive > snapPruneAt) pruneSnapPool();
   platform.setDirty(true);
   autosave();
 }
 function changed(commit, props = false) { editRev++; uiDirty = true; if (props) propsDirty = true; if (commit) { groundDirty = true; pushHistory(); } } /* a real edit: things settle once it is over */
 function restore(s) {
-  state = JSON.parse(s);
+  state = parseStep(s);
   sanitizeSel();
   syncScene(); applyEnv(); editRev++; uiDirty = true; propsDirty = true; updateGizmo(); syncTopUI();
 }
@@ -394,10 +424,22 @@ function probeStorage() {
   return !autosaveOff;
 }
 /* the asset ids the scene actually uses (memory also keeps older ones for undo) */
+const takeAssetCache = new Map(); /* take copy text -> the asset ids it uses (parsed once per copy) */
+function takeAssetIds(text) {
+  let r = takeAssetCache.get(text);
+  if (!r) {
+    r = [];
+    try { const st = JSON.parse(text); r = [...usedAssetIds({ plate: st.plate, objects: st.objects })]; } catch (e) { }
+    if (takeAssetCache.size > 40) takeAssetCache.clear();
+    takeAssetCache.set(text, r);
+  }
+  return r;
+}
 function usedAssetIds(st) {
   const ids = new Set();
   if (st.plate && st.plate.asset) ids.add(st.plate.asset);
   for (const o of st.objects || []) { const id = o.asset || (o.opts && o.opts.asset); if (id) ids.add(id); }
+  for (const t of st.takes || []) if (t.id !== st.takeId && typeof t.snap === 'string') for (const id of takeAssetIds(t.snap)) ids.add(id); /* a photo only an inactive take uses is still part of the project */
   return ids;
 }
 /* noPrune: set when boot dropped a broken autosave, so its photos and models stay in IndexedDB this session.
@@ -3425,7 +3467,7 @@ function replaceProject(newState, newAssets = {}, label) {
   try {
     for (const [id, a] of Object.entries(newAssets)) if (assets[id] && assets[id].b64 !== (a && a.b64)) dropModel(id);
     assets = { ...assets, ...newAssets };
-    state = newState; selected = null; selIds = []; promptEdit = null; shotEditId = null; setTime(0); migrateAll();
+    state = newState; cleanTakes(); selected = null; selIds = []; promptEdit = null; shotEditId = null; setTime(0); migrateAll();
     platform.startDoc(); /* Open, New and starters are a new document: Save must not reuse the previous file */
     restore(snapshot()); pushHistory(); resetEditorCam();
     if (label) toast(label);
@@ -3968,7 +4010,7 @@ async function buildContactSheet() {
   const W = pad * 3 + cw * 2 + 260, H = top + pad + rows.length * (ch + cap + pad), c = document.createElement('canvas'); c.width = W; c.height = H;
   const g = c.getContext('2d');
   g.fillStyle = '#141518'; g.fillRect(0, 0, W, H); g.fillStyle = '#ffb870'; g.font = '600 18px Segoe UI, Arial, sans-serif';
-  g.fillText(((state.meta && state.meta.name) || 'Scene') + ' · contact sheet', pad, 24);
+  g.fillText(((state.meta && state.meta.name) || 'Scene') + (state.takes && state.takes.length > 1 ? ' · ' + activeTakeName() : '') + ' · contact sheet', pad, 24);
   const load = src => new Promise(res => { const i = new Image(); i.onload = () => res(i); i.onerror = () => res(null); i.src = src; });
   let y = top + pad;
   for (const [n, s] of rows.entries()) {
@@ -3995,6 +4037,180 @@ async function exportAllShots() {
       if (!(await exportVideo({ label: `Shot ${i + 1} of ${list.length}: ${s.name}` }))) break;
     }
   } finally { loadShot(state.shots.find(s => s.id === keepId) || state.shots[0]); setTime(keepT); applyAll(T); requestRender(); syncTopUI(); }
+}
+
+/* ============================== takes ============================== */
+/* A take is an alternative version of the whole scene (people, props, camera, settings). state.takes[] = { id, name, snap } and state.takeId is the one on screen.
+   The take on screen IS the live state (its own snap is always null); every other take keeps a JSON copy of the scene in snap, made when you left it.
+   Switching, making, renaming and deleting takes are undo steps: a step holds the other takes' copies by reference (see snapshot), so undo and redo
+   always bring back exactly the copies that step had, and a step stays about as small as one scene.
+   A project that never made a second take has no state.takes at all; the button then says "Take 1". */
+const hasTakes = () => !!(state.takes && state.takes.length);
+const activeTake = () => hasTakes() ? state.takes.find(t => t.id === state.takeId) || state.takes[0] : null;
+const activeTakeName = () => (activeTake() || { name: 'Take 1' }).name;
+function ensureTakes() {
+  if (!hasTakes()) { const id = uid(); state.takes = [{ id, name: 'Take 1', snap: null }]; state.takeId = id; }
+  return state.takes;
+}
+/* a project from a file or autosave: a take that is not on screen and has no copy of its scene can't be used, so it is left out */
+function cleanTakes() {
+  if (!state.takes) return;
+  state.takes = state.takes.filter(t => t.id === state.takeId || typeof t.snap === 'string');
+  if (!state.takes.length) { delete state.takes; delete state.takeId; }
+}
+/* the live scene as the text kept in a take (everything except the takes themselves and the project name) */
+function takeSceneJSON() { syncShot(); const { takes, takeId, meta, ...scene } = state; return JSON.stringify(scene); }
+/* a take's copy read back through the one loader (copies made by the claude.ai version get the same repairs as an opened file) */
+function takeState(text) { return normalizeProject({ app: 'ShotRef', state: JSON.parse(text) }, projectDefaults()).state; }
+/* make `ns` the live scene: like opening a file, nothing is moved or settled, and the selection is cleared. No history step. */
+function loadScene(ns) {
+  setPlaying(false);
+  ns.takes = state.takes; ns.takeId = state.takeId; if (state.meta) ns.meta = state.meta; else delete ns.meta;
+  state = ns; selected = null; selIds = []; promptEdit = null; shotEditId = null; shotBarKey = '';
+  migrateAll(); restore(snapshot());
+  setTime(clamp(snapT(Math.min(T, lastT())), 0, lastT()));
+  pathRev = -1; requestRender();
+}
+/* a take edit that is not a scene edit: nothing to settle or move */
+function takeChanged() { editRev++; uiDirty = true; propsDirty = true; pushHistory(); syncTopUI(); requestRender(); }
+function switchTake(id) {
+  if (exporting || rec || id === '_') return false;
+  ensureTakes(); if (id === state.takeId) return false;
+  const t = state.takes.find(x => x.id === id); if (!t || typeof t.snap !== 'string') return false;
+  let ns; try { ns = takeState(t.snap); } catch (e) { console.error('ShotRef: could not open the take', e); toast("That take couldn't be opened."); return false; }
+  const from = activeTake(), text = takeSceneJSON();
+  from.snap = text; t.snap = null; state.takeId = id;
+  loadScene(ns); pushHistory(); syncTopUI();
+  toast(t.name);
+  return true;
+}
+function nextTakeName() {
+  let n = state.takes.length + 1; const used = new Set(state.takes.map(t => t.name));
+  while (used.has('Take ' + n)) n++;
+  return 'Take ' + n;
+}
+/* a copy of the take on screen. New take (go = true) moves to the copy; Duplicate keeps you where you are. */
+function newTake(go) {
+  if (exporting || rec) return;
+  ensureTakes(); const from = activeTake(), text = takeSceneJSON();
+  const t = { id: uid(), name: nextTakeName(), snap: go ? null : text };
+  state.takes.push(t);
+  if (go) { from.snap = text; state.takeId = t.id; } /* the scene on screen is already the copy */
+  takeChanged();
+  toast(go ? t.name + ' is a copy of ' + from.name + '. Change anything; ' + from.name + ' stays as it was.' : t.name + ' added, a copy of ' + from.name + '. Pick it from the Take menu.', 4500);
+}
+function deleteTake(id) {
+  if (exporting || rec) return;
+  ensureTakes();
+  if (state.takes.length < 2) { toast('There is only one take'); return; }
+  const i = state.takes.findIndex(t => t.id === id); if (i < 0) return;
+  const t = state.takes[i];
+  if (id === state.takeId) {
+    const next = state.takes[i + 1] || state.takes[i - 1];
+    let ns; try { ns = takeState(next.snap); } catch (e) { console.error('ShotRef: could not open the take', e); toast("The other take couldn't be opened, so nothing was deleted."); return; }
+    state.takes = state.takes.filter(x => x !== t); next.snap = null; state.takeId = next.id;
+    loadScene(ns);
+  } else state.takes = state.takes.filter(x => x !== t);
+  takeChanged();
+  toast(t.name + ' deleted. Ctrl+Z brings it back.', 4000);
+}
+function openTakeName() {
+  ensureTakes();
+  $('#nmInput').value = activeTake().name; openModal('mName'); $('#nmInput').select();
+}
+function renameTake() {
+  const v = $('#nmInput').value.trim().slice(0, 60), t = activeTake();
+  closeModal($('#nmInput'));
+  if (!v || !t || v === t.name) return;
+  t.name = v; takeChanged();
+}
+function takeMenuItems() {
+  const real = hasTakes(), list = real ? state.takes : [{ id: '_', name: 'Take 1' }], act = real ? activeTake().id : '_';
+  return [{ head: 'Takes' },
+    ...list.map(t => ({ id: 'take:' + t.id, label: t.name, check: t.id === act, fn: () => switchTake(t.id) })),
+    '-',
+    { id: 'newtake', label: 'New take (copy of this one)', fn: () => newTake(true) },
+    { id: 'duptake', label: 'Duplicate this take', fn: () => newTake(false) },
+    { id: 'renametake', label: 'Rename this take…', fn: openTakeName },
+    { id: 'compare', label: 'Compare takes side by side…', fn: openCompare, disabled: list.length < 2 },
+    '-',
+    { id: 'deltake', label: 'Delete this take', danger: true, fn: () => deleteTake(act), disabled: list.length < 2 }];
+}
+
+/* ---- compare takes ----
+   Each take plays its own current shot from its own start to its end, side by side. The frames are made one by one with the export
+   renderer while the page is locked, and kept as JPEG data: URLs (no blob: URLs). The scene on screen is put back afterwards, even after an error. */
+let cmp = null, cmpBusy = false;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+function openCompare() {
+  if (exporting) { toast('Wait for the export to finish.'); return; }
+  if (!hasTakes() || state.takes.length < 2) { toast('Make a second take first: Take menu → New take'); return; }
+  for (const sel of [$('#cmpA'), $('#cmpB')]) { sel.innerHTML = ''; for (const t of state.takes) sel.append(h('option', { value: t.id }, t.name)); }
+  $('#cmpA').value = state.takeId; $('#cmpB').value = state.takes.find(t => t.id !== state.takeId).id;
+  $('#cmpView').hidden = true; $('#cmpMsg').textContent = ''; cmp = null;
+  openModal('mCompare'); renderCompare();
+}
+async function renderCompare() {
+  if (exporting || cmpBusy) return;
+  cmpBusy = true; cmp = null; $('#cmpView').hidden = true; $('#cmpMsg').textContent = 'Rendering…';
+  const ids = [$('#cmpA').value, $('#cmpB').value], keep = { state, T, selected, selIds: selIds.slice() }, out = {};
+  setPlaying(false);
+  const cw = 400, ch = Math.max(2, Math.round(cw / arOf(state.settings.aspect) / 2) * 2), fps = 10;
+  let failed = false;
+  try {
+    await whileLocked(async () => {
+      try {
+        const r = getExportRenderer(cw, ch);
+        for (const id of ids) {
+          const t = keep.state.takes.find(x => x.id === id) || activeTake();
+          const ns = t.id === keep.state.takeId ? keep.state : takeState(t.snap);
+          if (ns !== keep.state) { ns.takes = keep.state.takes; ns.takeId = keep.state.takeId; }
+          state = ns; syncScene(); applyEnv(); ensurePlate(); editRev++;
+          for (let i = 0; i < 40 && (plateBusy || [...views.values()].some(v => v.pending)); i++) await sleep(50); /* a model or photo still loading */
+          const end = lastT(), n = clamp(Math.round(state.settings.duration * fps), 2, 150), frames = [];
+          for (let f = 0; f < n; f++) {
+            renderExportFrame(r, f / (n - 1) * end, cw, ch); frames.push(r.domElement.toDataURL('image/jpeg', 0.82));
+            if (f % 10 === 0) { $('#cmpMsg').textContent = `Rendering ${t.name}: ${f + 1}/${n}`; await sleep(0); }
+          }
+          const sh = activeShot();
+          out[id] = { name: t.name, frames, len: end, shot: sh ? sh.name : 'Shot 1', move: detectMove().title };
+        }
+      } finally {
+        state = keep.state; selected = keep.selected; selIds = keep.selIds; setTime(keep.T);
+        syncScene(); applyEnv(); editRev++; uiDirty = true; propsDirty = true; updateGizmo(); syncTopUI(); applyAll(T);
+      }
+    });
+  } catch (e) { console.error('ShotRef: could not render the takes', e); failed = true; }
+  cmpBusy = false;
+  if (failed) { $('#cmpMsg').textContent = 'Could not render the takes. Try again, or close other programs and try once more.'; return; }
+  $('#cmpMsg').textContent = '';
+  cmp = { A: out[ids[0]], B: out[ids[1]], idB: ids[1], u: 0, playing: true, last: performance.now() };
+  $('#cmpLA').textContent = `${cmp.A.name} · ${cmp.A.shot} · ${cmp.A.move}`; $('#cmpLB').textContent = `${cmp.B.name} · ${cmp.B.shot} · ${cmp.B.move}`;
+  const ar = String(arOf(state.settings.aspect)); $('#cmpImgA').style.aspectRatio = $('#cmpImgB').style.aspectRatio = ar;
+  $('#cmpView').hidden = false; showCompareFrame(); requestAnimationFrame(compareTick);
+}
+function showCompareFrame() {
+  if (!cmp) return;
+  const pick = x => x.frames[Math.min(x.frames.length - 1, Math.round(cmp.u * (x.frames.length - 1)))];
+  const a = pick(cmp.A), b = pick(cmp.B);
+  if ($('#cmpImgA').src !== a) $('#cmpImgA').src = a;
+  if ($('#cmpImgB').src !== b) $('#cmpImgB').src = b;
+  $('#cmpScrub').value = cmp.u; $('#cmpPlay').textContent = cmp.playing ? '❚❚' : '▶';
+}
+function compareTick(now) {
+  if (!cmp || $('#mCompare').classList.contains('hidden')) { if (cmp) cmp.playing = false; return; }
+  const dt = (now - cmp.last) / 1000; cmp.last = now;
+  if (cmp.playing) { cmp.u += dt / Math.max(cmp.A.len, cmp.B.len, 0.5); if (cmp.u > 1) cmp.u = 0; }
+  showCompareFrame(); requestAnimationFrame(compareTick);
+}
+function wireTakes() {
+  menuButton($('#bTake'), takeMenuItems);
+  $('#nmOk').onclick = renameTake;
+  $('#nmInput').addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') renameTake(); else if (e.key === 'Escape') closeModal($('#nmInput')); });
+  $('#cmpGo').onclick = renderCompare;
+  $('#cmpPlay').onclick = () => { if (cmp) { cmp.playing = !cmp.playing; cmp.last = performance.now(); showCompareFrame(); } };
+  $('#cmpScrub').addEventListener('input', e => { if (cmp) { cmp.u = +e.target.value; cmp.playing = false; showCompareFrame(); } });
+  $('#cmpUseB').onclick = () => { if (!cmp || exporting) return; const id = cmp.idB; closeModal($('#cmpUseB')); switchTake(id); };
 }
 
 /* ============================== export ============================== */
@@ -4084,8 +4300,9 @@ async function pickCodec(w, hh, fps) {
 /* While a video renders nothing in the export dialog may change; only Cancel stays live. */
 function setExportLock(on) {
   $$('#mExport input, #mExport select, #mExport button').forEach(el => { if (el.id !== 'exCancel') el.disabled = on; });
+  $$('#mCompare input, #mCompare select, #mCompare button').forEach(el => { el.disabled = on; });
   // make everything outside the export dialog unreachable by Tab, Enter or Space
-  for (const el of document.body.children) if (el.id !== 'mExport' && el.id !== 'toast' && el.tagName !== 'SCRIPT') el.inert = on;
+  for (const el of document.body.children) if (el.id !== 'mExport' && el.id !== 'mCompare' && el.id !== 'toast' && el.tagName !== 'SCRIPT') el.inert = on;
   if (on) { const c = $('#exCancel'); if (c && !c.hidden) c.focus(); else if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); }
 }
 function exProgressRaw(frac, txt) { $('#exBar').style.width = (frac * 100).toFixed(1) + '%'; $('#exTxt').textContent = txt; }
@@ -4195,7 +4412,7 @@ function openModal(id) {
   if (f) f.focus();
 }
 function closeModal(el) {
-  const m = el.closest('.modal'); if (exporting && m.id === 'mExport') return;
+  const m = el.closest('.modal'); if (exporting && (m.id === 'mExport' || m.id === 'mCompare')) return;
   m.classList.add('hidden'); placeToast(); requestRender();
   if (!openModals().length && modalReturn) { const r = modalReturn; modalReturn = null; if (r.isConnected && !r.closest('.modal')) r.focus(); }
 }
@@ -4255,6 +4472,7 @@ function syncTopUI() {
   $$('#lenSet [data-len]').forEach(b => b.classList.toggle('on', +b.dataset.len === state.settings.duration));
   $$('#feelBar button').forEach(b => b.classList.toggle('on', b.dataset.feel === (state.camera.feel || 'gentle')));
   const pn = $('#projName'); if (document.activeElement !== pn) pn.value = (state.meta && state.meta.name) || '';
+  $('#bTake').textContent = activeTakeName();
   $('#bLoop').classList.toggle('on', !!state.settings.loop);
   $('#bGrid').classList.toggle('on', !!state.settings.gridOn);
   $('#bPip').classList.toggle('on', pipOn);
@@ -4266,7 +4484,7 @@ function wire() {
   setLeftTab(getPref('leftTab', 'add'), false);
   $$('#leftTabs button').forEach(b => b.onclick = () => setLeftTab(b.dataset.lt));
   $$('#stepSeg button').forEach(b => b.onclick = () => goStep(b.dataset.step));
-  menuButton($('#bFile'), fileMenuItems); menuButton($('#bMenu'), gearMenuItems);
+  menuButton($('#bFile'), fileMenuItems); menuButton($('#bMenu'), gearMenuItems); wireTakes();
   $('#bTracks').onclick = () => { tracksMode = tracksOpen() ? 'closed' : 'open'; syncTracks(); uiDirty = true; requestRender(); };
   const pn = $('#projName');
   pn.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') pn.blur(); else if (e.key === 'Escape') { pn.value = (state.meta && state.meta.name) || ''; pn.blur(); } });
@@ -4714,7 +4932,7 @@ function boot() {
     try { localStorage.removeItem('shotref.autosave'); localStorage.setItem('shotref.autosave.broken', raw); }
     catch (e) { console.error('ShotRef: could not keep a copy of the broken autosave', e); }
   }
-  migrateAll(); pushHistory(); platform.setDirty(wasDirty); setSimple(simple);
+  cleanTakes(); migrateAll(); pushHistory(); platform.setDirty(wasDirty); setSimple(simple);
   /* only now: queued menu / file events from the desktop shell must see the restored scene and its unsaved mark */
   platform.onMenu(onDesktopMenu);
   platform.onOpenFile(f => { if (f && typeof f.text === 'string') { launchFile = true; closeModal($('#mStart')); loadProjectText(f.text, f, true); } });
@@ -4754,7 +4972,9 @@ function boot() {
   window.addEventListener('pagehide', flushAutosave);
   window.__shotref = { promptText, ensureDof, get selection() { return selIds; }, pickAtScreen: (x, y) => { const rc = rayFromEvent({ clientX: x, clientY: y }); const h = rc && pickAt(rc); return h ? h.id : null; }, settleTime: () => { const t0 = performance.now(); solveGround(); return performance.now() - t0; }, groundMigrate: () => groundMigrate.size, liftKnob: () => { if (!liftGrp.visible) return null; const q = liftPick.getWorldPosition(new THREE.Vector3()); return window.__shotref.project(q.x, q.y, q.z); }, attachTo, setMount, writeCam, shownObj: (id, t) => shownObj(getObj(id), t), viewOf: id => { const v = views.get(id); if (!v) return null; v.group.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(v.group), sz = bb.getSize(new THREE.Vector3()); return { p: v.group.position.toArray(), yaw: v.group.rotation.y * R2D, s: v.group.scale.toArray(), size: sz.toArray(), wheels: v.wheels ? v.wheels.list.map(w => ({ spin: w.spin.rotation.x, steer: w.piv.rotation.y, front: w.front })) : null }; }, ringKnob: () => ringGrp.visible ? ringKnob.getWorldPosition(new THREE.Vector3()).toArray() : null, getPref, setPref, showMenu, menuButton, hideMenu, project: (x, y, z) => { const r = canvas.getBoundingClientRect(); let cam = view === 'top' ? topCam : edCam, rr = { x: 0, y: 0, w: r.width, h: r.height }; if (view === 'camera') { cam = renderCam; rr = camRect(r.width, r.height); } const v = new THREE.Vector3(x, y, z).project(cam); return [r.left + rr.x + (v.x * 0.5 + 0.5) * rr.w, r.top + rr.y + (-v.y * 0.5 + 0.5) * rr.h]; }, get view() { return view; }, get selected() { return selected; }, get state() { return state; }, get assets() { return assets; }, setT: t => setTime(t, false), applyMove, addObject, select, setView, evalCam, exportVideo, exportPNG, pickCodec, _exportCanvas: () => exRenderer ? exRenderer.domElement : null, changed, writeObj, evalObj, setKey, get T() { return T; },
     get rebuilds() { return rebuilds; }, urlCacheIds: () => [...urlCache.keys()],
-    get history() { return { at: hi, length: hist.length }; },
+    /* batch H (takes) hooks for the smoke test */
+    switchTake, newTake, snapPoolSize: () => snapLive,
+    get history() { return { at: hi, length: hist.length, bytes: hist[hi].length }; },
     /* batch F (camera UX and light) hooks for the smoke test */
     editCamPos: () => edCam.position.toArray(), detectMove, describeShot, camToWorld, pointsVisible: () => ckPts.some(m => m.visible),
     sunInfo: () => ({ castShadow: sun.castShadow, radius: sun.shadow.radius, intensity: sun.intensity, color: '#' + sun.color.getHexString(), gizmo: { visible: sunGrp.visible, pos: sunGrp.position.toArray() } }),

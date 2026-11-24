@@ -50,6 +50,7 @@ ShotRef is a "very dumbed-down Blender" for **blocking and camera moves only**. 
   - `dof {on, fstop, auto, strength}` (strength 1 to 4.5, default 3; files made before it existed read as 1, the old look).
 - **Selection**: `selected` is the main item (an object id, `'camera'` or `'target'`); `selIds` holds every selected object, and a whole group is selected at once. Always go through `select(id, mode)` (`'single'` / `'toggle'`) and `sanitizeSel()`. `obj.locked` and `obj.grp` + `state.groups[gid] = {name}` are saved fields. Drags and the turn ring move every unlocked selected item through `writeObj`, so keys land at the playhead for keyed items.
 - **`state.objects[]`**: `{id, type, name, color, opts, base:{p, r(deg), s}, keys[], visible}`. People are `type:'person'`, with `opts.pose`, height and colours. Floor marks are `type:'mark'`; they're hidden in every shot render.
+- **`state.takes[]` / `takeId`**: alternative versions of the whole scene (Take button). The take on screen is the live state (its `snap` is null); the others hold a JSON copy in `snap`. Undo steps keep those copies by reference (`snapshot()`, `snapPool`), so a step stays small and undo/redo restore exactly the right copies. Switching, new, rename and delete are undo steps. Photos or models used only by an inactive take still count as used.
 - **`state.plate`**: the location photo `{asset, overlay, export, ground}`.
 - **`assets`**: imported images, models and photos, stored as base64. They're saved with the project but kept out of undo snapshots.
 

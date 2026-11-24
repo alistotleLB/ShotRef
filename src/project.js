@@ -162,6 +162,8 @@ export function normalizeProject(raw, defaults = {}) {
     });
   }
   if ('takeId' in src || st.takes) st.takeId = st.takes && st.takes.length ? (st.takes.some(x => x.id === src.takeId) ? src.takeId : st.takes[0].id) : null;
+  /* the active take is the live scene: a copy kept in its snap (the artifact leaves a stale one) is dropped */
+  if (st.takes) for (const x of st.takes) if (x.id === st.takeId) x.snap = null;
 
   /* sun and shadows */
   const ss = st.settings;
@@ -185,6 +187,12 @@ export function describeChange(beforeJSON, afterJSON) {
   let a, b;
   try { a = JSON.parse(beforeJSON); b = JSON.parse(afterJSON); } catch (e) { return ''; }
   if (!a || !b) return '';
+  /* takes: made, deleted, switched to or renamed (a take's scene is not in the step, so this comes before the scene is compared) */
+  const TK = s => (Array.isArray(s.takes) ? s.takes : []).filter(x => x && typeof x === 'object');
+  const ta = TK(a), tb = TK(b);
+  if (ta.length !== tb.length) return tb.length > ta.length ? 'new take' : 'delete take';
+  if (a.takeId !== b.takeId) return 'switch to ' + ((tb.find(x => x.id === b.takeId) || {}).name || 'another take');
+  if (ta.some((x, i) => x.name !== tb[i].name)) return 'rename take';
   const same = (x, y) => JSON.stringify(x) === JSON.stringify(y);
   const list = s => (Array.isArray(s.objects) ? s.objects : []).filter(o => o && typeof o === 'object');
   const A = list(a), B = list(b);
