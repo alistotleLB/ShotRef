@@ -10,13 +10,13 @@ Works:   ShotRef 1.4.0, RELEASED 2026-11-24 (https://github.com/alistotleLB/Shot
          quick tour (10 stops, orange viewfinder corners), the first-run question "Take a look round the set?", tour items in the Help menus.
 Off:     the hands-on tour (16 stops, practice stage) is built and tested but switched off (Ali: needs a lot of improvement).
          Turn on: HANDS_TOUR_DEFAULT in src/main.js + HANDS_TOUR in electron/main.cjs (or the hidden pref handsTour for one browser).
-Builds:  dist/ShotRef.html 1034 KB; release/ShotRef-Setup-1.4.0.exe (122 MB), ShotRef-1.4.0-portable.exe (111 MB), unsigned.
+Builds:  dist/ShotRef.html 1034 KB; release/ShotRef-Setup-1.5.0.exe (122 MB), ShotRef-1.5.0-portable.exe (111 MB), unsigned.
 Tests:   npm test 318/318 (631 s), npm run test:desktop 27/27, 0 Electron left (2026-11-24, 1.5.0 working copy).
-Code:    PUBLIC GitHub main = release 1.4.0. Branch feature/onboarding-tour merged (its GitHub copy is stale, 3 commits; PR #1 closed).
+Code:    PUBLIC GitHub main = release 1.5.0. Branch feature/onboarding-tour merged (its GitHub copy is stale, 3 commits; PR #1 closed).
 Known:   walking feet slide slightly at heel strike. claude.ai artifact 6uRy4QMBjvK9Rn5PLedSUq republished from 1.4.0 (version 10, private).
-Built:   1.5.0 (NOT released, not committed): What's new box after an update (every version since the one you had) and ShotRef-styled
+Built:   1.5.0 RELEASED 2026-11-24 (https://github.com/alistotleLB/ShotRef/releases/tag/v1.5.0): What's new box after an update (every version since the one you had) and ShotRef-styled
          desktop message boxes with no Windows alert sound (electron/popup.cjs). npm test 318/318, test:desktop 27/27.
-Next:    Ali OKs commit/release of 1.5.0, then checklist C5. Also C4 (quick tour). Then: improve the hands-on tour (what Ali disliked: to ask), installable web app + website.
+Next:    Ali runs checklist C5 (update the installed app to 1.5.0). Also C4 (quick tour). Then: improve the hands-on tour (what Ali disliked: to ask), installable web app + website.
 Not yet tried by Ali: the quick tour; everything since 2026-11-22.
 
 ## Ali's goals              (his exact words, dated; never reworded)
@@ -105,7 +105,7 @@ Storage: build output in `dist/` (git-ignored).
 | N-012 | 2026-11-24 | "I didn't like the long tour, it needs a lot of improvement, is there a way to keep the code, but disable the feature for now until we improve it?" | done 2026-11-24 (hands-on tour switched off: all entry points hidden, code and tests kept; quick tour stays; guessed: "the long tour" = the hands-on tour) |
 | N-013 | 2026-11-24 | "publish the release when ready" | done 2026-11-24 (v1.4.0 published) |
 | N-014 | 2026-11-24 | "Yes, republish" (the claude.ai version, from 1.4.0) | done 2026-11-24 (same link, version 10) |
-| N-015 | 2026-11-24 | "1 - Add a what's new dialogue box when updating the app. 2 - Fix app popups so they follow the branding. And remove the sound that happens when they open. Use all the relevant skills that could improve the efficiency and qualty of the output. Use Project keeper if needed." | built 2026-11-24 as 1.5.0, not released (guessed: "popups" = the desktop app's native Windows message boxes, which played the alert sound; the in-page dialogs were already branded. What's new is desktop-only. Settings from 1.4.0 or older can't tell which version they had, so they see every listed version from 1.3.0) |
+| N-015 | 2026-11-24 | "1 - Add a what's new dialogue box when updating the app. 2 - Fix app popups so they follow the branding. And remove the sound that happens when they open. Use all the relevant skills that could improve the efficiency and qualty of the output. Use Project keeper if needed." | done 2026-11-24, released as 1.5.0 (guessed: "popups" = the desktop app's native Windows message boxes, which played the alert sound; the in-page dialogs were already branded. What's new is desktop-only. Settings from 1.4.0 or older can't tell which version they had, so they see every listed version from 1.3.0) |
 | N-016 | 2026-11-24 | "Make sure that the \"What's New\" includes all the cumulative changes since the user's current version." | done 2026-11-24 (lists every version after the one you had, newest first, scrolls when long; tested from 1.3.0) |
 | N-007 | 2026-11-23 | "dont forget to orchestrate the tasks across Opus and Sonnet for maximum efficiency" | done (Sonnet built, Opus reviewed, medium effort) |
 
@@ -136,7 +136,7 @@ Not verified: the real claude.ai frame (downloads, clipboard), a normal non-head
 Proposed order: Step 0 backup + smoke test (needs OK) -> quick wins -> A1, then A2+S2 -> design/measure items -> optional tidy-ups.
 
 ## Handoff                   (replaced each session)
-STATE     1.5.0 built in the working copy, not committed or released. 1.4.0 is the public release.
+STATE     1.5.0 released on GitHub (commit 044f9ce); latest.yml serves 1.5.0, so installed 1.3.0+ copies will offer it.
 CHANGED   electron/popup.cjs + popup.html + popup-page.js + popup-preload.cjs: ShotRef's own message box (small frameless window, logo mark,
           orange viewfinder corners, orange main button on the right, Esc = cancel, boxes queue). Replaces every dialog.showMessageBox
           (update flow, About, file-open errors), so no Windows alert sound. Native Save/Open file pickers unchanged.
@@ -145,10 +145,11 @@ CHANGED   electron/popup.cjs + popup.html + popup-page.js + popup-preload.cjs: S
 TESTS     npm test 318/318 (631 s); test:desktop 27/27 (4 new: branded About box not native; boxes queue and return the right button;
           What's new from 1.3.0 lists 1.5.0/1.4.0/1.3.1 once and not again; old settings show all, fresh install none, Help shows this version).
           Screenshots of What's new, update offer, warning and About boxes checked by Claude.
-OPEN      Not tested: a real update from installed 1.4.0 to 1.5.0 (needs the release). The web/claude.ai versions have no What's new (no update step there).
+OPEN      Not tested: a real update from installed 1.4.0 to 1.5.0 (C5). Packaged exe started with 1.4.0 settings wrote lastVersion 1.5.0 (What's new step ran); the box itself was not seen in the packaged exe (Playwright can't attach), only from source in tests.
+          claude.ai artifact still at 1.4.0 (web page unchanged in 1.5.0, so no need to republish). The web/claude.ai versions have no What's new (no update step there).
 FINDINGS  The only off-brand popups were the Windows native message boxes; in-page dialogs already used the ShotRef style (screenshot).
           Playwright reports "page closed" when a key press closes the box: expected, the test tolerates it.
-NEXT      Ali: OK to commit and release 1.5.0? Then C5 on the installed Windows app (updated from 1.4.0):
+NEXT      Ali runs C5 on the installed Windows app (updated from 1.4.0):
           1. Start ShotRef after the update -> a dark ShotRef box "ShotRef is updated to 1.5.0." lists 1.5.0 and anything since your version. No ding.
           2. Click Start working, close and reopen ShotRef -> the box does not come back.
           3. Help -> What's new -> shows the 1.5.0 notes again.
@@ -172,3 +173,4 @@ NEXT      Ali: OK to commit and release 1.5.0? Then C5 on the installed Windows 
 - 2026-11-24 hands-on tour switched off (N-012: code and tests kept, entry points hidden, one-tour wording). npm test 318/318 (628 s), test:desktop 23/23. Merged into main, version 1.4.0, installers built (setup 122 MB, portable 111 MB), released v1.4.0 on GitHub (Ali: "publish the release when ready"); latest.yml serves 1.4.0.
 - 2026-11-24 claude.ai artifact 6uRy4QMBjvK9Rn5PLedSUq republished from 1.4.0 (Ali: "Yes, republish"), Desert overlook demo embed kept (same method as 1.2.0). Checked headless under the claude.ai CSP first: 23 objects + photo, 0 errors, no first-run question, quick tour runs, no hands-on item.
 - 2026-11-24 1.5.0 built (N-015, N-016): ShotRef message boxes replace native ones (no alert sound), What's new lists every version since the user's. npm test 318/318 (631 s), test:desktop 27/27 (+4), 0 Electron left. Not committed, not released.
+- 2026-11-24 1.5.0 committed (044f9ce), pushed, installers built (setup 122 MB, portable 111 MB), released v1.5.0 (Ali: "Commit and release"). latest.yml on GitHub serves 1.5.0.
