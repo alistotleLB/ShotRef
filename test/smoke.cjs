@@ -5481,4 +5481,180 @@ check('basic tour: the picture stop puts the bubble in the top-left corner of th
   }
 });
 
+/* ---- practice stage (the hands-on tour's empty stage; the user's scene is set aside in memory and must come back exactly) ---- */
+const practiceReal = async (p, fixtures) => { /* a scene with 3 objects, a location photo and several undo steps, marked unsaved */
+  await p.setInputFiles('#fPlate', path.join(fixtures, 'location.jpg'));
+  await p.waitForFunction(() => window.__shotref.state.plate && window.__shotref.state.plate.asset);
+  await p.evaluate(() => { const S = window.__shotref; for (let i = 1; i <= 3; i++) { S.state.objects[0].base.p = [i, 0, 0]; S.changed(true); } });
+  await settle(p, 300);
+};
+const practiceSnap = p => p.evaluate(() => { const S = window.__shotref; return { st: JSON.stringify(S.stateForSave()), n: S.state.objects.length, plate: !!S.state.plate, assets: Object.keys(S.assets).sort().join(), hist: S.history.length, at: S.history.at, doc: S.docInfo(), sel: S.selection.join(), T: S.T, view: S.view, ed: S.editCamPos().join() }; });
+const practiceSame = (a, b, what) => { for (const k of Object.keys(a)) ok(JSON.stringify(a[k]) === JSON.stringify(b[k]), what + ': ' + k + ' differs: ' + JSON.stringify(a[k]).slice(0, 120) + ' vs ' + JSON.stringify(b[k]).slice(0, 120)); };
+/* sets the scene aside and runs a two-stop interactive tour that leaves the practice stage when it ends, as the real hands-on tour does */
+const practiceStart = p => p.evaluate(() => { const S = window.__shotref; if (!S.practice.enter()) return false; return !!S.tour.run([{ id: 'a', target: '#bFile', title: 'T', text: 't' }, { id: 'b', target: null, title: 'U', text: 'u' }], { interactive: true, onEnd: () => S.practice.leave() }); });
+const practiceEdit = p => p.evaluate(() => { const S = window.__shotref; S.addObject('person'); S.changed(true); S.addObject('box'); S.changed(true); });
+const noTour = p => p.evaluate(() => !document.querySelector('#tour'));
+
+check('practice: Finish, End tour and Esc each bring the scene back exactly', async ({ open, fixtures }) => {
+  for (const how of ['finish', 'end', 'esc']) {
+    const p = await open(); await settle(p, 300);
+    await practiceReal(p, fixtures);
+    const before = await practiceSnap(p);
+    ok(before.n === 3 && before.plate && before.hist >= 4 && before.doc.dirty === true, how + ': set-up is not the scene the test needs: ' + JSON.stringify({ n: before.n, plate: before.plate, hist: before.hist, dirty: before.doc.dirty }));
+    ok(await practiceStart(p), how + ': the practice tour did not start');
+    ok(await p.evaluate(() => window.__shotref.practicing() && window.__shotref.state.objects.length === 0 && !window.__shotref.state.plate), how + ': the stage is not empty');
+    await practiceEdit(p); await settle(p, 200);
+    if (how === 'finish') { await p.click('#tourNext'); await p.click('#tourNext'); }
+    else if (how === 'end') await p.click('#tourEnd');
+    else await p.keyboard.press('Escape');
+    await settle(p, 300);
+    ok(await noTour(p), how + ': the tour is still on screen');
+    ok(!(await p.evaluate(() => window.__shotref.practicing())), how + ': still practising');
+    practiceSame(before, await practiceSnap(p), how);
+    ok(await p.evaluate(() => window.__shotref.practice.leave()) === false, how + ': a second leave() restored something again');
+    practiceSame(before, await practiceSnap(p), how + ' after a second leave');
+    noErrors(p, how);
+    await p.close();
+  }
+}, { timeout: 120000 });
+
+check('practice: nothing is written while practising', async ({ open }) => {
+  const p = await open(); await settle(p, 800);
+  await p.evaluate(() => {
+    window.__w = { auto: 0, idb: 0 };
+    const set = Storage.prototype.setItem; Storage.prototype.setItem = function (k, v) { if (String(k).startsWith('shotref.autosave')) window.__w.auto++; return set.call(this, k, v); };
+    for (const m of ['put', 'add', 'delete', 'clear']) { const o = IDBObjectStore.prototype[m]; IDBObjectStore.prototype[m] = function () { window.__w.idb++; return o.apply(this, arguments); }; }
+  });
+  const raw0 = await p.evaluate(() => localStorage.getItem('shotref.autosave'));
+  const before = await practiceSnap(p), rw = await p.evaluate(() => window.__shotref.recentStats.writes);
+  ok(await practiceStart(p), 'the practice tour did not start');
+  await practiceEdit(p);
+  await p.evaluate(() => { const S = window.__shotref; S.state.objects[0].base.p = [2, 0, 1]; S.changed(true); });
+  await p.evaluate(async () => { const S = window.__shotref; await S.saveRecentNow(); S.recentFlush(); window.dispatchEvent(new Event('pagehide')); document.dispatchEvent(new Event('visibilitychange')); });
+  await settle(p, 1500); /* longer than the 400 ms autosave timer */
+  const w = await p.evaluate(() => ({ ...window.__w, rw: window.__shotref.recentStats.writes, info: window.__shotref.docInfo() }));
+  ok(w.auto === 0, 'the autosave was written ' + w.auto + ' time(s) during practice');
+  ok(w.idb === 0, 'IndexedDB was written ' + w.idb + ' time(s) during practice (photos or the Recent list)');
+  ok(w.rw === rw, 'a Recent projects entry was written during practice');
+  ok(JSON.stringify(w.info) === JSON.stringify(before.doc), 'the unsaved mark or file name changed during practice: ' + JSON.stringify(w.info));
+  await p.keyboard.press('Escape'); await settle(p, 1000);
+  ok(await p.evaluate(() => localStorage.getItem('shotref.autosave')) === raw0, 'the autosave record changed');
+  practiceSame(before, await practiceSnap(p), 'after');
+  noErrors(p);
+});
+
+check('practice: reload mid-tour reopens the real scene', async ({ open, fixtures }) => {
+  const p = await open(); await settle(p, 300);
+  await practiceReal(p, fixtures);
+  await settle(p, 1000); /* the autosave of the real scene */
+  const loaded = async () => { await p.waitForFunction(() => window.__shotref && window.__shotref.state); await p.waitForFunction(() => { const S = window.__shotref; return !S.state.plate || S.assets[S.state.plate.asset]; }, null, { timeout: 8000 }); await settle(p, 500); return p.evaluate(() => { const S = window.__shotref; return { st: JSON.stringify(S.state), assets: Object.keys(S.assets).sort().join(), dirty: S.docInfo().dirty }; }); };
+  await p.reload(); const control = await loaded(); /* what a plain reload gives */
+  ok(control.st.length > 100 && control.dirty === true, 'the control reload did not restore the unsaved scene');
+  ok(await practiceStart(p), 'the practice tour did not start');
+  await practiceEdit(p); await settle(p, 1200);
+  await p.reload();
+  const after = await loaded();
+  ok(after.st === control.st, 'the reloaded scene differs from the real one');
+  ok(after.assets === control.assets && after.dirty === control.dirty, 'assets or the unsaved mark differ after reload');
+  ok(await noTour(p) && !(await p.evaluate(() => window.__shotref.practicing())), 'the tour or the practice stage survived a reload');
+});
+
+check('practice: undo stops at the practice stage', async ({ open, fixtures }) => {
+  const p = await open(); await settle(p, 300);
+  await practiceReal(p, fixtures);
+  const before = await practiceSnap(p);
+  ok(await practiceStart(p), 'the practice tour did not start');
+  await practiceEdit(p);
+  await p.evaluate(() => document.activeElement && document.activeElement.blur());
+  for (let i = 0; i < 10; i++) { await p.keyboard.press('Control+z'); await p.waitForTimeout(40); }
+  const mid = await p.evaluate(() => ({ n: window.__shotref.state.objects.length, plate: !!window.__shotref.state.plate, at: window.__shotref.history.at }));
+  ok(mid.n === 0 && !mid.plate && mid.at === 0, 'undo went past the practice stage: ' + JSON.stringify(mid));
+  await p.click('#tourEnd'); await settle(p, 300);
+  practiceSame(before, await practiceSnap(p), 'after');
+  noErrors(p);
+}, { timeout: 90000 });
+
+check('practice: Open, New, Save, Save as, Recent and dropping a file end the tour first', async ({ open, fixtures }) => {
+  const modalOpen = (p, id) => p.waitForFunction(id => { const m = document.getElementById(id); return !!m && !m.classList.contains('hidden'); }, id, { timeout: 5000 }).catch(() => { throw new Error(id + ' did not open'); });
+  const backAtOnce = async (p, before, what) => { /* the scene is back by the time the action's own window shows */
+    ok(await noTour(p) && !(await p.evaluate(() => window.__shotref.practicing())), what + ': the tour or practice is still on');
+    const now = await practiceSnap(p);
+    if (/^save/.test(what)) { ok(now.doc.dirty === false, what + ': Save of the real scene did not clear the unsaved mark'); delete before.doc; delete now.doc; } /* a web Save downloads the file and clears the mark */
+    practiceSame(before, now, what);
+  };
+  for (const how of ['new', 'open', 'save', 'saveas', 'drop']) {
+    const p = await open(); await settle(p, 300);
+    await practiceReal(p, fixtures);
+    const before = await practiceSnap(p);
+    ok(await practiceStart(p), how + ': the practice tour did not start');
+    await practiceEdit(p);
+    if (how === 'drop') {
+      await p.evaluate(() => { const dt = new DataTransfer(); dt.items.add(new File(['{"app":"ShotRef","version":2,"state":{"camera":{"base":{"p":[3,1.6,6],"tg":[0,1,0],"f":35,"roll":0,"fd":7},"keys":[]},"objects":[]},"assets":{}}'], 'other.shotref', { type: 'application/json' })); document.querySelector('#vp').dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true })); });
+      await modalOpen(p, 'mConfirm'); await backAtOnce(p, before, how);
+      await p.click('#mConfirm [data-close]');
+    } else if (how === 'new') { await fileCmd(p, 'new'); await modalOpen(p, 'mStart'); await backAtOnce(p, before, how); }
+    else if (how === 'open') { await fileCmd(p, 'open'); await modalOpen(p, 'mRecent'); await backAtOnce(p, before, how); }
+    else { await p.click('#bFile'); await p.click('#ctxMenu [data-cmd="' + how + '"]'); await settle(p, 400); await backAtOnce(p, before, how); }
+    noErrors(p, how);
+    await p.close();
+  }
+}, { timeout: 150000 });
+
+check('practice: a Save-changes box over the tour is clickable and nothing is left behind', async ({ open, fixtures }) => {
+  const p = await open(); await settle(p, 300);
+  await practiceReal(p, fixtures);
+  const before = await practiceSnap(p);
+  ok(await practiceStart(p), 'the practice tour did not start');
+  await fileCmd(p, 'new'); await p.waitForSelector('#mStart:not(.hidden)');
+  await p.click('#startGrid .card:has-text("Street")');
+  await p.waitForSelector('#mConfirm:not(.hidden)');
+  ok(await noTour(p), 'the tour is still on screen over the question');
+  const hit = await p.evaluate(() => { const b = document.querySelector('#cfOk').getBoundingClientRect(), e = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2); return !!e && !!e.closest('#mConfirm'); });
+  ok(hit, 'the question box is covered by something');
+  ok(await p.evaluate(() => Number(getComputedStyle(document.querySelector('#mConfirm')).zIndex) >= 50), 'the question box sits below the tour layer');
+  practiceSame(before, await practiceSnap(p), 'while asking');
+  await p.click('#mConfirm [data-close]'); await settle(p, 200);
+  ok(await noTour(p), 'a tour element is left behind');
+  practiceSame(before, await practiceSnap(p), 'after closing the question');
+  noErrors(p);
+});
+
+check('practice: exporting a video or a frame pack ends the tour first', async ({ open, fixtures }) => {
+  for (const how of ['video', 'pack']) {
+    const p = await open(); await settle(p, 300);
+    await practiceReal(p, fixtures);
+    await p.evaluate(() => { const s = window.__shotref.state.settings; s.size = 1280; s.duration = 1; window.__shotref.changed(true); });
+    ok(await practiceStart(p), how + ': the practice tour did not start');
+    await practiceEdit(p);
+    if (how === 'video') { await p.evaluate(() => { window.__ex = window.__shotref.exportVideo(); }); }
+    else { await p.evaluate(() => window.__shotref.select('export')); await settle(p, 400); await p.evaluate(() => document.querySelector('#xoPack').click()); }
+    const during = await p.evaluate(() => ({ practicing: window.__shotref.practicing(), tour: !!document.querySelector('#tour'), n: window.__shotref.state.objects.length }));
+    ok(!during.practicing && !during.tour && during.n === 3, how + ': export started on the practice stage: ' + JSON.stringify(during));
+    if (how === 'video') await p.evaluate(() => window.__ex).catch(() => { });
+    await settle(p, 1500);
+    ok(await p.evaluate(() => window.__shotref.state.objects.length) === 3, how + ': the real scene is not back');
+    noErrors(p, how);
+    await p.close();
+  }
+}, { timeout: 120000 });
+
+check('practice: the undo steps of the real scene keep their takes after many practice edits with takes', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await takeCmd(p, 'newtake');
+  const ids = (await stateOf(p)).takes.map(t => t.id);
+  for (let i = 0; i < 4; i++) { await p.evaluate(id => window.__shotref.switchTake(id), ids[i % 2]); await addBoxes(p, 1); }
+  const takesNow = () => p.evaluate(() => window.__shotref.state.takes.map(t => t.name).join());
+  const before = await practiceSnap(p), pr0 = await p.evaluate(() => window.__shotref.snapPruned());
+  ok(await practiceStart(p), 'the practice tour did not start');
+  await p.evaluate(() => { const S = window.__shotref; S.newTake(); const t = S.state.takes.map(x => x.id); for (let i = 0; i < 40; i++) { S.switchTake(t[i % t.length]); S.addObject('box'); S.changed(true); } });
+  ok(await p.evaluate(() => window.__shotref.snapPruned()) === pr0, 'the undo pool was pruned while the real scene was set aside');
+  await p.click('#tourEnd'); await settle(p, 300);
+  practiceSame(before, await practiceSnap(p), 'after');
+  await p.evaluate(() => document.activeElement && document.activeElement.blur());
+  const names = await takesNow();
+  for (let i = 0; i < 8; i++) { await p.keyboard.press('Control+z'); await p.waitForTimeout(60); }
+  ok(await takesNow() === names, 'an older step lost a take: ' + await takesNow() + ' vs ' + names);
+  noErrors(p);
+}, { timeout: 90000 });
+
 main().catch(e => { console.error(e && e.stack || e); process.exit(2); });

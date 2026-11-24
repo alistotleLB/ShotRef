@@ -243,6 +243,28 @@ const ok = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
     await kill(app);
   });
 
+  await check('closing the window mid hands-on tour asks about the real scene', async () => {
+    const { app, page } = await launch();
+    const named = path.join(tmp, 'real-project.shotref');
+    await stubDialogs(app, [named]);
+    await page.evaluate(() => window.__edit());
+    await fileCmd(page, 'save'); await sleep(700); /* the real project has a name now */
+    await page.evaluate(() => window.__edit()); /* ... and unsaved changes */
+    const realCount = await objCount(page);
+    await page.evaluate(() => window.__shotref.practice.enter());
+    await page.evaluate(() => { const S = window.__shotref; S.tour.run([{ id: 'a', target: null, title: 'T', text: 't' }, { id: 'b', target: null, title: 'U', text: 'u' }], { interactive: true, onEnd: () => S.practice.leave() }); });
+    ok(await page.evaluate(() => window.__shotref.practicing() && window.__shotref.state.objects.length === 0), 'the practice stage did not start');
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+    await page.waitForSelector('#mConfirm:not(.hidden)', { timeout: 5000 });
+    ok(/Save changes before closing/.test(await page.textContent('#cfTitle')), 'prompt text: ' + await page.textContent('#cfTitle'));
+    ok(/real-project\.shotref/.test(await page.textContent('#cfText')), 'the question does not name the real project: ' + await page.textContent('#cfText'));
+    ok(!(await page.evaluate(() => window.__shotref.practicing())), 'still practising behind the question');
+    ok(await page.evaluate(() => !document.querySelector('#tour')), 'the tour is still on screen behind the question');
+    ok(await objCount(page) === realCount, 'the real scene is not back: ' + await objCount(page) + ' objects');
+    ok((await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)) === 1, 'window closed');
+    await kill(app);
+  });
+
   await check('the page cannot write to a path the app did not hand out', async () => {
     const { app, page } = await launch();
     const evil = path.join(tmp, 'evil.txt');
