@@ -3948,7 +3948,8 @@ function renderShotBar() {
     bar.append(chip);
   }
   bar.append(h('button', { class: 'shotchip add', onclick: () => newShot(false), title: 'A new camera setup on the same scene and action, starting from the current framing' }, '+ New shot'));
-  bar.append(h('div', { class: 'sright' }, list.length > 1 ? h('span', { id: 'lenNote', class: 'note', style: 'margin:0;align-self:center' }, "Changes this shot's camera move only. The action stays the same in every shot.") : null, list.length > 1 ? h('button', { id: 'bSheet', onclick: makeContactSheet, title: 'First and last frame of every shot on one page' }, 'Contact sheet') : null));
+  const side = $('#shotSide'); side.innerHTML = '';
+  side.append(...[list.length > 1 ? h('span', { id: 'lenNote', class: 'note', style: 'margin:0;align-self:center' }, "Changes this shot's camera move only. The action stays the same in every shot.") : null, list.length > 1 ? h('button', { id: 'bSheet', onclick: makeContactSheet, title: 'First and last frame of every shot on one page' }, 'Contact sheet') : null].filter(Boolean));
 }
 
 /* ============================== the prompt for the AI model ============================== */

@@ -36,6 +36,8 @@ select,input[type=text],input[type=number]{background:#15161a;border:1px solid v
 input[type=color]{width:34px;height:24px;padding:0;border:1px solid var(--line2);border-radius:5px;background:none;cursor:pointer}
 input[type=range]{accent-color:var(--acc);width:100%}
 #app{display:grid;height:100vh;grid-template-columns:236px minmax(0,1fr) 300px;grid-template-rows:46px minmax(0,1fr) auto;grid-template-areas:"top top top" "left vp right" "tl tl tl"}
+.topL,.topR{display:flex;align-items:center;gap:10px;flex:1 1 0;min-width:0}
+.topR{justify-content:flex-end}
 #top{grid-area:top;display:flex;align-items:center;gap:10px;padding:0 10px;background:var(--panel);border-bottom:1px solid var(--line)}
 .brand{display:flex;align-items:center;gap:8px;font-weight:600;font-size:15px;letter-spacing:-.2px;margin-right:6px}
 .brand .mark{width:20px;height:20px;flex:none}.brand .r{color:var(--acc)}
@@ -127,7 +129,15 @@ button.icon svg,.ib svg{width:17px;height:17px;stroke:currentColor;fill:none;str
 .sval{width:62px;text-align:right;color:#cdd1d6;font-variant-numeric:tabular-nums}
 /* timeline */
 #tl{grid-area:tl;background:var(--panel);border-top:1px solid var(--line);display:flex;flex-direction:column;min-height:90px;max-height:216px}
-#shotBar{display:flex;align-items:center;gap:4px;padding:5px 10px;border-bottom:1px solid var(--line);overflow-x:auto;min-height:34px;flex:none}
+#shotRow{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:10px;padding:0 10px;border-bottom:1px solid var(--line);min-height:34px;flex:none}
+#shotBar{display:flex;align-items:center;gap:4px;padding:5px 0;overflow-x:auto;min-width:0}
+#viewGrp{display:flex;align-items:center;gap:6px;flex:none}
+#viewGrp .seg button{padding:3px 11px}
+#viewGrp .icon{width:28px;height:24px}
+#viewGrp .lbl{color:var(--mute);font-size:11px;font-weight:600;margin-right:2px;width:auto}
+#shotSide{display:flex;align-items:center;justify-content:flex-end;gap:4px;min-width:0}
+#shotSide .note{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+#shotSide button{padding:3px 9px;font-size:12px;flex:none}
 #shotBar .lbl{color:var(--mute);font-size:11px;font-weight:600;margin-right:4px;width:auto}
 #shotBar input{width:130px;padding:2px 6px;font-size:12px}
 .shotchip{display:flex;align-items:center;gap:6px;padding:3px 10px;border-radius:14px;font-size:12px;background:var(--panel2);white-space:nowrap}
@@ -135,8 +145,6 @@ button.icon svg,.ib svg{width:17px;height:17px;stroke:currentColor;fill:none;str
 .shotchip.on{background:var(--accd);border-color:var(--acc);color:#ffe3c6}
 .shotchip.on small{color:var(--acc2)}
 .shotchip.add{background:transparent;border-style:dashed;color:var(--mute)}
-#shotBar .sright{margin-left:auto;display:flex;gap:4px}
-#shotBar .sright button{padding:3px 9px;font-size:12px}
 .promptbox{width:100%;min-height:150px;resize:vertical;background:#15161a;border:1px solid var(--line2);border-radius:7px;color:#e7e9ec;font:12.5px/1.5 "Segoe UI",system-ui,sans-serif;padding:8px 9px}
 .expgrid{display:grid;grid-template-columns:1fr 1fr;gap:5px}
 .expgrid .wide{grid-column:span 2}
@@ -344,28 +352,22 @@ button.icon.on{background:var(--accd);color:var(--acc2)}
 <body>
 <div id="app">
   <header id="top">
-    <div class="brand" title="ShotRef"><svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M5 12V5h7M20 27h7v-7" fill="none" stroke="#E7E9EC" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 23C13 15 19 22 24 9" fill="none" stroke="#FF9A3C" stroke-width="2.4" stroke-linecap="round"/><circle cx="8" cy="23" r="2.4" fill="#FF9A3C"/><circle cx="24" cy="9" r="2.4" fill="#FF9A3C"/></svg><span class="name">Shot<span class="r">Ref</span></span> <small>Camera moves for AI video</small></div>
-    <input id="projName" type="text" placeholder="Untitled scene" aria-label="Project name" title="Project name (click to rename)" spellcheck="false" maxlength="80" autocomplete="off">
-    <button id="bTake" class="menubtn" aria-haspopup="menu" title="Takes: alternative versions of this scene you can switch between and compare">Take 1</button>
-    <button id="bFile" class="menubtn" aria-haspopup="menu" title="New, open, save and export">File</button>
-    <div class="grp">
-      <button id="bUndo" class="icon" aria-label="Undo" title="Undo (Ctrl+Z)">↶</button>
-      <button id="bRedo" class="icon" aria-label="Redo" title="Redo (Ctrl+Y)">↷</button>
+    <div class="topL">
+      <div class="brand" title="ShotRef"><svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M5 12V5h7M20 27h7v-7" fill="none" stroke="#E7E9EC" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 23C13 15 19 22 24 9" fill="none" stroke="#FF9A3C" stroke-width="2.4" stroke-linecap="round"/><circle cx="8" cy="23" r="2.4" fill="#FF9A3C"/><circle cx="24" cy="9" r="2.4" fill="#FF9A3C"/></svg><span class="name">Shot<span class="r">Ref</span></span> <small>Camera moves for AI video</small></div>
+      <input id="projName" type="text" placeholder="Untitled scene" aria-label="Project name" title="Project name (click to rename)" spellcheck="false" maxlength="80" autocomplete="off">
+      <button id="bTake" class="menubtn" aria-haspopup="menu" title="Takes: alternative versions of this scene you can switch between and compare">Take 1</button>
+      <button id="bFile" class="menubtn" aria-haspopup="menu" title="New, open, save and export">File</button>
+      <div class="grp">
+        <button id="bUndo" class="icon" aria-label="Undo" title="Undo (Ctrl+Z)">↶</button>
+        <button id="bRedo" class="icon" aria-label="Redo" title="Redo (Ctrl+Y)">↷</button>
+      </div>
     </div>
-    <div class="spacer"></div>
     <div class="stepseg" id="stepSeg" role="group" aria-label="Work in three steps">
       <button data-step="build" title="Add and place people and props (1)"><b>1</b>Build</button>
       <button data-step="frame" title="Frame the shot and set the camera move (2)"><b>2</b>Frame</button>
       <button id="bExport" data-step="export" title="Video, frames and images to export (3)"><b>3</b>Export</button>
     </div>
-    <div class="spacer"></div>
-    <div class="seg" id="viewSeg">
-      <button data-v="editor" title="Free 3D view to build the scene">Editor</button>
-      <button data-v="top" title="Overhead floor-plan view for blocking (T)">Top</button>
-      <button data-v="camera" title="Look through the shot camera (C)">Camera</button>
-    </div>
-    <button id="bSplit" class="icon" aria-pressed="false" aria-label="Split view: editor and camera side by side" title="Split view: editor and camera side by side"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M12 5v14"/></svg></button>
-    <button id="bMenu" class="icon" aria-haspopup="menu" aria-label="Settings and help" title="Settings, Advanced controls and help"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg></button>
+    <div class="topR"><button id="bMenu" class="icon" aria-haspopup="menu" aria-label="Settings and help" title="Settings, Advanced controls and help"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg></button></div>
   </header>
 
   <aside id="left">
@@ -410,7 +412,19 @@ button.icon.on{background:var(--accd);color:var(--acc2)}
   <aside id="right"><div id="props"></div></aside>
 
   <footer id="tl">
-    <div id="shotBar"></div>
+    <div id="shotRow">
+      <div id="shotBar"></div>
+      <div id="viewGrp" role="group" aria-label="View">
+        <span class="lbl">View</span>
+      <div class="seg" id="viewSeg">
+        <button data-v="editor" title="Free 3D view to build the scene">Editor</button>
+        <button data-v="top" title="Overhead floor-plan view for blocking (T)">Top</button>
+        <button data-v="camera" title="Look through the shot camera (C)">Camera</button>
+      </div>
+        <button id="bSplit" class="icon" aria-pressed="false" aria-label="Split view: editor and camera side by side" title="Split view: editor and camera side by side"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M12 5v14"/></svg></button>
+      </div>
+      <div id="shotSide"></div>
+    </div>
     <div id="tlBar">
       <div class="tp">
         <button id="bStart" title="Go to start (Home)">⏮</button>
@@ -507,7 +521,7 @@ button.icon.on{background:var(--accd);color:var(--acc2)}
     <li><b>Block it.</b> Drag people and props across the floor; drag the orange ring to turn them (let go over a person or the camera and they face it). Shift-click picks several to move together; <span class="kbd">Ctrl G</span> groups them. <b>Top view</b> (<span class="kbd">T</span>) works like a floor plan.</li>
     <li><b>Move people.</b> Select a person, press <b>Draw walk path</b> and click points on the floor, or send them to a floor mark with an arrival time. Drag them onto a chair, sofa or bed to sit them down (drag away to stand). Pick a pose later in the shot to change it mid-shot: it shows as a blue tag on the timeline. The eye button over a person makes them look at the camera.</li>
     <li><b>Right-click</b> anything for what you can do with it: add a person here, walk them to a mark, frame a medium shot, face the camera, duplicate, hide. Right-click the floor to add things or aim the camera there. Right-drag still pans.</li>
-    <li><b>Frame the shot.</b> In <b>Camera view</b> (<span class="kbd">C</span>) drag to orbit, right-drag to pan, scroll to dolly, <span class="kbd">W A S D Q E</span> to fly. Or use a shot size: Wide, Medium, Close-up… The <b>split view</b> button (top bar) puts the editor on the left and the camera on the right: whichever half the pointer is over is the one you steer.</li>
+    <li><b>Frame the shot.</b> In <b>Camera view</b> (<span class="kbd">C</span>) drag to orbit, right-drag to pan, scroll to dolly, <span class="kbd">W A S D Q E</span> to fly. Or use a shot size: Wide, Medium, Close-up… The <b>split view</b> button (next to View, under the picture) puts the editor on the left and the camera on the right: whichever half the pointer is over is the one you steer.</li>
     <li><b>Make the move.</b> Press <b>Set start</b>, reframe, press <b>Set end</b>. Or pick a one-click move, or <b>● Record</b> and operate the camera live.</li>
     <li><b>Export</b> (step 3, or press <span class="kbd">3</span>): an MP4, the current frame, or a frame pack (start, middle and end frames plus the prompt) for image-to-video models. Several shots? Add them with + New shot.</li>
   </ol>

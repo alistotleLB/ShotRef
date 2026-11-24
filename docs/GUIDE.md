@@ -15,7 +15,7 @@ The bar at the top has three steps. Press `1`, `2` or `3` to jump between them.
 | **2 · Frame** | Look through the camera, then set where it starts and ends. |
 | **3 · Export** | Render the video or frames and copy the prompt. |
 
-You have three **views**, top right. Use whichever suits the job.
+You have three **views**. The **View** buttons are in the row under the picture, between the Shots chips and the Contact sheet button. Use whichever suits the job.
 
 | View | Key | Use it for |
 |---|---|---|

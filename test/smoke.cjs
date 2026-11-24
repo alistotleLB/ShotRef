@@ -5066,4 +5066,27 @@ check('right panel: notes fold into a ? on the heading, clicking a heading folds
   noErrors(p);
 });
 
+check('view buttons: Editor, Top, Camera and split live in the Shots row under the picture with a View label, centred, and still switch the view', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  ok(await p.evaluate(() => !document.querySelector('#top #viewSeg') && !document.querySelector('#top #bSplit')), 'still in the top bar');
+  ok(await p.evaluate(() => !!document.querySelector('#shotRow #viewGrp #viewSeg') && !!document.querySelector('#shotRow #viewGrp #bSplit')), 'not in the Shots row');
+  ok(await p.evaluate(() => document.querySelector('#shotSide').textContent === ''), 'stray text in the Shots row with one shot: ' + await p.evaluate(() => document.querySelector('#shotSide').textContent));
+  ok(await p.evaluate(() => document.querySelector('#viewGrp .lbl').textContent.trim() === 'View'), 'no View label');
+  const g = await p.evaluate(() => { const a = document.querySelector('#viewGrp').getBoundingClientRect(), r = document.querySelector('#shotRow').getBoundingClientRect(); return { dx: Math.abs((a.left + a.right) / 2 - (r.left + r.right) / 2), top: a.top, rtop: r.top, bottom: a.bottom, rbottom: r.bottom }; });
+  ok(g.dx < 12, 'View group is not centred in the row (off by ' + Math.round(g.dx) + ' px)');
+  ok(g.top >= g.rtop - 1 && g.bottom <= g.rbottom + 1, 'View group sticks out of its row');
+  for (const v of ['camera', 'top', 'editor']) {
+    await p.click('#viewSeg [data-v="' + v + '"]'); await settle(p, 250);
+    ok(await p.evaluate(x => (document.querySelector('#viewSeg .on') || {}).dataset.v === x, v), 'view did not switch to ' + v);
+  }
+  await p.click('#bSplit'); await settle(p, 250);
+  ok(await p.evaluate(() => window.__shotref.layout() === 'split'), 'split button did not work from the Shots row');
+  /* with many shots the chips scroll and never run under the View group */
+  for (let i = 0; i < 7; i++) { await p.click('#shotBar .shotchip.add'); await settle(p, 120); }
+  const o = await p.evaluate(() => { const s = document.querySelector('#shotBar').getBoundingClientRect(), v = document.querySelector('#viewGrp').getBoundingClientRect(), c = document.querySelector('#bSheet').getBoundingClientRect(); return { chipsEnd: s.right, viewStart: v.left, viewEnd: v.right, sheetStart: c.left }; });
+  ok(o.chipsEnd <= o.viewStart + 1, 'Shots chips overlap the View group');
+  ok(o.viewEnd <= o.sheetStart + 1, 'View group overlaps the Contact sheet button');
+  noErrors(p);
+});
+
 main().catch(e => { console.error(e && e.stack || e); process.exit(2); });
