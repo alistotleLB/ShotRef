@@ -13,7 +13,7 @@ Off:     the hands-on tour (16 stops, practice stage) is built and tested but sw
 Builds:  dist/ShotRef.html 1034 KB; release/ShotRef-Setup-1.4.0.exe (122 MB), ShotRef-1.4.0-portable.exe (111 MB), unsigned.
 Tests:   npm test 318/318 (628 s), npm run test:desktop 23/23, 0 Electron left (run before merging; merge changed no code).
 Code:    PUBLIC GitHub main = release 1.4.0. Branch feature/onboarding-tour merged (its GitHub copy is stale, 3 commits; PR #1 closed).
-Known:   walking feet slide slightly at heel strike. claude.ai artifact still on 1.2.0 (not republished).
+Known:   walking feet slide slightly at heel strike. claude.ai artifact 6uRy4QMBjvK9Rn5PLedSUq republished from 1.4.0 (version 10, private).
 Next:    Ali tries checklist C4 (quick tour). Then: improve the hands-on tour (what Ali disliked: to ask), installable web app + website.
 Not yet tried by Ali: the quick tour; everything since 2026-11-22.
 
@@ -101,6 +101,7 @@ Storage: build output in `dist/` (git-ignored).
 | N-011 | 2026-11-24 | "add: onboarding tour. Basic onboaring, and advanced interactive onboarding." then "Let's start with the onboarding process. Give me a clear plan before execution. I want you to orchestrate the development across Opus and Sonnet helpers. Use project keeper, and use all helpful skills for this tast." Answers: "Let's stop at \"they know where things are\"", "A: spotlight engine", "make sure to use UI/UX design skills", "Practice stage", then "Approved, but take these points into consideration: 1) On first run only, ask the user is they would like to take the tour. Mention that the tour can be taken later through the Help menu. 2) Use a copywriting specialized helper to write the content of the tour in an engaging and easy language." | built 2026-11-24 on branch feature/onboarding-tour, awaiting C4 (design docs/superpowers/specs/2026-11-24-onboarding-tour-design.md); guessed: "Help menu" = desktop Help menu + a Help heading in the gear menu |
 | N-012 | 2026-11-24 | "I didn't like the long tour, it needs a lot of improvement, is there a way to keep the code, but disable the feature for now until we improve it?" | done 2026-11-24 (hands-on tour switched off: all entry points hidden, code and tests kept; quick tour stays; guessed: "the long tour" = the hands-on tour) |
 | N-013 | 2026-11-24 | "publish the release when ready" | done 2026-11-24 (v1.4.0 published) |
+| N-014 | 2026-11-24 | "Yes, republish" (the claude.ai version, from 1.4.0) | done 2026-11-24 (same link, version 10) |
 | N-007 | 2026-11-23 | "dont forget to orchestrate the tasks across Opus and Sonnet for maximum efficiency" | done (Sonnet built, Opus reviewed, medium effort) |
 
 ### Approved and locked     (changing these needs Ali's yes)
@@ -138,7 +139,7 @@ CHANGED   src/tour.js (spotlight engine: orange viewfinder corners, bubble, came
 TESTS     npm test 317/317 (640 s) and test:desktop 23/23 on a build newer than the last commit, run by Claude 2026-11-24.
 OPEN      Parked minors: refusal toast is generic during the brief boot photo load; after a dialog closes mid-tour, keyboard focus is on the page not the bubble;
           a photo decode can flash on the practice stage for one frame; drop test doesn't assert the image; one timing check allows 1.2 s.
-          Hands-on tour off until improved. claude.ai artifact not republished (still 1.2.0). Unsigned builds as before.
+          Hands-on tour off until improved. Unsigned builds as before.
 FINDINGS  Review rounds found 2 work-loss races (see Lessons) and a dialog-under-tour bug; all fixed with tests.
 NEXT      Ali runs C4 (1.4.0: the Windows app updates itself, or the release page has ShotRef.html):
           1. Open ShotRef.html in an InPrivate window -> "Take a look round the set?" appears before the starter sets; it offers the quick tour and Not now.
@@ -164,3 +165,4 @@ NEXT      Ali runs C4 (1.4.0: the Windows app updates itself, or the release pag
 - 2026-11-24 View buttons moved from the top bar into a centred "View" group in the Shots row (#shotRow: chips | View | contact sheet). Top bar is now two equal halves so the step bar stays centred (#top .topL/.topR). Found by tests and a screenshot: step bar off-centre, row 1 px too tall, and a stray "null" text. npm test 266/266, test:desktop 21/21. Docs and 6 README screenshots retaken. Not released (version still 1.3.0).
 - 2026-11-24 onboarding tours (N-011): design approved, 6-task plan, built by Sonnet helpers (copywriter + 5 builders), each task reviewed by Opus; 4 fix rounds + 1 final fix wave. Reviews caught 2 work-loss races and a dialog-under-tour bug. npm test 317/317 (640 s), test:desktop 23/23. Build 1034 KB. Branch feature/onboarding-tour, not merged. PR #1 opened by mistake and closed.
 - 2026-11-24 hands-on tour switched off (N-012: code and tests kept, entry points hidden, one-tour wording). npm test 318/318 (628 s), test:desktop 23/23. Merged into main, version 1.4.0, installers built (setup 122 MB, portable 111 MB), released v1.4.0 on GitHub (Ali: "publish the release when ready"); latest.yml serves 1.4.0.
+- 2026-11-24 claude.ai artifact 6uRy4QMBjvK9Rn5PLedSUq republished from 1.4.0 (Ali: "Yes, republish"), Desert overlook demo embed kept (same method as 1.2.0). Checked headless under the claude.ai CSP first: 23 objects + photo, 0 errors, no first-run question, quick tour runs, no hands-on item.
