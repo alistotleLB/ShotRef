@@ -37,7 +37,7 @@ It was made by a TV producer and videographer, for people who think in shots, no
 
 ## What you can do
 
-- **Learn it in minutes.** A quick tour of the screen, or a hands-on tour on a practice stage that gives your scene back afterwards. Both are in the Help menu.
+- **Learn it in minutes.** A quick guided tour of the screen, always in the Help menu.
 - **Start from a set.** Two-person dialogue, walk and talk, living room, café table, street, blocking practice. Or an empty stage.
 - **Place people and props.** Men, women and children, tables, chairs, sofas, cars, trees, buildings, and basic shapes. Bring in your own `.glb` models and a location photo.
 - **Block the action.** Draw walk paths, send people to floor marks with an arrival time, sit them on a chair or sofa, change pose mid-shot, and make them look at the camera.

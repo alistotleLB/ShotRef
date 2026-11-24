@@ -5337,8 +5337,9 @@ check('first run asks about the tour, once', async ({ freshContext }) => {
   const p = await fc.open();
   await waitOpen(p, 'mTour');
   ok(!(await isOpen(p, 'mStart')), 'the starter picker opened before the tour question');
-  const t = await p.evaluate(() => ({ title: document.querySelector('#mTourT').textContent, q: document.querySelector('#tourQuick').textContent, h: document.querySelector('#tourHands').textContent, n: document.querySelector('#tourNo').textContent }));
-  ok(t.title && t.q === 'Take the quick tour' && t.h === 'Try it hands-on' && t.n === 'Not now', 'welcome text: ' + JSON.stringify(t));
+  const t = await p.evaluate(() => ({ title: document.querySelector('#mTourT').textContent, body: document.querySelector('#mTourP').textContent, q: document.querySelector('#tourQuick').textContent, hHidden: document.querySelector('#tourHands').hidden, n: document.querySelector('#tourNo').textContent }));
+  /* the hands-on tour is switched off for now: only the quick tour is offered, with the one-tour wording */
+  ok(t.title && t.q === 'Take the quick tour' && t.hHidden && /one-minute tour/.test(t.body) && t.n === 'Not now', 'welcome text: ' + JSON.stringify(t));
   await p.click('#tourNo');
   ok(!(await isOpen(p, 'mTour')), 'Not now left the question open');
   await waitOpen(p, 'mStart');
@@ -5397,7 +5398,7 @@ check('Help heading in the gear menu starts both tours; Quick start page has bot
   await p.click('#bMenu');
   const m = await p.evaluate(() => ({ head: [...document.querySelectorAll('#ctxMenu .head')].map(e => e.textContent), cmds: [...document.querySelectorAll('#ctxMenu [data-cmd]')].map(e => e.dataset.cmd), role: document.querySelector('#ctxMenu [data-cmd="tour-basic"]').getAttribute('role') }));
   ok(m.head.includes('Help'), 'no Help heading: ' + m.head);
-  ok(m.cmds.join() === 'advanced,ground,settings,tour-basic,tour-hands,help,about', 'items: ' + m.cmds.join());
+  ok(m.cmds.join() === 'advanced,ground,settings,tour-basic,help,about', 'items (hands-on tour switched off): ' + m.cmds.join());
   ok(m.role === 'menuitemcheckbox', 'the tour item has no tick slot');
   await p.click('#ctxMenu [data-cmd="tour-basic"]');
   ok(await p.evaluate(() => window.__shotref.tour.active()), 'the gear menu item did not start the basic tour');
@@ -5406,7 +5407,12 @@ check('Help heading in the gear menu starts both tours; Quick start page has bot
   await p.click('#bMenu');
   ok(await p.evaluate(() => document.querySelector('#ctxMenu [data-cmd="tour-basic"]').getAttribute('aria-checked')) === 'true', 'no tick after the tour');
   await p.keyboard.press('Escape');
-  /* hands-on: the practice stage tour */
+  /* switched off: no hands-on item, no hands-on button on the Quick start page */
+  await gearCmd(p, 'help');
+  ok(await p.evaluate(() => document.querySelector('#helpTourHands').hidden), 'the Quick start page offers the switched-off hands-on tour');
+  await p.keyboard.press('Escape'); await settle(p, 150);
+  /* switched back on (the hidden handsTour pref): the practice stage tour is reachable again */
+  await p.evaluate(() => window.__shotref.setHandsTour(true));
   await gearCmd(p, 'tour-hands');
   ok(await p.evaluate(() => window.__shotref.tour.active() && window.__shotref.practicing() && window.__shotref.tour.current().stop.id === 'h-welcome'), 'the gear menu item did not start the hands-on tour on the practice stage');
   await p.click('#tourEnd'); await settle(p, 200);
@@ -5415,6 +5421,7 @@ check('Help heading in the gear menu starts both tours; Quick start page has bot
   ok(await isOpen(p, 'mHelp'), 'Quick start did not open');
   const b = await p.evaluate(() => ({ q: document.querySelector('#helpTourQuick').textContent, h: document.querySelector('#helpTourHands').textContent, lead: document.querySelector('#helpTourLead').textContent }));
   ok(b.q === 'Take the quick tour' && b.h === 'Try it hands-on' && /guided walk/.test(b.lead), 'help page: ' + JSON.stringify(b));
+  ok(await p.evaluate(() => !document.querySelector('#helpTourHands').hidden), 'switched on, the Quick start page still hides the hands-on button');
   await p.click('#helpTourQuick');
   ok(!(await isOpen(p, 'mHelp')), 'the Quick start page stayed open');
   ok(await p.evaluate(() => window.__shotref.tour.active()), 'the Quick start button did not start the tour');
@@ -5795,6 +5802,7 @@ check('hands-on tour: starting a tour while one runs leaves it alone', async ({ 
   const p = await open(); await settle(p, 300);
   await handsStart(p);
   await handsSkipTo(p, 'h-gear');
+  await p.evaluate(() => window.__shotref.setHandsTour(true)); /* so the gear menu has the item */
   await gearCmd(p, 'tour-hands'); await settle(p, 300);
   ok(await handsId(p) === 'h-gear' && await p.evaluate(() => window.__shotref.practicing()), 'the running tour was disturbed');
   ok(await p.evaluate(() => /Finish what you/.test(document.querySelector('#toast').textContent)), 'no toast said why');
@@ -5928,6 +5936,7 @@ check('first run: Try it hands-on runs the practice tour, then the starter picke
   const fc = await freshContext({ firstLaunch: true });
   const p = await fc.open();
   await waitOpen(p, 'mTour');
+  await p.evaluate(() => window.__shotref.setHandsTour(true)); /* switched off by default for now */
   await p.click('#tourHands');
   ok(!(await isOpen(p, 'mTour')), 'the question stayed open');
   ok(await p.evaluate(() => window.__shotref.tour.active() && window.__shotref.practicing()), 'the hands-on tour did not start on the practice stage');
@@ -6043,3 +6052,16 @@ check('practice: dropping text or a link on the picture does not end the tour', 
 });
 
 main().catch(e => { console.error(e && e.stack || e); process.exit(2); });
+
+check('the hands-on tour is switched off: the quick tour ends with one-tour wording', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  ok(await p.evaluate(() => window.__shotref.handsTourOn() === false), 'the hands-on tour is switched on by default');
+  await p.evaluate(() => window.__shotref.startTour('basic'));
+  let id = '';
+  for (let i = 0; i < 12 && id !== 'b-bye'; i++) { await p.click('#tourNext'); await settle(p, 120); id = await p.evaluate(() => (window.__shotref.tour.current() || { stop: {} }).stop.id); }
+  ok(id === 'b-bye', 'never reached the last stop');
+  const txt = await p.evaluate(() => document.querySelector('#tour .tour-bubble').textContent);
+  ok(!/hands-on/i.test(txt) && /Help menu/.test(txt), 'last stop text: ' + txt);
+  await p.click('#tourNext'); await settle(p, 200);
+  noErrors(p);
+});

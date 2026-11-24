@@ -234,6 +234,9 @@ const ok = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
     const labels = await app.evaluate(({ Menu }) => Menu.getApplicationMenu().items.find(i => i.label === 'Help').submenu.items.map(i => i.label));
     const qs = labels.indexOf('Quick start');
     ok(qs >= 0 && labels[qs + 1] === 'Take the quick tour' && labels[qs + 2] === 'Try it hands-on', 'Help menu: ' + labels.join(' | '));
+    /* the hands-on tour is switched off for now: its item stays in the template but is hidden */
+    const handsVisible = await app.evaluate(({ Menu }) => Menu.getApplicationMenu().items.find(i => i.label === 'Help').submenu.items.find(i => i.label === 'Try it hands-on').visible);
+    ok(handsVisible === false, 'the switched-off hands-on item is visible in the Help menu');
     await helpClick(app, 'Take the quick tour');
     await page.waitForFunction(() => window.__shotref.tour.active(), null, { timeout: 5000 });
     ok(await page.evaluate(() => window.__shotref.tour.current().stop.id) === 'b-welcome', 'the basic tour did not start at its first stop');

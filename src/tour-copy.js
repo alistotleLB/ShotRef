@@ -15,6 +15,8 @@ export const TOUR_COPY = {
   welcome: {
     title: 'Take a look round the set?',
     body: 'Two short tours show you where everything is. Both are always in the Help menu if you want them later.',
+    // while the hands-on tour is switched off (see handsTourOn in main.js)
+    bodySolo: "A one-minute tour shows you where everything is. It's always in the Help menu if you want it later.",
     quick: 'Take the quick tour',
     hands: 'Try it hands-on',
     notNow: 'Not now',
@@ -71,10 +73,12 @@ export const TOUR_COPY = {
     'b-gear': {
       title: 'Settings and help',
       text: 'Switch on Advanced controls for more detail, reopen the Quick start page or run these tours again.',
+      textSolo: 'Switch on Advanced controls for more detail, reopen the Quick start page or take this tour again.',
     },
     'b-bye': {
       title: 'That is the lot',
       text: 'The hands-on tour has you try each part for real. Both tours are in the Help menu whenever you want them.',
+      textSolo: 'You know where everything is now. The tour is in the Help menu whenever you want it again.',
     },
   },
 

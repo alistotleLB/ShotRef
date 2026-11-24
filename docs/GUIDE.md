@@ -7,9 +7,9 @@ ShotRef helps you plan a shot and hand it to an AI video model. You build a roug
 
 ## Tours
 
-ShotRef has two guided tours. The **quick tour** has 10 stops. It points out each part of the screen and changes nothing. The **hands-on tour** has 16 stops. You try each thing for real on a practice stage, and your own scene comes back exactly as it was when the tour ends. Nothing is saved while you practise.
+ShotRef has a guided **quick tour** with 10 stops. It points out each part of the screen and changes nothing.
 
-The first time you open ShotRef, a window asks **Take a look round the set?** Choose **Take the quick tour**, **Try it hands-on** or **Not now**. After that, both tours are in the **Help** menu: in the browser, under **Help** in the gear menu, and in the Windows app, the **Help** menu. They are also at the top of the **Quick start** page.
+The first time you open ShotRef, a window asks **Take a look round the set?** Choose **Take the quick tour** or **Not now**. After that, the tour is in the **Help** menu: in the browser, under **Help** in the gear menu, and in the Windows app, the **Help** menu. It is also at the top of the **Quick start** page.
 
 Press `Esc` or **End tour** to stop a tour at any time.
 
