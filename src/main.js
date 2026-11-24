@@ -6,6 +6,7 @@ import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
 import { normalizeProject, FORMAT_VERSION, describeChange } from './project.js';
 import * as K from './keys.js';
 import { platform } from './platform.js';
+import { runTour, tourActive, tourTick } from './tour.js';
 
 /* ---- shared values: every module-level `let`, what it holds, and what changes it ----
  * state, assets                  the project and its photos/models: restore, buildState, replaceProject, boot
@@ -1830,6 +1831,7 @@ function frameSig() {
 }
 function frame(now) {
   requestAnimationFrame(frame);
+  if (tourActive()) tourTick();
   const dt = Math.min(0.1, (now - lastNow) / 1000); lastNow = now;
   if (exporting) { wasExporting = true; return; } // the export owns the scene and the renderers until it finishes
   if (wasExporting) { wasExporting = false; needsRender = true; }
@@ -4600,6 +4602,22 @@ function renderExportDialog() {
   if (exporting) setExportLock(true);
 }
 
+/* ============================== tour ============================== */
+/* Labels for the tour bubble. Task 1 (src/tour-copy.js) will replace this stub with the real copy. */
+const TOUR_UI = { next: 'Next', back: 'Back', end: 'End tour', finish: 'Finish', skip: 'Skip this step', progress: (n, t) => n + ' of ' + t };
+let tourHandle = null;
+/* Starts a tour (see src/tour.js for the stop shape). Returns null, with a toast, while an export runs or a dialog is open. */
+function startTour(stops, opts = {}) {
+  if (exporting) { toast('Wait for the export to finish.'); return null; }
+  if (openModals().length) { toast('Close the open window first.'); return null; }
+  const { onEnd, canKey, ui, interactive } = opts;
+  /* Esc goes to the app first when it has something to cancel */
+  const appCanEsc = e => e.key === 'Escape' && (menuOpen() || !!rec || !!placing || !!pathMode || focusPick || (canKey ? canKey(e) : false));
+  tourHandle = runTour({ stops, ui: ui || TOUR_UI, interactive: !!interactive, canKey: appCanEsc, onEnd: reason => { tourHandle = null; requestRender(); if (onEnd) onEnd(reason); } });
+  requestRender();
+  return tourHandle;
+}
+
 /* ============================== modals ============================== */
 const openModals = () => $$('.modal').filter(m => !m.classList.contains('hidden'));
 /* buttons, fields and rows a keyboard user can reach inside a dialog */
@@ -5471,7 +5489,7 @@ function boot() {
   });
   window.addEventListener('pagehide', () => { flushAutosave(); recentFlush(); });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') recentFlush(); });
-  window.__shotref = { promptText, ensureDof, get selection() { return selIds; }, layout: () => layout, gizmoNdc: (x, y) => { const q = gizmo._getPointer({ clientX: x, clientY: y, button: 0 }); return { x: q.x, y: q.y }; }, arrowsVisible: () => [...arrows.values()].some(a => a.visible), videoBitrate, snapValue: snapWith, rotSnapDeg: () => pref('rotSnap'), controlSpeeds: () => ({ orbit: edControls.rotateSpeed, zoom: edControls.zoomSpeed, cam: camControls.rotateSpeed }), flySpeedNow, walkSpeedNow: () => pathSpeedOf({ type: 'person', opts: { pose: 'stand' } }), buildAddPanel: () => buildAddPanel(), saveRecentNow, recentFlush, recentStats, recentBusy, selectMany: ids => { selIds = ids.slice(); selected = selIds[selIds.length - 1] || null; updateGizmo(); uiDirty = true; propsDirty = true; requestRender(); }, pickAtScreen: (x, y) => { const rc = rayFromEvent({ clientX: x, clientY: y }); const h = rc && pickAt(rc); return h ? h.id : null; }, settleTime: () => { const t0 = performance.now(); solveGround(); return performance.now() - t0; }, groundMigrate: () => groundMigrate.size, liftKnob: () => { if (!liftGrp.visible) return null; const q = liftPick.getWorldPosition(new THREE.Vector3()); return window.__shotref.project(q.x, q.y, q.z); }, attachTo, setMount, writeCam, shownObj: (id, t) => shownObj(getObj(id), t), viewOf: id => { const v = views.get(id); if (!v) return null; v.group.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(v.group), sz = bb.getSize(new THREE.Vector3()); return { p: v.group.position.toArray(), yaw: v.group.rotation.y * R2D, s: v.group.scale.toArray(), size: sz.toArray(), wheels: v.wheels ? v.wheels.list.map(w => ({ spin: w.spin.rotation.x, steer: w.piv.rotation.y, front: w.front })) : null }; }, ringKnob: () => ringGrp.visible ? ringKnob.getWorldPosition(new THREE.Vector3()).toArray() : null, getPref, setPref, showMenu, menuButton, hideMenu, project: (x, y, z) => { const r = canvas.getBoundingClientRect(), R = viewRects(r.width, r.height); let cam = view === 'top' ? topCam : edCam, rr = R.work || { x: 0, y: 0, w: r.width, h: r.height }; if (camPane() && R.frame) { cam = renderCam; rr = R.frame; } const v = new THREE.Vector3(x, y, z).project(cam); return [r.left + rr.x + (v.x * 0.5 + 0.5) * rr.w, r.top + rr.y + (-v.y * 0.5 + 0.5) * rr.h]; }, get view() { return view; }, get selected() { return selected; }, get state() { return state; }, get assets() { return assets; }, setT: t => setTime(t, false), applyMove, addObject, select, setView, evalCam, exportVideo, exportPNG, pickCodec, _exportCanvas: () => exRenderer ? exRenderer.domElement : null, changed, writeObj, evalObj, setKey, get T() { return T; },
+  window.__shotref = { tour: { run: startTour, active: tourActive, end: r => tourHandle && tourHandle.end(r) }, promptText, ensureDof, get selection() { return selIds; }, layout: () => layout, gizmoNdc: (x, y) => { const q = gizmo._getPointer({ clientX: x, clientY: y, button: 0 }); return { x: q.x, y: q.y }; }, arrowsVisible: () => [...arrows.values()].some(a => a.visible), videoBitrate, snapValue: snapWith, rotSnapDeg: () => pref('rotSnap'), controlSpeeds: () => ({ orbit: edControls.rotateSpeed, zoom: edControls.zoomSpeed, cam: camControls.rotateSpeed }), flySpeedNow, walkSpeedNow: () => pathSpeedOf({ type: 'person', opts: { pose: 'stand' } }), buildAddPanel: () => buildAddPanel(), saveRecentNow, recentFlush, recentStats, recentBusy, selectMany: ids => { selIds = ids.slice(); selected = selIds[selIds.length - 1] || null; updateGizmo(); uiDirty = true; propsDirty = true; requestRender(); }, pickAtScreen: (x, y) => { const rc = rayFromEvent({ clientX: x, clientY: y }); const h = rc && pickAt(rc); return h ? h.id : null; }, settleTime: () => { const t0 = performance.now(); solveGround(); return performance.now() - t0; }, groundMigrate: () => groundMigrate.size, liftKnob: () => { if (!liftGrp.visible) return null; const q = liftPick.getWorldPosition(new THREE.Vector3()); return window.__shotref.project(q.x, q.y, q.z); }, attachTo, setMount, writeCam, shownObj: (id, t) => shownObj(getObj(id), t), viewOf: id => { const v = views.get(id); if (!v) return null; v.group.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(v.group), sz = bb.getSize(new THREE.Vector3()); return { p: v.group.position.toArray(), yaw: v.group.rotation.y * R2D, s: v.group.scale.toArray(), size: sz.toArray(), wheels: v.wheels ? v.wheels.list.map(w => ({ spin: w.spin.rotation.x, steer: w.piv.rotation.y, front: w.front })) : null }; }, ringKnob: () => ringGrp.visible ? ringKnob.getWorldPosition(new THREE.Vector3()).toArray() : null, getPref, setPref, showMenu, menuButton, hideMenu, project: (x, y, z) => { const r = canvas.getBoundingClientRect(), R = viewRects(r.width, r.height); let cam = view === 'top' ? topCam : edCam, rr = R.work || { x: 0, y: 0, w: r.width, h: r.height }; if (camPane() && R.frame) { cam = renderCam; rr = R.frame; } const v = new THREE.Vector3(x, y, z).project(cam); return [r.left + rr.x + (v.x * 0.5 + 0.5) * rr.w, r.top + rr.y + (-v.y * 0.5 + 0.5) * rr.h]; }, get view() { return view; }, get selected() { return selected; }, get state() { return state; }, get assets() { return assets; }, setT: t => setTime(t, false), applyMove, addObject, select, setView, evalCam, exportVideo, exportPNG, pickCodec, _exportCanvas: () => exRenderer ? exRenderer.domElement : null, changed, writeObj, evalObj, setKey, get T() { return T; },
     get rebuilds() { return rebuilds; }, urlCacheIds: () => [...urlCache.keys()],
     /* batch H (takes) hooks for the smoke test */
     switchTake, newTake, snapPoolSize: () => snapLive, snapPruned: () => snapPruned,

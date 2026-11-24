@@ -5089,4 +5089,182 @@ check('view buttons: Editor, Top, Camera and split live in the Shots row under t
   noErrors(p);
 });
 
+/* ---------------- tour engine ---------------- */
+const TOUR3 = [{ id: 'a', target: '#bFile', title: 'File menu', text: 'Save and open projects here.' }, { id: 'b', target: '#bMenu', title: 'Settings', text: 'Advanced controls live here.' }, { id: 'c', target: null, title: 'Done', text: 'That is the tour.' }];
+const startTour3 = (p, opts) => p.evaluate(([stops, o]) => { const t = window.__shotref.tour.run(stops, o || {}); window.__t = t; return !!t; }, [TOUR3, opts]);
+const tourIdx = p => p.evaluate(() => window.__t ? window.__t.index : null);
+const centre = (p, sel) => p.evaluate(s => { const b = document.querySelector(s).getBoundingClientRect(); return [b.left + b.width / 2, b.top + b.height / 2]; }, sel);
+
+check('tour engine: shows corners around the target and a bubble that stays on screen', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  for (const [w, h] of [[1600, 900], [1280, 720]]) {
+    await p.setViewportSize({ width: w, height: h }); await settle(p, 200);
+    if (!await startTour3(p)) throw new Error('the tour did not start at ' + w);
+    await settle(p, 600);
+    const g = await p.evaluate(() => {
+      const r = s => { const b = document.querySelector(s).getBoundingClientRect(); return { l: b.left, t: b.top, r: b.right, b: b.bottom }; };
+      const bub = document.querySelector('.tour-bubble');
+      return { c: r('.tour-corners'), t: r('#bFile'), b: r('.tour-bubble'), vw: innerWidth, vh: innerHeight, role: bub.getAttribute('role'), lab: bub.getAttribute('aria-labelledby'), live: bub.getAttribute('aria-live'), z: getComputedStyle(document.querySelector('#tour')).zIndex, focus: document.activeElement === bub };
+    });
+    ok(g.c.l <= g.t.l - 5.5 && g.c.t <= g.t.t - 5.5 && g.c.r >= g.t.r + 5.5 && g.c.b >= g.t.b + 5.5, w + ': corners do not hold the target plus 6 px ' + JSON.stringify([g.c, g.t]));
+    ok(g.b.l >= 0 && g.b.t >= 0 && g.b.r <= g.vw && g.b.b <= g.vh, w + ': the bubble leaves the window ' + JSON.stringify(g.b));
+    ok(g.b.r <= g.t.l || g.b.l >= g.t.r || g.b.b <= g.t.t || g.b.t >= g.t.b, w + ': the bubble covers the target');
+    ok(g.b.r - g.b.l <= 340.5, w + ': the bubble is wider than 340 px');
+    ok(g.role === 'dialog' && g.lab === 'tourTitle' && g.live === 'polite' && g.z === '50', 'bubble attributes: ' + JSON.stringify(g));
+    ok(g.focus, 'the bubble does not take focus');
+    await p.evaluate(() => window.__t.end());
+  }
+  /* a narrow window: the bubble pins to the bottom at full width minus 16 px */
+  await p.setViewportSize({ width: 800, height: 700 }); await settle(p, 200);
+  await startTour3(p); await settle(p, 500);
+  const n = await p.evaluate(() => { const b = document.querySelector('.tour-bubble').getBoundingClientRect(); return { w: b.width, bottom: innerHeight - b.bottom, cx: (b.left + b.right) / 2, vw: innerWidth }; });
+  ok(Math.abs(n.w - (n.vw - 16)) < 1.5 && n.bottom < 20 && Math.abs(n.cx - n.vw / 2) < 1.5, 'the narrow bubble is not pinned to the bottom: ' + JSON.stringify(n));
+  noErrors(p);
+});
+
+check('tour engine: Next, Back, Finish; Enter and arrows work', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await startTour3(p);
+  ok(await tourIdx(p) === 0, 'did not start at stop 0');
+  ok(await p.evaluate(() => document.querySelector('#tourNext').textContent === 'Next' && document.querySelector('#tourBack').disabled), 'first stop: Next label or Back not disabled');
+  await p.click('#tourNext'); ok(await tourIdx(p) === 1, 'Next did not advance');
+  await p.click('#tourBack'); ok(await tourIdx(p) === 0, 'Back did not go back');
+  await p.keyboard.press('ArrowRight'); ok(await tourIdx(p) === 1, 'the right arrow did not advance');
+  await p.keyboard.press('ArrowLeft'); ok(await tourIdx(p) === 0, 'the left arrow did not go back');
+  await p.keyboard.press('Enter'); ok(await tourIdx(p) === 1, 'Enter did not advance');
+  await p.keyboard.press('Enter'); ok(await tourIdx(p) === 2, 'Enter did not reach the last stop');
+  await settle(p, 100);
+  ok(await p.evaluate(() => document.querySelector('#tourNext').textContent === 'Finish'), 'the last stop does not say Finish');
+  ok(await p.evaluate(() => document.querySelector('.tour-corners').classList.contains('off')), 'a stop with no target still shows corners');
+  const c = await p.evaluate(() => { const b = document.querySelector('.tour-bubble').getBoundingClientRect(); return [Math.abs((b.left + b.right) / 2 - innerWidth / 2), Math.abs((b.top + b.bottom) / 2 - innerHeight / 2)]; });
+  ok(c[0] < 2 && c[1] < 2, 'a stop with no target is not centred: ' + c);
+  await p.click('#tourNext'); await settle(p, 100);
+  ok(await p.evaluate(() => !document.querySelector('#tour') && !window.__shotref.tour.active()), 'Finish did not remove the tour');
+  noErrors(p);
+});
+
+check('tour engine: Esc, End tour leave nothing behind', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const state = () => p.evaluate(() => ({ gone: !document.querySelector('#tour'), active: window.__shotref.tour.active(), ae: document.activeElement && document.activeElement.id }));
+  for (const how of ['esc', 'end']) {
+    await p.focus('#bSplit');
+    await p.evaluate(() => { window.__reason = null; window.__shotref.tour.run([{ id: 'a', target: '#bFile', title: 'T', text: 't' }, { id: 'b', target: null, title: 'U', text: 'u' }], { onEnd: r => { window.__reason = r; } }); });
+    ok(!(await state()).gone, 'the tour did not start');
+    if (how === 'esc') await p.keyboard.press('Escape'); else await p.click('#tourEnd');
+    await settle(p, 100);
+    const s = await state();
+    ok(s.gone && !s.active, how + ': the tour is still there');
+    ok(s.ae === 'bSplit', how + ': focus did not return, it is on ' + s.ae);
+    ok(await p.evaluate(h => window.__reason === h, how), how + ': onEnd got the wrong reason');
+    /* no leftover key handler: Space plays again */
+    await p.evaluate(() => document.activeElement.blur());
+    const before = await p.evaluate(() => document.querySelector('#bPlay').textContent);
+    await p.keyboard.press(' '); await settle(p, 150);
+    const after = await p.evaluate(() => document.querySelector('#bPlay').textContent);
+    ok(before !== after, how + ': Space no longer toggles playback');
+    await p.keyboard.press(' '); await settle(p, 100);
+  }
+  /* Esc goes to the app first when it has something to cancel */
+  await p.evaluate(() => window.__shotref.tour.run([{ id: 'a', target: '#bFile', title: 'T', text: 't' }], {}));
+  await p.evaluate(() => { const r = document.querySelector('#bUndo').getBoundingClientRect(); window.__shotref.showMenu(r.left, r.bottom, [{ label: 'x', id: 'x' }]); });
+  await p.keyboard.press('Escape');
+  ok(await p.evaluate(() => window.__shotref.tour.active()), 'Esc ended the tour although a menu was open');
+  await p.keyboard.press('Escape');
+  ok(await p.evaluate(() => !window.__shotref.tour.active()), 'a second Esc did not end the tour');
+  noErrors(p);
+});
+
+check('tour engine: basic mode blocks app shortcuts and clicks', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => window.__shotref.addObject('person'));
+  await settle(p, 200);
+  const snap = () => p.evaluate(() => ({ view: window.__shotref.view, n: window.__shotref.state.objects.length, hi: window.__shotref.history.at }));
+  const before = await snap();
+  await startTour3(p); await settle(p, 500);
+  await p.keyboard.press('t'); await settle(p, 100);
+  ok((await snap()).view === before.view, 'pressing T changed the view during the tour');
+  const r = await centre(p, '#bUndo');
+  await p.mouse.click(r[0], r[1]); await settle(p, 150);
+  const a = await snap();
+  ok(a.n === before.n && a.hi === before.hi, 'a click on Undo got through the tour');
+  /* the spotlit target is blocked too in a basic tour */
+  const f = await centre(p, '#bFile');
+  await p.mouse.click(f[0], f[1]); await settle(p, 150);
+  ok(await p.evaluate(() => document.querySelector('#ctxMenu').style.display !== 'block'), 'a click on the spotlit File button opened its menu in a basic tour');
+  await p.evaluate(() => window.__t.end());
+  await p.keyboard.press('t'); await settle(p, 100);
+  ok((await snap()).view === 'top', 'T does not work again after the tour');
+  noErrors(p);
+});
+
+check('tour engine: an interactive tour lets clicks reach the target only', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => { window.__shotref.tour.run([{ id: 'a', target: '#bFile', title: 'T', text: 't' }, { id: 'b', target: null, title: 'U', text: 'u' }], { interactive: true }); });
+  await settle(p, 500);
+  const f = await centre(p, '#bFile');
+  await p.mouse.click(f[0], f[1]); await settle(p, 150);
+  ok(await p.evaluate(() => document.querySelector('#ctxMenu').style.display === 'block'), 'the click did not reach the spotlit button');
+  await p.evaluate(() => window.__shotref.hideMenu());
+  const r = await centre(p, '#bUndo');
+  ok(await p.evaluate(([x, y]) => { const e = document.elementFromPoint(x, y); return !!(e && e.closest('#tour')); }, r), 'a click outside the spotlight is not blocked');
+  await p.focus('#bPlay'); await p.evaluate(() => document.activeElement.blur());
+  await p.keyboard.press('t'); await settle(p, 100);
+  ok(await p.evaluate(() => window.__shotref.view === 'top'), 'app shortcuts should stay on in an interactive tour');
+  await p.evaluate(() => window.__shotref.tour.end());
+  noErrors(p);
+});
+
+check('tour engine: a hands-on stop waits for a change, shows the tick, then moves on', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => {
+    window.__shotref.tour.run([
+      { id: 'a', target: '#bFile', title: 'T', text: 't', snap: () => window.__shotref.view, waitFor: s => window.__shotref.view !== s, done: 'Moved' },
+      { id: 'b', target: null, title: 'U', text: 'u' }], { interactive: true });
+  });
+  await settle(p, 300);
+  ok(await p.evaluate(() => document.querySelector('#tourNext').textContent === 'Skip this step'), 'a hands-on stop does not offer Skip this step');
+  ok(await p.evaluate(() => document.querySelector('.tour-bubble .tour-title').textContent === 'T'), 'not on stop 1');
+  await p.keyboard.press('t'); await settle(p, 200);
+  ok(await p.evaluate(() => /Moved/.test(document.querySelector('.tour-done').textContent) && !document.querySelector('.tour-done').hidden), 'no tick and confirmation word after the change');
+  await settle(p, 1000);
+  ok(await p.evaluate(() => document.querySelector('.tour-bubble .tour-title').textContent === 'U'), 'the tour did not move on by itself');
+  await p.evaluate(() => window.__shotref.tour.end());
+  noErrors(p);
+});
+
+check('tour engine: refuses to start over a dialog', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => document.querySelector('#mHelp').classList.remove('hidden'));
+  const res = await p.evaluate(() => { const r = window.__shotref.tour.run([{ id: 'a', target: null, title: 'T', text: 't' }], {}); const t = document.querySelector('#toast'); return { r, tour: !!document.querySelector('#tour'), shown: t.classList.contains('show'), text: t.textContent }; });
+  ok(res.r === null && !res.tour, 'a tour started over a dialog');
+  ok(res.shown && res.text.length > 5, 'no toast explained why');
+  await p.evaluate(() => document.querySelector('#mHelp').classList.add('hidden'));
+  ok(await p.evaluate(() => !!window.__shotref.tour.run([{ id: 'a', target: null, title: 'T', text: 't' }], {})), 'the tour does not start once the dialog is closed');
+  await p.evaluate(() => window.__shotref.tour.end());
+  noErrors(p);
+});
+
+check('tour engine: runs under the claude.ai CSP with no console errors', async ({ open }) => {
+  const p = await open('app.html'); await settle(p, 400);
+  await startTour3(p); await settle(p, 500);
+  ok(await p.evaluate(() => !!document.querySelector('.tour-bubble') && document.querySelector('.tour-bubble').getBoundingClientRect().width > 0), 'the bubble is not shown under the CSP');
+  await p.click('#tourNext'); await p.click('#tourNext'); await p.click('#tourNext'); await settle(p, 200);
+  ok(await p.evaluate(() => !document.querySelector('#tour')), 'the tour did not finish under the CSP');
+  ok(p.__errors.length === 0, 'errors under the CSP: ' + p.__errors.join(' | '));
+});
+
+check('tour engine: reduced motion jumps the corners, otherwise they travel in 350 ms', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await startTour3(p); await settle(p, 400);
+  const d = await p.evaluate(() => getComputedStyle(document.querySelector('.tour-corners')).transitionDuration);
+  ok(/^0\.35s/.test(d), 'the corners should travel in 0.35 s, got ' + d);
+  await p.evaluate(() => window.__t.end());
+  await p.emulateMedia({ reducedMotion: 'reduce' });
+  await startTour3(p); await settle(p, 200);
+  const d2 = await p.evaluate(() => getComputedStyle(document.querySelector('.tour-corners')).transitionDuration);
+  ok(/^0s/.test(d2), 'reduced motion should not travel, got ' + d2);
+  await p.evaluate(() => window.__t.end());
+  noErrors(p);
+});
+
 main().catch(e => { console.error(e && e.stack || e); process.exit(2); });
