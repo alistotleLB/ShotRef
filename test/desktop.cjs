@@ -22,9 +22,9 @@ async function launch(args = [], opts = {}) {
   page.on('pageerror', e => errors.push(String(e)));
   await page.waitForFunction(() => window.__shotref && window.__shotref.state, null, { timeout: 30000 });
   page.setDefaultTimeout(8000);
-  if (!opts.raw) { /* first launch opens the starter sets: close them so clicks reach the page */
-    await page.waitForFunction(() => !document.querySelector('#mStart').classList.contains('hidden'), null, { timeout: 4000 }).catch(() => {});
-    await page.evaluate(() => document.querySelector('#mStart').classList.add('hidden'));
+  if (!opts.raw) { /* first launch asks about the tour, then opens the starter sets: hide the question so clicks reach the page */
+    await page.waitForFunction(() => !document.querySelector('#mTour').classList.contains('hidden'), null, { timeout: 4000 }).catch(() => {});
+    await page.evaluate(() => { document.querySelector('#mTour').classList.add('hidden'); document.querySelector('#mStart').classList.add('hidden'); });
   }
   await page.evaluate(() => { window.__edit = () => { window.__shotref.addObject('box'); window.__shotref.changed(true); }; });
   return { app, page, errors, userData };
@@ -226,6 +226,48 @@ const ok = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
     ok(JSON.parse(fs.readFileSync(path.join(userData, 'shotref-settings.json'), 'utf8')).folders.import === tmp, 'import folder not remembered');
     await app.evaluate(({ Menu }) => { const help = Menu.getApplicationMenu().items.find(i => i.label === 'Help'); help.submenu.items.find(i => i.label === 'Quick start').click(); });
     await page.waitForSelector('#mHelp:not(.hidden)', { timeout: 5000 });
+    await kill(app);
+  });
+
+  await check('Help menu has the two tour items and they reach the page', async () => {
+    const { app, page } = await launch();
+    const labels = await app.evaluate(({ Menu }) => Menu.getApplicationMenu().items.find(i => i.label === 'Help').submenu.items.map(i => i.label));
+    const qs = labels.indexOf('Quick start');
+    ok(qs >= 0 && labels[qs + 1] === 'Take the quick tour' && labels[qs + 2] === 'Try it hands-on', 'Help menu: ' + labels.join(' | '));
+    /* the hands-on tour is switched off for now: its item stays in the template but is hidden */
+    const handsVisible = await app.evaluate(({ Menu }) => Menu.getApplicationMenu().items.find(i => i.label === 'Help').submenu.items.find(i => i.label === 'Try it hands-on').visible);
+    ok(handsVisible === false, 'the switched-off hands-on item is visible in the Help menu');
+    await helpClick(app, 'Take the quick tour');
+    await page.waitForFunction(() => window.__shotref.tour.active(), null, { timeout: 5000 });
+    ok(await page.evaluate(() => window.__shotref.tour.current().stop.id) === 'b-welcome', 'the basic tour did not start at its first stop');
+    await page.evaluate(() => window.__shotref.tour.end());
+    await helpClick(app, 'Try it hands-on');
+    await page.waitForFunction(() => window.__shotref.tour.active() && window.__shotref.practicing(), null, { timeout: 5000 });
+    ok(await page.evaluate(() => window.__shotref.tour.current().stop.id) === 'h-welcome', 'the hands-on tour did not start at its first stop');
+    await page.evaluate(() => window.__shotref.tour.end());
+    ok(await page.evaluate(() => !window.__shotref.practicing() && !document.querySelector('#tour')), 'the hands-on tour left the practice stage on');
+    await kill(app);
+  });
+
+  await check('closing the window mid hands-on tour asks about the real scene', async () => {
+    const { app, page } = await launch();
+    const named = path.join(tmp, 'real-project.shotref');
+    await stubDialogs(app, [named]);
+    await page.evaluate(() => window.__edit());
+    await fileCmd(page, 'save'); await sleep(700); /* the real project has a name now */
+    await page.evaluate(() => window.__edit()); /* ... and unsaved changes */
+    const realCount = await objCount(page);
+    await page.evaluate(() => window.__shotref.practice.enter());
+    await page.evaluate(() => { const S = window.__shotref; S.tour.run([{ id: 'a', target: null, title: 'T', text: 't' }, { id: 'b', target: null, title: 'U', text: 'u' }], { interactive: true, onEnd: () => S.practice.leave() }); });
+    ok(await page.evaluate(() => window.__shotref.practicing() && window.__shotref.state.objects.length === 0), 'the practice stage did not start');
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+    await page.waitForSelector('#mConfirm:not(.hidden)', { timeout: 5000 });
+    ok(/Save changes before closing/.test(await page.textContent('#cfTitle')), 'prompt text: ' + await page.textContent('#cfTitle'));
+    ok(/real-project\.shotref/.test(await page.textContent('#cfText')), 'the question does not name the real project: ' + await page.textContent('#cfText'));
+    ok(!(await page.evaluate(() => window.__shotref.practicing())), 'still practising behind the question');
+    ok(await page.evaluate(() => !document.querySelector('#tour')), 'the tour is still on screen behind the question');
+    ok(await objCount(page) === realCount, 'the real scene is not back: ' + await objCount(page) + ' objects');
+    ok((await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)) === 1, 'window closed');
     await kill(app);
   });
 

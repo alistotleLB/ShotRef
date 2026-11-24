@@ -3,7 +3,15 @@
 ShotRef helps you plan a shot and hand it to an AI video model. You build a rough set, move the camera, and export a clip or frames. This guide covers the basics. Everything is also in the app: press the **?** on any panel heading, or open **Quick start** from the welcome screen.
 
 **Contents**
-[The three steps](#the-three-steps) · [1. Build](#1-build-the-scene) · [2. Frame](#2-frame-the-shot-and-move-the-camera) · [3. Export](#3-export) · [Shots, takes and sets](#shots-takes-and-sets) · [Saving](#saving-and-opening) · [Shortcuts](#shortcuts) · [Advanced controls](#advanced-controls) · [Troubleshooting](#troubleshooting)
+[Tours](#tours) · [The three steps](#the-three-steps) · [1. Build](#1-build-the-scene) · [2. Frame](#2-frame-the-shot-and-move-the-camera) · [3. Export](#3-export) · [Shots, takes and sets](#shots-takes-and-sets) · [Saving](#saving-and-opening) · [Shortcuts](#shortcuts) · [Advanced controls](#advanced-controls) · [Troubleshooting](#troubleshooting)
+
+## Tours
+
+ShotRef has a guided **quick tour** with 10 stops. It points out each part of the screen and changes nothing.
+
+The first time you open ShotRef, a window asks **Take a look round the set?** Choose **Take the quick tour** or **Not now**. After that, the tour is in the **Help** menu: in the browser, under **Help** in the gear menu, and in the Windows app, the **Help** menu. It is also at the top of the **Quick start** page.
+
+Press `Esc` or **End tour** to stop a tour at any time.
 
 ## The three steps
 

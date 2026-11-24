@@ -36,9 +36,10 @@ const dlReady = (async () => {
 const docs = { 1: { name: null, path: null } };
 let docSeq = 1;
 const cur = { doc: 1, name: null, path: null, dirty: false, rev: 0 };
+let held = false; /* the practice stage is showing: the unsaved mark and the window title stay as the real project had them */
 const setFile = (name, path) => { cur.name = name || null; cur.path = path || null; docs[cur.doc] = { name: cur.name, path: cur.path }; }; /* rev counts edits, so a save only clears the mark if nothing changed while it ran */
 function updateTitle() {
-  if (!desk) return; /* the page title stays "ShotRef" on the web */
+  if (!desk || held) return; /* the page title stays "ShotRef" on the web */
   try { desk.setTitle((cur.dirty ? '• ' : '') + (cur.name ? cur.name + ' - ' : '') + 'ShotRef'); } catch (e) { console.error('ShotRef: could not set the window title', e); }
 }
 const errText = e => (e && (e.message || e.error)) || String(e || 'unknown error');
@@ -97,9 +98,11 @@ export const platform = {
   /* Open / New / starters: a new document with no file yet */
   startDoc() { cur.doc = ++docSeq; setFile(null, null); },
   /* undo/redo moved to a step that belongs to another file (or none) */
-  restoreDoc(id) { const d = docs[id]; if (!d) return; cur.doc = id; cur.name = d.name; cur.path = d.path; updateTitle(); },
+  restoreDoc(id) { const d = docs[id]; if (!d || held) return; cur.doc = id; cur.name = d.name; cur.path = d.path; updateTitle(); },
   isDirty: () => cur.dirty,
-  setDirty(d) { d = !!d; if (d) cur.rev++; if (cur.dirty !== d) { cur.dirty = d; updateTitle(); } },
+  /* while the practice stage shows, edits must not change the unsaved mark or the title (main.js enterPractice / leavePractice) */
+  hold(on) { held = !!on; },
+  setDirty(d) { if (held) return; d = !!d; if (d) cur.rev++; if (cur.dirty !== d) { cur.dirty = d; updateTitle(); } },
   /* a project was opened from a file (name/path may be missing, e.g. drag-drop has no path) */
   setCurrent(name, path) { setFile(name, path); cur.dirty = false; updateTitle(); },
   /* a new, unsaved project: forget the file */

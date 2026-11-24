@@ -6,16 +6,16 @@ Read this before doing anything. Claude updates it at the end of every session.
 A "very dumbed-down Blender" in one offline HTML file: block people and props, move the camera, export reference clips and frames for AI video models.
 
 ## Current state            (rewritten every session, 15 lines max)
-Works:   ShotRef 1.2.0 = the claude.ai version's features (artifact 6uRy4QMBjvK9Rn5PLedSUq) rebuilt into this code, plus all earlier fixes, branding and the desktop app.
-         Right-click menus, double-click lens focus, Build/Frame/Export steps, takes + compare, shots + shot bar, Export panel + AI prompt, frame pack, contact sheet,
-         multi-select/lock/groups, people (body types, eyeline, sitting, actions), parenting/ground/camera mount, camera tabs, light/sun, My sets, Recent projects, Settings, split view.
-Builds:  dist/ShotRef.html (1.0 MB). Windows: release/ShotRef-Setup-1.2.0.exe (122 MB), release/ShotRef-1.2.0-portable.exe (111 MB), unsigned.
-Tests:   npm test 266/266 (~8 min, includes the new View-row check), npm run test:desktop 21/21 (7 new update checks). Final whole-port review: Ready.
-Code:    PUBLIC GitHub https://github.com/alistotleLB/ShotRef (main), MIT. Release v1.2.0 published 2026-11-24 (README, docs/GUIDE.md, screenshots in docs/img).
-Updates: desktop app 1.3.0 (built, NOT yet released) checks GitHub Releases (electron/updater.cjs); ship with `npm run dist:win` then `npm run publish:win`.
-Known:   walking feet slide slightly at heel strike (same in the claude.ai version). Minor parity leftovers listed in docs/plans (toolbar order, Add tab order, hint wording).
-Next:    Ali runs checklist C3 (replaces C1 and C2). Then: installable web app + website.
-Not yet tried by Ali: everything since 2026-11-22.
+Works:   everything from 1.2.0/1.3.x (see Log) plus NEW onboarding tours on branch feature/onboarding-tour (not merged, not released):
+         first-run question "Take a look round the set?", quick tour (10 stops), hands-on tour (16 stops) on a practice stage that
+         puts your scene back exactly, Help menu items (gear menu Help heading + Windows Help menu), buttons on the Quick start page.
+Builds:  dist/ShotRef.html 1034 KB (built 2026-11-24 from 95456cc). No new installers built for the tours.
+Tests:   npm test 317/317 (640 s), npm run test:desktop 23/23, 0 Electron processes left. Final whole-branch review: approved after one fix wave.
+Code:    PUBLIC GitHub https://github.com/alistotleLB/ShotRef. Branch feature/onboarding-tour pushed once (3 commits); 9 newer commits only local.
+         PR #1 was opened by mistake and closed (reopen when Ali wants the merge).
+Known:   walking feet slide slightly at heel strike. Tour leftovers parked (see Handoff OPEN).
+Next:    Ali runs checklist C4 (the tours). Then: merge to main, push, release. C3 still waiting too.
+Not yet tried by Ali: the tours; everything since 2026-11-22.
 
 ## Ali's goals              (his exact words, dated; never reworded)
 "Act as a principal software engineer leading a review of my application. Inspect the actual code, run the app and safe checks where possible, and give me a prioritized plan covering architecture, bugs and reliability, performance, and UI/UX." - Ali, 2026-11-22
@@ -69,6 +69,8 @@ Storage: build output in `dist/` (git-ignored).
 | Ali's own check | checklist C1 | all items OK | Ali | not run |
 | Desktop checks | `npm run test:desktop` | all pass | Claude | PASS 2026-11-23 (13/13) |
 | Ali's desktop check | checklist C2 | all items OK | Ali | not run |
+| Tours: smoke + desktop | `npm test`, `npm run test:desktop` | all pass | Claude | PASS 2026-11-24 (317/317, 23/23) |
+| Ali's tour check | checklist C4 | all items OK | Ali | not run |
 
 ### Known failures
 - None (2026-11-23). Parked: storage probe treats a completely full localStorage as "no storage" for that session.
@@ -80,6 +82,7 @@ Storage: build output in `dist/` (git-ignored).
 - C1: build dist/ShotRef.html of 2026-11-23. Steps in the Handoff section. Result: (waiting)
 - C2: Windows app 1.1.0. Superseded by C3 (never run).
 - C3: ShotRef 1.2.0 web + Windows. Steps in the Handoff section. Result: (waiting)
+- C4: onboarding tours, dist/ShotRef.html from branch feature/onboarding-tour (95456cc). Steps in the Handoff section. Result: (waiting)
 
 ## Ali's notes               (every request/feedback, word for word)
 | Id | Date | Ali's words | Status |
@@ -95,10 +98,13 @@ Storage: build output in `dist/` (git-ignored).
 | N-008 | 2026-11-24 | "Can you publish the latest release on github, along with proper basic documentation, and screenshots. Make it read to attract users." | done 2026-11-24 (repo public, MIT, v1.2.0; unsigned: Ali chose to publish anyway) |
 | N-009 | 2026-11-24 | "Please add an update mechanism to the desktop app so I'm able to update the app whenever a make changes to the github." | built 2026-11-24 as 1.3.0, awaiting release + Ali's try-out (guessed: electron-updater, ask-before-download, Help menu check + auto-check switch, portable only opens the download page) |
 | N-010 | 2026-11-24 | (screenshot with arrow) "Move these buttons as pet the arrow, and give them a title of \"View\" .. In their place, add a \"Camera Settings\" button..." then "skip the camera settings button for now" (the Frame step already opens that panel) | done 2026-11-24 (Editor/Top/Camera + split moved to a centred View group in the Shots row; not released yet) |
+| N-011 | 2026-11-24 | "add: onboarding tour. Basic onboaring, and advanced interactive onboarding." then "Let's start with the onboarding process. Give me a clear plan before execution. I want you to orchestrate the development across Opus and Sonnet helpers. Use project keeper, and use all helpful skills for this tast." Answers: "Let's stop at \"they know where things are\"", "A: spotlight engine", "make sure to use UI/UX design skills", "Practice stage", then "Approved, but take these points into consideration: 1) On first run only, ask the user is they would like to take the tour. Mention that the tour can be taken later through the Help menu. 2) Use a copywriting specialized helper to write the content of the tour in an engaging and easy language." | built 2026-11-24 on branch feature/onboarding-tour, awaiting C4 (design docs/superpowers/specs/2026-11-24-onboarding-tour-design.md); guessed: "Help menu" = desktop Help menu + a Help heading in the gear menu |
+| N-012 | 2026-11-24 | "I didn't like the long tour, it needs a lot of improvement, is there a way to keep the code, but disable the feature for now until we improve it?" | done 2026-11-24 (hands-on tour switched off: all entry points hidden, code and tests kept; quick tour stays; guessed: "the long tour" = the hands-on tour) |
 | N-007 | 2026-11-23 | "dont forget to orchestrate the tasks across Opus and Sonnet for maximum efficiency" | done (Sonnet built, Opus reviewed, medium effort) |
 
 ### Approved and locked     (changing these needs Ali's yes)
 - 2026-11-22 "Approve all": every item in the review checklist, including adding playwright-core as a dev-only test tool.
+- 2026-11-24 "Approved, but take these points into consideration": onboarding tour design (docs/superpowers/specs/2026-11-24-onboarding-tour-design.md), including the practice stage and the first-run question.
 
 ## Lessons
 - The claude.ai artifact was edited in another conversation and drifted far ahead of this folder; the desktop app was built from the old code / cause: two copies of the app with no shared source / rule: this folder (GitHub) is the only source; never publish or edit ShotRef on claude.ai without building it from here, and republish from dist/ after changes.
@@ -123,22 +129,27 @@ Not verified: the real claude.ai frame (downloads, clipboard), a normal non-head
 Proposed order: Step 0 backup + smoke test (needs OK) -> quick wins -> A1, then A2+S2 -> design/measure items -> optional tidy-ups.
 
 ## Handoff                   (replaced each session)
-STATE     ShotRef 1.2.0: claude.ai features rebuilt here; web + Windows builds; 265 web + 14 desktop checks pass; final review Ready.
-CHANGED   9 port batches (docs/plans/2026-11-23-port-plan.md, port-inventory.md). Rulings: opening/restoring never moves or changes anything (raised items become "Can float"); old files keep their blur/shadow look; with 2+ shots a length change re-times only that shot's camera; unreadable takes/sets kept byte-exact; recents never on the edit path; IndexedDB v2 (assets + projects).
-OPEN      claude.ai artifact 6uRy4QMBjvK9Rn5PLedSUq republished 2026-11-24 from this build (v1.2.0). How: dist/ShotRef.html with the old page's <script>window.__SHOTREF_EMBED__=...</script> (Desert overlook demo, from reference/artifact.html) inserted before the app script; publish to the same URL. Foot slide polish. Code signing. Auto-update. Web app install + website.
-FINDINGS  reference/ (git-ignored) holds the artifact build used for the port.
-NEXT      Ali runs C3:
-          Build: release/ShotRef-Setup-1.2.0.exe (or portable), and dist/ShotRef.html in Chrome/Edge.
-          1. Open a project you made on claude.ai (Save it there first) -> everything looks the same: people, cars, shots, takes.
-          2. Right-click a person, a prop, the floor and the camera -> the same menus as on claude.ai.
-          3. Double-click a person -> the lens focuses on them (depth of field on).
-          4. Shift-click two items, Ctrl+G, drag -> they move together; Ctrl+L locks one.
-          5. Drag a person onto a chair -> they sit; drag away -> they stand.
-          6. Add a shot (+ New shot), switch between shots -> each keeps its own camera move.
-          7. Take menu -> New take, change something, Compare takes -> side by side.
-          8. Export step -> Frame pack (zip) and Render video -> files open.
-          9. Desktop: Ctrl+S saves to the same file; close with changes -> it asks.
-          10. Reopen the app -> File > Open shows your recent projects.
+STATE     Onboarding tours built on branch feature/onboarding-tour (12 commits on top of c079a82), all reviewed; 317/317 web, 23/23 desktop.
+CHANGED   src/tour.js (spotlight engine: orange viewfinder corners, bubble, camera-path progress, keyboard, pauses while a dialog is open),
+          src/tour-copy.js (all tour words; copywriter helper + controller edits), src/main.js (BASIC_STOPS, handsStops(), startTour, first-run #mTour,
+          practice stage enterPractice/leavePractice/endPracticeFirst, guards on autosave/recents/platform.hold), electron/main.cjs (Help menu items),
+          docs (GUIDE "Tours", README line, CLAUDE.md). Design: docs/superpowers/specs/2026-11-24-onboarding-tour-design.md; plan: docs/superpowers/plans/2026-11-24-onboarding-tour.md.
+TESTS     npm test 317/317 (640 s) and test:desktop 23/23 on a build newer than the last commit, run by Claude 2026-11-24.
+OPEN      Parked minors: refusal toast is generic during the brief boot photo load; after a dialog closes mid-tour, keyboard focus is on the page not the bubble;
+          a photo decode can flash on the practice stage for one frame; drop test doesn't assert the image; one timing check allows 1.2 s.
+          Not merged, not pushed since the first 3 commits, not released. Unsigned builds as before.
+FINDINGS  Review rounds found 2 work-loss races (see Lessons) and a dialog-under-tour bug; all fixed with tests.
+NEXT      Ali runs C4:
+          Build: dist/ShotRef.html (open in Edge or Chrome). For a true first run use a fresh browser profile or an InPrivate window.
+          1. Open it in an InPrivate window -> "Take a look round the set?" appears before the starter sets.
+          2. Click Take the quick tour -> orange corners frame each part; Next, Back and End tour work; at the end the starter sets open.
+          3. Reload -> the question does not appear again.
+          4. Make a small scene (a person and a chair), then gear menu > Try it hands-on -> an empty practice stage appears.
+          5. Do each step it asks (place, drag, right-click, Top, Camera, double-click, Play, Export) -> each shows a tick and moves on.
+          6. Press ? during the hands-on tour -> Quick start opens on top and can be closed; the tour carries on.
+          7. Press End tour -> your person and chair are back exactly as they were.
+          8. Windows app (npm run desktop): Help menu -> Take the quick tour and Try it hands-on both work.
+          9. Read the tour wording as you go -> tell me any line you would change.
           Reply with the numbers that didn't work, and what you saw.
 
 ## Log                       (append only, dated, real numbers; always last)
@@ -153,3 +164,4 @@ NEXT      Ali runs C3:
 - 2026-11-24 repo made public (MIT), release v1.2.0 with installer, portable exe and ShotRef.html; README + user guide + 6 screenshots. Ali chose to publish unsigned.
 - 2026-11-24 update mechanism: electron-updater ^6.8 (only runtime dependency; three and mp4-muxer moved to devDependencies), electron/updater.cjs, Help menu items, scripts/publish-release.mjs, version 1.3.0. test:desktop 21/21. Packaged app launched and reached GitHub (404 on v1.2.0: no latest.yml yet, handled silently). Not tested: quitAndInstall (the install step) and a real update from an installed copy: needs 1.3.0 released, installed, then a later release.
 - 2026-11-24 View buttons moved from the top bar into a centred "View" group in the Shots row (#shotRow: chips | View | contact sheet). Top bar is now two equal halves so the step bar stays centred (#top .topL/.topR). Found by tests and a screenshot: step bar off-centre, row 1 px too tall, and a stray "null" text. npm test 266/266, test:desktop 21/21. Docs and 6 README screenshots retaken. Not released (version still 1.3.0).
+- 2026-11-24 onboarding tours (N-011): design approved, 6-task plan, built by Sonnet helpers (copywriter + 5 builders), each task reviewed by Opus; 4 fix rounds + 1 final fix wave. Reviews caught 2 work-loss races and a dialog-under-tour bug. npm test 317/317 (640 s), test:desktop 23/23. Build 1034 KB. Branch feature/onboarding-tour, not merged. PR #1 opened by mistake and closed.

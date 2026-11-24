@@ -6,12 +6,17 @@ import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
 import { normalizeProject, FORMAT_VERSION, describeChange } from './project.js';
 import * as K from './keys.js';
 import { platform } from './platform.js';
+import { runTour, tourActive, tourTick } from './tour.js';
+import { TOUR_COPY } from './tour-copy.js';
 
 /* ---- shared values: every module-level `let`, what it holds, and what changes it ----
  * state, assets                  the project and its photos/models: restore, buildState, replaceProject, boot
  * T, playing, view, selected,  playhead: setTime; playing: setPlaying; view: setView; selected ('camera', 'target', 'sun' or an object id), selIds: select, sanitizeSel; pipOn: #bPip;
  *   pipOn, editRev, ...Dirty     editRev counts edits: changed, quietChange; uiDirty/propsDirty ask frame() to rebuild lists/panel
- * hist, hi                       undo snapshots and position: pushHistory, undo, redo, replaceProject
+ * hist, hi                       undo snapshots and position: pushHistory, undo, redo, replaceProject, enterPractice/leavePractice
+ * tourHandle, tourAsk              the running tour's handle (null when none), and the first-run question is open: runStops, startTour, tourFromDialog, closeModal
+ * focusPicks                     how many times the lens was focused (the hands-on tour waits for a new one): the focus pick, the menu
+ * practicing                     null, or the user's own scene set aside in memory while the hands-on tour's practice stage shows: enterPractice, leavePractice
  * snapPool, snapById, snapLive   the take copies the undo steps refer to, and how many are in use: snapRef, pruneSnapPool
  * cmp, cmpBusy                   the Compare takes dialog's frames and playhead, and whether it is rendering: openCompare, renderCompare
  * toastTimer                   toast hide timer: toast (downloads capability and the open file/unsaved mark live in platform.js)
@@ -385,6 +390,7 @@ function setMount(id) {
 
 /* ---- history ---- */
 let hist = [], hi = -1;
+let practicing = null; /* the set-aside real scene while the practice stage shows. While it is set nothing is written (autosave, Recent, unsaved mark, title): see enterPractice */
 let histDoc = []; /* the document id of each history step (platform.js maps it to the file), so undo across an Open can't make Save overwrite that file */
 /* Takes keep a full copy of the scene in take.snap (a JSON string) for every take that is not the one on screen. An undo step must not
    hold those copies again and again, so a step stores a short reference ("@3") and the text itself lives once in snapPool. A step
@@ -429,6 +435,10 @@ function pushHistory() {
 function changed(commit, props = false) { editRev++; uiDirty = true; if (props) propsDirty = true; if (commit) { groundDirty = true; pushHistory(); markRecentDirty(); } } /* a real edit: things settle once it is over */
 function restore(s) {
   state = parseStep(s);
+  showState();
+}
+/* show the scene in `state` (the scene helpers read it) */
+function showState() {
   sanitizeSel();
   syncScene(); applyEnv(); editRev++; uiDirty = true; propsDirty = true; updateGizmo(); syncTopUI();
 }
@@ -538,12 +548,13 @@ function idbLoad(ids) {
    same transaction (another tab may have changed the store), so only missing files are written.
    Queued so writes never overlap. */
 function idbSync(ids) {
+  const src = assets; /* the files as they are now: the queue runs later, maybe while the practice stage has swapped `assets` */
   idb.queue = idb.queue.then(() => idbTx('readwrite', st => {
     const k = st.getAllKeys();
     k.onsuccess = () => {
       try {
         const have = new Set(k.result.map(String));
-        for (const id of ids) if (!have.has(id) && assets[id]) st.put(assets[id], id);
+        for (const id of ids) if (!have.has(id) && src[id]) st.put(src[id], id);
         if (!idb.noPrune) for (const id of have) if (!ids.includes(id) && !idb.keep.has(id)) st.delete(id);
       } catch (e) { idb.lastErr = e; console.error('ShotRef: could not autosave photos and models', e); try { k.transaction.abort(); } catch (e2) { } }
     };
@@ -557,6 +568,7 @@ let autosaveReady = false; /* false until boot has fetched the stored assets: sa
 /* writes the localStorage part now; in IndexedDB mode also queues the asset write */
 let autosaveWaiting = false;
 function writeAutosave() {
+  if (practicing) return; /* the practice stage is never stored; the real scene's last autosave is what a reload reopens */
   if (autosaveOff || swapping) return;
   if (!autosaveReady) { autosaveWaiting = true; return; }
   const ids = [...usedAssetIds(state)].filter(id => assets[id]);
@@ -579,12 +591,13 @@ function writeAutosave() {
 let inlineTooBig = null;
 let saveTimer = null;
 function autosave() {
+  if (practicing) return; /* never written during practice; leavePractice runs it again */
   clearTimeout(saveTimer);
   if (!pref('autosave')) { saveTimer = null; return; } /* Settings: autosave off */
   saveTimer = setTimeout(() => { saveTimer = null; writeAutosave(); }, 400);
 }
 /* write a pending autosave straight away (page closing) */
-function flushAutosave() { if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; writeAutosave(); } }
+function flushAutosave() { if (practicing) return; if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; writeAutosave(); } }
 
 /* ============================== three.js setup ============================== */
 const canvas = $('#c');
@@ -1833,6 +1846,7 @@ function frame(now) {
   const dt = Math.min(0.1, (now - lastNow) / 1000); lastNow = now;
   if (exporting) { wasExporting = true; return; } // the export owns the scene and the renderers until it finishes
   if (wasExporting) { wasExporting = false; needsRender = true; }
+  if (tourActive()) tourTick();
   if (rec && rec.phase === 'count') { const left = Math.ceil((rec.until - now) / 1000); $('#countdown').textContent = left > 0 ? left : ''; if (now >= rec.until) { rec.phase = 'rec'; setTime(0, false); setPlaying(true); $('#countdown').textContent = ''; recSample(); showModeBar('● Recording. Steer the camera until the shot ends.', [['Cancel', cancelRecord]]); } }
   if (playing) {
     setTime(T + dt, false);
@@ -2844,6 +2858,9 @@ function gearMenuItems() {
     { id: 'ground', label: 'Keep things on the ground', check: groundOn(), fn: () => setGround(!groundOn()) }, /* the same switch as in Settings */
     { id: 'settings', label: 'Settings\u2026', fn: openSettings },
     '-',
+    { head: TOUR_COPY.menu.heading },
+    { id: 'tour-basic', label: TOUR_COPY.menu.quick, check: !!getPref('tourBasicDone', false), fn: () => startTour('basic') },
+    ...(handsTourOn() ? [{ id: 'tour-hands', label: TOUR_COPY.menu.hands, check: !!getPref('tourHandsDone', false), fn: () => startTour('hands') }] : []),
     { id: 'help', label: 'Quick start and shortcuts', fn: () => openModal('mHelp'), key: '?' },
     { id: 'about', label: 'About ShotRef', fn: () => { const v = platform.version || APP_VERSION; $('#aboutVer').textContent = v ? 'Version ' + v : ''; openModal('mAbout'); } }];
 }
@@ -2884,7 +2901,7 @@ function focusLensAt(pt, name) {
   if (d < 0.1) { toast(name + ' is behind the camera'); return; }
   const dof = ensureDof(), wasOff = !dof.on, keyed = state.camera.keys.length > 0;
   dof.on = true; dof.auto = false;
-  writeCam({ fd: d }, true); propsDirty = true;
+  writeCam({ fd: d }, true); propsDirty = true; focusPicks++;
   toast(`Focus on ${name} (${d.toFixed(2)} m)` + (wasOff ? '. Depth of field is now on' : '') + (keyed ? `. Keyed at ${snapT(T).toFixed(2)} s: double-click something else later in the shot to pull focus` : ''), 4200);
 }
 function mountCamera(id) {
@@ -3486,6 +3503,7 @@ function setSimple(v) {
 
 /* ============================== commands ============================== */
 let focusPick = false;
+let focusPicks = 0; /* how many times the lens was focused on something (double-click, the menu, a pick): the hands-on tour waits for a new one */
 function startFocusPick() {
   ensureDof().on = true;
   if (view !== 'camera' && !splitOn()) setView('camera');
@@ -3501,7 +3519,7 @@ function finishFocusPick(rc) {
   const fwd = new THREE.Vector3(); renderCam.getWorldDirection(fwd);
   const d = hit.point.clone().sub(renderCam.position).dot(fwd);
   ensureDof().auto = false;
-  writeCam({ fd: d }, true); propsDirty = true;
+  writeCam({ fd: d }, true); propsDirty = true; focusPicks++;
   toast('Focus set to ' + d.toFixed(2) + ' m');
 }
 let lastWorkView = 'editor';
@@ -3615,6 +3633,7 @@ const STARTERS = [
   ['marks', 'Blocking practice', 'One person and floor marks A, B and C.'],
 ];
 function openStarters(firstLaunch = false) {
+  if (practicing) return endPracticeFirst(() => openStarters(firstLaunch));
   const g = $('#startGrid'); g.innerHTML = '';
   /* first launch doubles as the welcome screen (branding/BRAND.md) */
   $('#startHead').style.display = firstLaunch ? '' : 'none';
@@ -3638,6 +3657,8 @@ function buildState(fill) {
 /* The one way to swap the whole scene. Keeps undo (pushes a step) and keeps old files in memory so undo can rebuild them.
    On any error the previous scene is put back and the error is rethrown. */
 function replaceProject(newState, newAssets = {}, label) {
+  if (tourHandle) { try { tourHandle.end('external'); } catch (e) { console.error('ShotRef: the tour did not end cleanly', e); } } /* a quick tour is looking at the scene being swapped; the hands-on one also leaves practice here */
+  if (practicing) endPracticeFirst(() => {}); /* every caller asks first; this keeps a missed one from mixing the two scenes */
   recentFlush(); /* the project being left, if it has edits the list does not have */
   snapHold = true;
   const prev = { state, assets, selected, selIds: selIds.slice(), T, hist: hist.slice(), histDoc: histDoc.slice(), doc: platform.getDoc(), hi };
@@ -3742,6 +3763,7 @@ function resetEditorCam() { edCam.position.set(7, 5, 10); edControls.target.set(
 /* Save (or Save as). On the web both download a new file; the desktop app writes back to the open file unless saveAs. */
 let saving = false;
 async function saveProject(saveAs = false) {
+  if (practicing) return endPracticeFirst(() => saveProject(saveAs));
   if (saving) return { ok: false, busy: true };
   saving = true;
   try { return await doSaveProject(saveAs); } finally { saving = false; }
@@ -3773,6 +3795,7 @@ const BAD_FILE = "This isn't a ShotRef project, or the file is damaged.";
    `file` is { name, path } when the desktop app knows where it came from. */
 let launchFile = false; /* a file came from the desktop shell (launch, double-click, Recent): the starter sets must not open over it */
 function loadProjectText(txt, file, fromShell = false, unsaved = false) {
+  if (practicing) return endPracticeFirst(() => loadProjectText(txt, file, fromShell, unsaved)); /* Open, Recent, a dropped file, a file from Windows */
   if (exporting) { toast('Wait for the export to finish.'); return; }
   let d;
   try { d = normalizeProject(JSON.parse(txt), projectDefaults()); }
@@ -4138,6 +4161,7 @@ function zipStore(files) {
 }
 /* the page is locked (as during a video export) while frames are being made, and always unlocked afterwards */
 async function whileLocked(fn) {
+  if (practicing) return endPracticeFirst(() => whileLocked(fn));
   exporting = true; setExportLock(true);
   try { return await fn(); } finally { exporting = false; setExportLock(false); requestRender(); }
 }
@@ -4210,6 +4234,7 @@ async function buildContactSheet() {
 }
 /* a video for every shot in turn, in one go: the page stays locked between them */
 async function exportAllShots() {
+  if (practicing) return endPracticeFirst(exportAllShots);
   if (exporting) return;
   const list = ensureShots().slice(); syncShot();
   const keepId = state.shotId, keepT = T;
@@ -4341,6 +4366,7 @@ function takeMenuItems() {
 let cmp = null, cmpBusy = false, cmpStop = false, swapping = false; /* swapping: another take's scene is on screen for a moment, so nothing may be autosaved */
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 function openCompare() {
+  if (practicing) return endPracticeFirst(openCompare);
   if (exporting) { toast('Wait for the export to finish.'); return; }
   const ok2 = hasTakes() ? state.takes.filter(takeReadable) : [];
   if (ok2.length < 2) { toast('Make a second take first: Take menu → New take'); return; }
@@ -4448,6 +4474,7 @@ const nameFrom = parts => [pref('filePrefix'), ...parts, pref('dateStamp') ? sta
 const outName = (...parts) => nameFrom([shotName(), ...parts]);
 const stamp = () => { const d = new Date(); const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`; };
 async function exportPNG(t, label) {
+  if (practicing) return endPracticeFirst(() => exportPNG(t, label));
   if (exporting) { toast('Wait for the export to finish.'); return false; }
   const { w, h: hh } = exportSize();
   let blob = null;
@@ -4512,6 +4539,7 @@ function setExportLock(on) {
 }
 function exProgressRaw(frac, txt) { $('#exBar').style.width = (frac * 100).toFixed(1) + '%'; $('#exTxt').textContent = txt; }
 async function exportVideo(opts = {}) {
+  if (practicing) return endPracticeFirst(() => exportVideo(opts));
   if (exporting) return false;
   exporting = true; exCancel = false;
   let done = false; const pre = opts.label ? opts.label + ' · ' : '';
@@ -4600,6 +4628,205 @@ function renderExportDialog() {
   if (exporting) setExportLock(true);
 }
 
+/* ============================== practice stage ============================== */
+/* The hands-on tour runs on an empty stage. enterPractice sets the user's scene aside in memory (the same fields replaceProject keeps for its
+   error path, as they are: no JSON round trip, so nothing is re-normalised) and shows a fresh empty scene with an undo history of its own.
+   While `practicing` is set nothing is written: autosave (so a reload reopens the real scene), the Recent list, the unsaved mark and the window
+   title (platform.hold). leavePractice is the only way back, safe to call twice: Finish, End tour, Esc and every action that would touch the
+   real scene (Open, New, Save, a dropped file, an export, closing the desktop window...) end up there through endPracticeFirst. */
+/* force skips the boot-load check: for the smoke test only */
+function enterPractice(force) {
+  if (practicing || (!autosaveReady && force !== true) || saving || exporting || rec || placing || pathMode || openModals().length) return false;
+  let stage;
+  try { stage = buildState(() => fillStarter('empty')); }
+  catch (e) { console.error('ShotRef: could not make the practice stage', e); return false; }
+  flushAutosave(); /* the real scene's pending autosave goes out now: a reload during practice reopens it */
+  if (menuOpen()) hideMenu();
+  focusPick = false; canvas.style.cursor = ''; setPlaying(false);
+  const lt = $('#leftTabs .on');
+  practicing = {
+    state, assets, selected, selIds: selIds.slice(), T, hist: hist.slice(), histDoc: histDoc.slice(), hi, doc: platform.getDoc(),
+    view, lastWorkView, layout, leftTab: lt ? lt.dataset.lt : 'add', promptEdit, shotEditId, snapHold, groundDirty, groundMigrate: [...groundMigrate],
+    ed: { p: edCam.position.clone(), tg: edControls.target.clone() },
+    top: { init: topInit, p: topCam.position.clone(), zoom: topCam.zoom, tg: topControls.target.clone() },
+  };
+  platform.hold(true);
+  snapHold = true; /* the undo pool must keep the real history's take copies: the practice history refers to none of them */
+  try {
+    state = stage; assets = {}; selected = null; selIds = []; promptEdit = null; shotEditId = null; setTime(0);
+    groundDirty = false; groundMigrate.clear();
+    hist = [snapshot()]; histDoc = [practicing.doc]; hi = 0; /* undo stops here */
+    resetEditorCam(); topInit = false;
+    setLeftTab('add', false); setView('editor');
+    showState(); requestRender();
+  } catch (e) { console.error('ShotRef: could not show the practice stage', e); leavePractice(); return false; }
+  return true;
+}
+/* Puts the real scene back exactly. Returns true when it restored something. */
+function leavePractice() {
+  const p = practicing;
+  if (!p) return false;
+  /* whatever the practice stage had under way points at its own objects */
+  try { if (placing) cancelPlacing(); if (pathMode) cancelPath(); if (rec) cancelRecord(); } catch (e) { console.error('ShotRef: could not cancel the practice edit', e); }
+  focusPick = false; canvas.style.cursor = ''; if (menuOpen()) hideMenu(); setPlaying(false);
+  practicing = null; platform.hold(false);
+  state = p.state; assets = p.assets; selected = p.selected; selIds = p.selIds; promptEdit = p.promptEdit; shotEditId = p.shotEditId; setTime(p.T);
+  hist = p.hist; histDoc = p.histDoc; hi = p.hi; snapHold = p.snapHold;
+  groundDirty = p.groundDirty; groundMigrate.clear(); for (const id of p.groundMigrate) groundMigrate.add(id);
+  edCam.position.copy(p.ed.p); edControls.target.copy(p.ed.tg);
+  topInit = p.top.init; topCam.position.copy(p.top.p); topCam.zoom = p.top.zoom; topCam.updateProjectionMatrix(); topControls.target.copy(p.top.tg);
+  platform.restoreDoc(p.doc);
+  try {
+    if (layout !== p.layout) setLayout(p.layout, false);
+    setView(p.view); lastWorkView = p.lastWorkView; setLeftTab(p.leftTab, false);
+    showState();
+  } catch (e) { console.error('ShotRef: could not show the real scene again', e); }
+  if (snapLive > snapPruneAt) pruneSnapPool();
+  autosave(); /* always: a write asked for before or during practice may not have run or may have missed files */
+  requestRender();
+  return true;
+}
+/* Runs `go` once the real scene is back. Every action that reads or replaces the scene starts with this. */
+function endPracticeFirst(go) {
+  if (practicing) {
+    if (tourHandle) { try { tourHandle.end('external'); } catch (e) { console.error('ShotRef: the tour did not end cleanly', e); } } /* its own end calls leavePractice */
+    leavePractice();
+  }
+  return go();
+}
+
+/* ============================== tour ============================== */
+let tourHandle = null;
+/* Runs a list of stops (see src/tour.js for the stop shape). Returns null, with a toast, while an export runs or a dialog is open. */
+function runStops(stops, opts = {}) {
+  if (exporting) { toast('Wait for the export to finish.'); return null; }
+  if (openModals().length) { toast('Close the open window first.'); return null; }
+  const { onEnd, canKey, ui, interactive } = opts;
+  /* Esc goes to the app first when it has something to cancel */
+  const appCanEsc = e => e.key === 'Escape' && (openModals().length > 0 || menuOpen() || !!rec || !!placing || !!pathMode || focusPick || (canKey ? canKey(e) : false));
+  tourHandle = runTour({ stops, ui: ui || TOUR_COPY.ui, interactive: !!interactive, canKey: appCanEsc, paused: () => openModals().length > 0, onEnd: reason => { tourHandle = null; requestRender(); if (onEnd) onEnd(reason); } });
+  requestRender();
+  return tourHandle;
+}
+/* The quick tour: look, no touching. The set-up hooks only switch what is shown (the left tab); they never edit the scene. */
+const BASIC_STOPS = [
+  ['b-welcome', null],
+  ['b-steps', '#stepSeg'],
+  ['b-add', '#left', () => setLeftTab('add', false)],
+  ['b-picture', '#vp'],
+  ['b-view', '#viewGrp'],
+  ['b-panel', '#right'],
+  ['b-timeline', '#tl'],
+  ['b-file', '#bFile'],
+  ['b-gear', '#bMenu'],
+  ['b-bye', null],
+];
+/* The hands-on tour is switched off for now (Ali, 2026-11-24: it needs more work). Its code and tests stay; every way a user could start it is hidden
+   (first-run button, gear menu item, Quick start button; the desktop Help item is hidden in electron/main.cjs). Turn it back on with the hidden pref
+   handsTour = true, or HANDS_TOUR_DEFAULT below. While it is off, the copy that talks about two tours uses its one-tour wording (textSolo / bodySolo). */
+const HANDS_TOUR_DEFAULT = false;
+const handsTourOn = () => !!getPref('handsTour', HANDS_TOUR_DEFAULT);
+const basicStops = () => BASIC_STOPS.map(([id, target, before]) => {
+  const c = TOUR_COPY.basic[id];
+  return { id, target, before, title: c.title, text: !handsTourOn() && c.textSolo ? c.textSolo : c.text };
+});
+/* The hands-on tour: each "try" stop waits for a change made through the real UI, on the practice stage (enterPractice). snap() records what its waitFor
+   compares against when the stop begins, so something already true never skips a stop. before() puts the screen where the stop needs it (these view, step
+   and tab changes are not undo steps); keep() lets a key that moved the screen away (T on the camera bar) bring it back on the next tick. */
+function handsStops() {
+  let placed = null, framed = false; /* this run's person (the one h-place made) and whether the lens stop has framed them yet */
+  const H = TOUR_COPY.hands, copy = id => ({ id, title: H[id].title, text: H[id].text, done: H[id].done });
+  const personId = () => { if (placed && getObj(placed)) return placed; const q = persons()[0]; return q ? q.id : null; };
+  const needPerson = () => personId() || addPerson('man', false).id; /* skipped h-place: one normal add (a practice edit) so the stops still work */
+  const camView = () => { if (view !== 'camera') setView('camera'); };
+  const tabNow = () => { const b = $('#leftTabs .on'); return b ? b.dataset.lt : 'add'; };
+  const personPosOf = id => { const o = getObj(id); return o ? evalObj(o, T).p.map(v => v.toFixed(4)).join() : ''; };
+  const personPos = () => personPosOf(personId());
+  return [
+    { ...copy('h-welcome'), target: null },
+    { ...copy('h-build'), target: '#stepSeg', before: () => goStep('frame'), snap: currentStep, waitFor: s => currentStep() === 'build' && currentStep() !== s },
+    { ...copy('h-place'), target: ['#left', '#vp'], corner: 'tr', before: () => goStep('build'), snap: () => persons().length,
+      waitFor: n => !placing && persons().length > n && (placed = persons()[persons().length - 1].id) !== null },
+    { ...copy('h-drag'), target: '#vp', before: () => { goStep('build'); select(needPerson()); }, snap: () => { const id = personId(); return { id, pos: personPos() }; }, waitFor: s => !!s.id && !!getObj(s.id) && !dragActive && personPosOf(s.id) !== s.pos },
+    { ...copy('h-rightclick'), target: '#vp', before: () => { if (view === 'camera') setView(lastWorkView); hideMenu(); }, waitFor: () => menuOpen() },
+    { ...copy('h-scenetab'), target: '#leftTabs [data-lt=scene]', before: () => setLeftTab('add', false), snap: tabNow, waitFor: s => tabNow() === 'scene' && s !== 'scene' },
+    { ...copy('h-top'), target: '#viewSeg [data-v=top]', before: () => { if (view === 'top') setView('editor'); }, snap: () => view, waitFor: s => view === 'top' && s !== 'top' },
+    { ...copy('h-camera'), target: '#viewSeg [data-v=camera]', before: () => { if (view === 'camera') setView('editor'); }, snap: () => view, waitFor: s => view === 'camera' && s !== 'camera' },
+    { ...copy('h-cambar'), target: '#camBar', before: camView, keep: () => view === 'camera' },
+    { ...copy('h-focus'), target: '#vp', keep: () => view === 'camera', snap: () => focusPicks, waitFor: n => focusPicks > n,
+      before: () => { const id = needPerson(); camView(); select(id); if (!framed) { framed = true; frameShot('medium', id); } } },
+    { ...copy('h-play'), target: '#bPlay', before: () => { if (playing) setPlaying(false); }, snap: () => playing, waitFor: s => playing && !s },
+    { ...copy('h-key'), target: '#bKey', before: () => { if (playing) setPlaying(false); } },
+    { ...copy('h-shots'), target: '#shotBar' },
+    { ...copy('h-take'), target: '#bTake' },
+    { ...copy('h-gear'), target: '#bMenu' },
+    { ...copy('h-export'), target: '#bExport', before: () => { if (currentStep() === 'export') goStep('build'); }, snap: currentStep, waitFor: s => currentStep() === 'export' && s !== 'export' },
+  ];
+}
+/* the toast for a hands-on tour that cannot start: the same two lines as the quick tour, else (placing, recording, a path, a save) a plain one */
+const tourRefusal = () => exporting ? 'Wait for the export to finish.' : openModals().length ? 'Close the open window first.' : TOUR_COPY.ui.busy;
+/* The one way to start a tour: 'basic' or 'hands'. opts.firstRun: the Start a shot picker follows the tour. */
+function startTour(kind, opts = {}) {
+  const firstRun = !!opts.firstRun;
+  /* a tour is already running: leave it exactly as it is */
+  if (tourActive() || practicing) { toast(TOUR_COPY.ui.busy); if (firstRun) openStarters(true); return null; }
+  if (kind === 'hands') {
+    if (!enterPractice()) { toast(tourRefusal()); if (firstRun) openStarters(true); return null; }
+    const tab = getPref('leftTab', undefined); /* the tour's Add and Scene steps save the remembered tab: put it back */
+    const handle = runStops(handsStops(), {
+      ui: TOUR_COPY.ui, interactive: true,
+      onEnd: reason => {
+        leavePractice(); setPref('leftTab', tab);
+        setPref('tourHandsDone', true); requestRender();
+        if (reason === 'external') return; /* an Open, New, drop... took over: its own action carries on, so no picker */
+        if (firstRun) openStarters(true);
+      },
+    });
+    if (!handle) { leavePractice(); if (firstRun) openStarters(true); } /* refused after all (an export began, a dialog opened) */
+    return handle;
+  }
+  const tab = $('#leftTabs .on') ? $('#leftTabs .on').dataset.lt : 'add';
+  const handle = runStops(basicStops(), {
+    ui: TOUR_COPY.ui,
+    onEnd: reason => {
+      setLeftTab(tab, false);
+      setPref('tourBasicDone', true);
+      if (reason === 'external') return; /* another tour took over, or Open / New / a file from Windows swapped the project: no picker */
+      if (firstRun) openStarters(true);
+    },
+  });
+  /* refused (a dialog is open, an export runs): a first run must still get its picker */
+  if (!handle && firstRun) openStarters(true);
+  return handle;
+}
+/* the first-run question and the buttons that start a tour from a dialog: close the dialog first, since a tour will not start over one */
+/* while the first-run question is open, any way of closing it other than the two tour buttons counts as Not now (Esc, a click outside) */
+let tourAsk = false;
+function tourFromDialog(modalId, kind, firstRun) {
+  if (modalId === 'mTour') tourAsk = false;
+  closeModal($('#' + modalId));
+  startTour(kind, { firstRun });
+}
+function wireTourDialogs() {
+  const W = TOUR_COPY.welcome, H = TOUR_COPY.helpPage;
+  $('#mTourT').textContent = W.title; $('#mTourP').textContent = W.body;
+  $('#tourQuick').textContent = W.quick; $('#tourHands').textContent = W.hands; $('#tourNo').textContent = W.notNow;
+  $('#tourQuick').onclick = () => tourFromDialog('mTour', 'basic', true);
+  $('#tourHands').onclick = () => tourFromDialog('mTour', 'hands', true);
+  $('#tourNo').onclick = () => closeModal($('#mTour'));
+  $('#helpTourLead').textContent = H.lead; $('#helpTourQuick').textContent = H.quick; $('#helpTourHands').textContent = H.hands;
+  $('#helpTourQuick').onclick = () => tourFromDialog('mHelp', 'basic', false);
+  $('#helpTourHands').onclick = () => tourFromDialog('mHelp', 'hands', false);
+  applyHandsTourSwitch();
+}
+/* show or hide every way to start the hands-on tour, and pick the matching first-run wording */
+function applyHandsTourSwitch() {
+  const on = handsTourOn(), W = TOUR_COPY.welcome;
+  $('#tourHands').hidden = !on; $('#helpTourHands').hidden = !on;
+  $('#mTourP').textContent = on ? W.body : W.bodySolo;
+}
+function setHandsTour(on) { setPref('handsTour', !!on); applyHandsTourSwitch(); }
+
 /* ============================== modals ============================== */
 const openModals = () => $$('.modal').filter(m => !m.classList.contains('hidden'));
 /* buttons, fields and rows a keyboard user can reach inside a dialog */
@@ -4619,6 +4846,7 @@ function openModal(id) {
 function closeModal(el) {
   const m = el.closest('.modal'); if (exporting && (m.id === 'mExport' || m.id === 'mCompare')) return;
   m.classList.add('hidden'); placeToast(); requestRender();
+  if (m.id === 'mTour' && tourAsk) { tourAsk = false; openStarters(true); }
   if (!openModals().length && modalReturn) { const r = modalReturn; modalReturn = null; if (r.isConnected && !r.closest('.modal')) r.focus(); }
 }
 /* Tab and Shift+Tab cycle inside the topmost open dialog (U4) */
@@ -4647,12 +4875,14 @@ function confirmBox(title, text, cb, okLabel = 'OK', alt = null) {
 }
 /* the one way to pick a project to open: native dialog on desktop, the file picker on the web */
 async function openDialog() {
+  if (practicing) return endPracticeFirst(openDialog);
   if (exporting) { toast('Wait for the export to finish.'); return; }
   const f = await platform.openProject($('#fOpen'));
   if (f && typeof f.text === 'string') loadProjectText(f.text, f);
 }
 /* The desktop window asked to close. Nothing unsaved: allow it. Otherwise ask, and only allow it once it is safe. */
 function closeRequested() {
+  if (practicing) return endPracticeFirst(closeRequested); /* so the question below is about the real scene */
   if (exporting) { toast('Wait for the export to finish before closing.', 4000); return; }
   if (!platform.isDirty()) { platform.closeOk(); return; }
   const nm = platform.currentName();
@@ -4663,12 +4893,15 @@ function closeRequested() {
 /* menu clicks from the desktop app's native menu */
 function onDesktopMenu(cmd) {
   if (cmd === 'close-request') { closeRequested(); return; }
+  if (practicing && !/^tour-/.test(cmd)) { endPracticeFirst(() => onDesktopMenu(cmd)); return; }
   if (exporting) { toast('Wait for the export to finish.'); return; }
   if (cmd === 'new') openStarters();
   else if (cmd === 'open') openDialog();
   else if (cmd === 'save') saveProject(false);
   else if (cmd === 'save-as') saveProject(true);
   else if (cmd === 'help') openModal('mHelp');
+  else if (cmd === 'tour-basic') startTour('basic');
+  else if (cmd === 'tour-hands') startTour('hands');
 }
 
 /* ============================== Settings window ============================== */
@@ -4880,9 +5113,9 @@ let recentTimer = null, recentDirty = false;
 const recentStats = { writes: 0, thumbs: 0 }; /* for the smoke test */
 const RECENT_EVERY_MS = 180000, RECENT_MAX_TEXT = 40e6;
 const recentOn = () => pref('recentOn') && idb.ok !== false;
-const recentBusy = () => exporting || swapping || cmpBusy || dragActive || playing || !!rec || !!placing || !!pathMode || gizmo.dragging;
+const recentBusy = () => !!practicing || exporting || swapping || cmpBusy || dragActive || playing || !!rec || !!placing || !!pathMode || gizmo.dragging;
 function markRecentDirty() {
-  if (!recentOn()) return;
+  if (!recentOn() || practicing) return;
   recentDirty = true;
   if (!recentTimer) recentTimer = setTimeout(recentTick, RECENT_EVERY_MS);
 }
@@ -4891,7 +5124,7 @@ function recentTick() { recentTimer = null; if (!recentDirty) return; if (recent
 function recentFlush() { if (recentDirty && recentOn() && !recentBusy()) saveRecentNow(); }
 /* writes this project into the list and keeps the newest `keepRecent`. The photo autosave is always written first. Resolves true when stored. */
 async function saveRecentNow() {
-  if (!recentOn() || exporting || swapping || cmpBusy) return false;
+  if (!recentOn() || practicing || exporting || swapping || cmpBusy) return false;
   clearTimeout(recentTimer); recentTimer = null; recentDirty = false;
   flushAutosave(); /* pending autosave first, and wait for its photo writes: recents must never crowd it out */
   const text = projectText();
@@ -4922,6 +5155,7 @@ const recentTrim = () => recentTx('readwrite', st => {
 });
 const agoText = t => { const m = Math.round((Date.now() - t) / 6e4); return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : m < 1440 ? Math.round(m / 60) + ' h ago' : new Date(t).toLocaleDateString(); };
 async function openRecent() {
+  if (practicing) return endPracticeFirst(openRecent);
   if (exporting) { toast('Wait for the export to finish.'); return; }
   $('#recentGrid').innerHTML = ''; $('#recNote').textContent = 'Loading…';
   openModal('mRecent');
@@ -4967,6 +5201,7 @@ function syncTopUI() {
   drawGuides();
 }
 function wire() {
+  wireTourDialogs();
   buildAddPanel();
   setLeftTab(getPref('leftTab', 'add'), false);
   $$('#leftTabs button').forEach(b => b.onclick = () => setLeftTab(b.dataset.lt));
@@ -5030,6 +5265,7 @@ function wire() {
   window.addEventListener('drop', e => { if (hasFiles(e) && !e.defaultPrevented) { e.preventDefault(); toast('Drop files on the 3D view to add them.'); } });
   vpEl.addEventListener('drop', async e => {
     e.preventDefault(); drop.style.display = 'none';
+    if (practicing && hasFiles(e)) endPracticeFirst(() => {}); /* the file goes into the real scene, as it would with no tour */
     for (const f of e.dataTransfer.files) {
       if (/\.(glb|gltf)$/i.test(f.name)) await importModel(f);
       else if (/^image\//.test(f.type)) { if (view === 'camera' || (splitOn() && paneOf(e) === 'cam')) await importPlate(f); else await importImage(f); }
@@ -5434,14 +5670,14 @@ function boot() {
   cleanTakes(); migrateAll(); pushHistory(); platform.setDirty(wasDirty); setSimple(simple);
   /* only now: queued menu / file events from the desktop shell must see the restored scene and its unsaved mark */
   platform.onMenu(onDesktopMenu);
-  platform.onOpenFile(f => { if (f && typeof f.text === 'string') { launchFile = true; closeModal($('#mStart')); loadProjectText(f.text, f, true); } });
+  platform.onOpenFile(f => { if (f && typeof f.text === 'string') { launchFile = true; tourAsk = false; closeModal($('#mTour')); closeModal($('#mStart')); loadProjectText(f.text, f, true); } });
  applyPrefs(); setView('editor'); setGizmoMode('translate');
   requestAnimationFrame(frame);
   let seen = false; try { seen = localStorage.getItem('shotref.seenHelp'); localStorage.setItem('shotref.seenHelp', '1'); } catch (e) { }
   if (autosaveOff) toast(NO_AUTOSAVE, 6000); /* starter sets still open below on a first visit */
   if (broken) toast("Your last session couldn't be restored, so ShotRef started a fresh scene.", 5000);
   else if (embedded) { if (EMBED.message) toast(EMBED.message, 7000); }
-  else if (!restored && !seen) setTimeout(() => { if (!openModals().length && !launchFile) openStarters(true); }, 400);
+  else if (!restored && !seen) setTimeout(() => { if (!openModals().length && !launchFile) { tourAsk = true; openModal('mTour'); } }, 400);
   /* photos and models come from IndexedDB (async); legacy autosaves carry them inline */
   if (broken) idb.noPrune = true; /* the broken autosave's files may live only in IndexedDB */
   /* while a broken autosave is kept aside, never prune the files it lists (C4) */
@@ -5451,9 +5687,13 @@ function boot() {
   idbLoad(want).then(got => {
     const n = Object.keys(got).length;
     if (n) {
-      assets = { ...assets, ...got };
-      try { syncScene(); } catch (e) { console.error('ShotRef: could not rebuild the restored photos and models', e); }
-      editRev++; uiDirty = true; propsDirty = true; requestRender();
+      /* a hands-on tour may be running: the files belong to the real scene it set aside, not to the practice stage */
+      if (practicing) practicing.assets = { ...practicing.assets, ...got };
+      else {
+        assets = { ...assets, ...got };
+        try { syncScene(); } catch (e) { console.error('ShotRef: could not rebuild the restored photos and models', e); }
+        editRev++; uiDirty = true; propsDirty = true; requestRender();
+      }
     }
     /* a file that failed to load (maybe a passing error) must not be pruned this session (C5) */
     for (const id of want) if (!got[id]) idb.keep.add(id);
@@ -5471,7 +5711,7 @@ function boot() {
   });
   window.addEventListener('pagehide', () => { flushAutosave(); recentFlush(); });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') recentFlush(); });
-  window.__shotref = { promptText, ensureDof, get selection() { return selIds; }, layout: () => layout, gizmoNdc: (x, y) => { const q = gizmo._getPointer({ clientX: x, clientY: y, button: 0 }); return { x: q.x, y: q.y }; }, arrowsVisible: () => [...arrows.values()].some(a => a.visible), videoBitrate, snapValue: snapWith, rotSnapDeg: () => pref('rotSnap'), controlSpeeds: () => ({ orbit: edControls.rotateSpeed, zoom: edControls.zoomSpeed, cam: camControls.rotateSpeed }), flySpeedNow, walkSpeedNow: () => pathSpeedOf({ type: 'person', opts: { pose: 'stand' } }), buildAddPanel: () => buildAddPanel(), saveRecentNow, recentFlush, recentStats, recentBusy, selectMany: ids => { selIds = ids.slice(); selected = selIds[selIds.length - 1] || null; updateGizmo(); uiDirty = true; propsDirty = true; requestRender(); }, pickAtScreen: (x, y) => { const rc = rayFromEvent({ clientX: x, clientY: y }); const h = rc && pickAt(rc); return h ? h.id : null; }, settleTime: () => { const t0 = performance.now(); solveGround(); return performance.now() - t0; }, groundMigrate: () => groundMigrate.size, liftKnob: () => { if (!liftGrp.visible) return null; const q = liftPick.getWorldPosition(new THREE.Vector3()); return window.__shotref.project(q.x, q.y, q.z); }, attachTo, setMount, writeCam, shownObj: (id, t) => shownObj(getObj(id), t), viewOf: id => { const v = views.get(id); if (!v) return null; v.group.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(v.group), sz = bb.getSize(new THREE.Vector3()); return { p: v.group.position.toArray(), yaw: v.group.rotation.y * R2D, s: v.group.scale.toArray(), size: sz.toArray(), wheels: v.wheels ? v.wheels.list.map(w => ({ spin: w.spin.rotation.x, steer: w.piv.rotation.y, front: w.front })) : null }; }, ringKnob: () => ringGrp.visible ? ringKnob.getWorldPosition(new THREE.Vector3()).toArray() : null, getPref, setPref, showMenu, menuButton, hideMenu, project: (x, y, z) => { const r = canvas.getBoundingClientRect(), R = viewRects(r.width, r.height); let cam = view === 'top' ? topCam : edCam, rr = R.work || { x: 0, y: 0, w: r.width, h: r.height }; if (camPane() && R.frame) { cam = renderCam; rr = R.frame; } const v = new THREE.Vector3(x, y, z).project(cam); return [r.left + rr.x + (v.x * 0.5 + 0.5) * rr.w, r.top + rr.y + (-v.y * 0.5 + 0.5) * rr.h]; }, get view() { return view; }, get selected() { return selected; }, get state() { return state; }, get assets() { return assets; }, setT: t => setTime(t, false), applyMove, addObject, select, setView, evalCam, exportVideo, exportPNG, pickCodec, _exportCanvas: () => exRenderer ? exRenderer.domElement : null, changed, writeObj, evalObj, setKey, get T() { return T; },
+  window.__shotref = { practice: { enter: () => enterPractice(), enterEarly: () => enterPractice(true), leave: leavePractice, active: () => !!practicing }, practicing: () => !!practicing, stateForSave, docInfo: () => ({ dirty: platform.isDirty(), name: platform.currentName(), path: platform.currentPath(), doc: platform.getDoc() }), tour: { run: runStops, active: tourActive, end: r => tourHandle && tourHandle.end(r), current: () => tourHandle }, startTour, setHandsTour, handsTourOn, setSimple, promptText, ensureDof, get selection() { return selIds; }, layout: () => layout, gizmoNdc: (x, y) => { const q = gizmo._getPointer({ clientX: x, clientY: y, button: 0 }); return { x: q.x, y: q.y }; }, arrowsVisible: () => [...arrows.values()].some(a => a.visible), videoBitrate, snapValue: snapWith, rotSnapDeg: () => pref('rotSnap'), controlSpeeds: () => ({ orbit: edControls.rotateSpeed, zoom: edControls.zoomSpeed, cam: camControls.rotateSpeed }), flySpeedNow, walkSpeedNow: () => pathSpeedOf({ type: 'person', opts: { pose: 'stand' } }), buildAddPanel: () => buildAddPanel(), saveRecentNow, recentFlush, recentStats, recentBusy, selectMany: ids => { selIds = ids.slice(); selected = selIds[selIds.length - 1] || null; updateGizmo(); uiDirty = true; propsDirty = true; requestRender(); }, pickAtScreen: (x, y) => { const rc = rayFromEvent({ clientX: x, clientY: y }); const h = rc && pickAt(rc); return h ? h.id : null; }, settleTime: () => { const t0 = performance.now(); solveGround(); return performance.now() - t0; }, groundMigrate: () => groundMigrate.size, liftKnob: () => { if (!liftGrp.visible) return null; const q = liftPick.getWorldPosition(new THREE.Vector3()); return window.__shotref.project(q.x, q.y, q.z); }, attachTo, setMount, writeCam, shownObj: (id, t) => shownObj(getObj(id), t), viewOf: id => { const v = views.get(id); if (!v) return null; v.group.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(v.group), sz = bb.getSize(new THREE.Vector3()); return { p: v.group.position.toArray(), yaw: v.group.rotation.y * R2D, s: v.group.scale.toArray(), size: sz.toArray(), wheels: v.wheels ? v.wheels.list.map(w => ({ spin: w.spin.rotation.x, steer: w.piv.rotation.y, front: w.front })) : null }; }, ringKnob: () => ringGrp.visible ? ringKnob.getWorldPosition(new THREE.Vector3()).toArray() : null, getPref, setPref, showMenu, menuButton, hideMenu, project: (x, y, z) => { const r = canvas.getBoundingClientRect(), R = viewRects(r.width, r.height); let cam = view === 'top' ? topCam : edCam, rr = R.work || { x: 0, y: 0, w: r.width, h: r.height }; if (camPane() && R.frame) { cam = renderCam; rr = R.frame; } const v = new THREE.Vector3(x, y, z).project(cam); return [r.left + rr.x + (v.x * 0.5 + 0.5) * rr.w, r.top + rr.y + (-v.y * 0.5 + 0.5) * rr.h]; }, get view() { return view; }, get placing() { return placing; }, get playing() { return playing; }, get step() { return currentStep(); }, get selected() { return selected; }, get state() { return state; }, get assets() { return assets; }, setT: t => setTime(t, false), applyMove, addObject, select, setView, evalCam, exportVideo, exportPNG, pickCodec, _exportCanvas: () => exRenderer ? exRenderer.domElement : null, changed, writeObj, evalObj, setKey, get T() { return T; },
     get rebuilds() { return rebuilds; }, urlCacheIds: () => [...urlCache.keys()],
     /* batch H (takes) hooks for the smoke test */
     switchTake, newTake, snapPoolSize: () => snapLive, snapPruned: () => snapPruned,

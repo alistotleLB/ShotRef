@@ -152,6 +152,7 @@ ipcMain.on('shotref:close-ok', () => { closeAllowed = true; if (win && !win.isDe
 ipcMain.on('shotref:version-sync', e => { e.returnValue = app.getVersion(); });
 
 /* ---------- menu ---------- */
+const HANDS_TOUR = false; /* mirrors HANDS_TOUR_DEFAULT in src/main.js: the hands-on tour is switched off for now */
 function buildMenu() {
   const recent = settings.recent.map(p => ({ label: path.basename(p), sublabel: p, click: () => openPath(p) }));
   /* Ctrl+S, Ctrl+Shift+S and Ctrl+O are handled by the page itself; registerAccelerator:false only shows the label */
@@ -168,6 +169,10 @@ function buildMenu() {
     ] },
     { label: 'Help', submenu: [
       { label: 'Quick start', click: () => send('shotref:menu', 'help') },
+      /* the same two labels as TOUR_COPY.menu in src/tour-copy.js (this file cannot import the page's ES module) */
+      { label: 'Take the quick tour', click: () => send('shotref:menu', 'tour-basic') },
+      /* the hands-on tour is switched off for now (see handsTourOn in src/main.js): set HANDS_TOUR to true here as well to bring it back */
+      { label: 'Try it hands-on', visible: HANDS_TOUR, click: () => send('shotref:menu', 'tour-hands') },
       { type: 'separator' },
       { label: 'Check for updates…', click: () => updater.checkNow(true) },
       { label: 'Check for updates automatically', type: 'checkbox', checked: settings.autoUpdate, click: i => { settings.autoUpdate = i.checked; saveSettings(); } },

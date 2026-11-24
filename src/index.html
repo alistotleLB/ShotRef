@@ -214,6 +214,39 @@ button.icon svg,.ib svg{width:17px;height:17px;stroke:currentColor;fill:none;str
 #toast.top{top:16px;bottom:auto}
 #ctxMenu{position:fixed;display:none;z-index:70;min-width:220px;background:#1f2125;border:1px solid var(--line2);border-radius:9px;padding:5px;box-shadow:0 14px 40px rgba(0,0,0,.55)}
 #ctxMenu:focus{outline:none}
+/* tour: dimmed screen, viewfinder corners and a bubble (src/tour.js). Layers: .modal 50, #tour 55, #toast 60, #ctxMenu 70 */
+#tour{position:fixed;inset:0;z-index:55;pointer-events:none}
+.tour-hit{position:fixed;pointer-events:auto}
+.tour-dim,.tour-corners{position:fixed;pointer-events:none;transition:left .35s ease-in-out,top .35s ease-in-out,width .35s ease-in-out,height .35s ease-in-out}
+.tour-dim{box-shadow:0 0 0 9999px color-mix(in srgb,var(--bg) 62%,transparent);border-radius:4px}
+#tour.nt .tour-dim,#tour.nt .tour-corners{transition:none}
+.tour-corners.off{opacity:0}
+.tc{position:absolute;width:16px;height:16px;fill:none;stroke:var(--acc);stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;overflow:visible}
+.tc.tl{left:0;top:0}.tc.tr{right:0;top:0}.tc.bl{left:0;bottom:0}.tc.br{right:0;bottom:0}
+.tour-bubble{position:fixed;pointer-events:auto;width:340px;max-width:340px;background:var(--panel);border:1px solid var(--line2);border-radius:8px;padding:14px 16px 12px;box-shadow:0 20px 60px rgba(0,0,0,.6);font:13px/1.5 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif}
+.tour-bubble:focus{outline:none}
+.tour-title{font-size:15px;font-weight:600;color:var(--ink);line-height:1.3;margin:0 0 4px}
+.tour-text{font-size:13px;line-height:1.5;color:var(--mute)}
+.tour-prog{display:flex;align-items:center;gap:10px;margin:12px 0 10px}
+.tour-path{position:relative;flex:1;height:12px}
+.tour-path::before{content:"";position:absolute;left:3px;right:3px;top:5px;height:2px;border-radius:1px;background:var(--acc)}
+.tour-pt{position:absolute;top:3px;width:6px;height:6px;border-radius:50%;background:var(--acc)}
+.tour-pt.s{left:0}.tour-pt.e{right:0}
+.tour-dot{position:absolute;top:0;width:12px;height:12px;margin-left:-6px;border-radius:50%;background:var(--acc);border:2px solid var(--panel);box-sizing:border-box;box-shadow:0 0 0 1px var(--acc)}
+.tour-count{font-size:11.5px;color:var(--mute);font-variant-numeric:tabular-nums;white-space:nowrap}
+.tour-done{display:flex;align-items:center;gap:8px;color:var(--acc);font-weight:600;margin:0 0 8px}
+.tour-done[hidden]{display:none}
+.tour-tick{width:10px;height:5px;border:solid var(--acc);border-width:0 0 2.5px 2.5px;transform:rotate(-45deg) translateY(-2px)}
+.tour-acts{display:flex;align-items:center;gap:4px}
+.tour-sp{flex:1}
+.tour-btn{border:1px solid transparent;border-radius:6px;padding:5px 10px;font-weight:500}
+.tour-btn.quiet{background:none;color:var(--ink)}
+.tour-btn.quiet:hover{background:var(--panel2)}
+.tour-btn.quiet:disabled{opacity:.35;cursor:default;background:none}
+.tour-btn.main{background:var(--acc);border-color:var(--acc);color:var(--bg);font-weight:600}
+.tour-btn.main:hover{background:var(--acc2);border-color:var(--acc2)}
+.tour-btn:focus-visible{outline:2px solid var(--acc2);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){.tour-dim,.tour-corners{transition:none}}
 #ctxMenu .head{font-size:11px;color:var(--mute);padding:5px 9px 4px;font-weight:600}
 #ctxMenu button{display:flex;justify-content:space-between;align-items:center;gap:18px;width:100%;text-align:left;border:0;background:transparent;padding:6px 9px;border-radius:6px}
 #ctxMenu button:hover,#ctxMenu button:focus-visible{background:var(--accd);color:#ffe3c6}
@@ -516,6 +549,7 @@ button.icon.on{background:var(--accd);color:var(--acc2)}
   <button class="x" data-close aria-label="Close">×</button>
   <div class="dlgBody">
   <h2 id="mHelpT">Quick start</h2>
+  <div class="btns" id="helpTour" style="margin:0 0 12px;justify-content:flex-start;align-items:center;flex-wrap:wrap"><span class="note" id="helpTourLead" style="margin:0 4px 0 0"></span><button id="helpTourQuick"></button><button id="helpTourHands"></button></div>
   <ol class="steps">
     <li><b>Start from a set</b> (<b>File</b> then <b>New</b>), or click items on the Add tab on the left and then click on the floor to place them.</li>
     <li><b>Block it.</b> Drag people and props across the floor; drag the orange ring to turn them (let go over a person or the camera and they face it). Shift-click picks several to move together; <span class="kbd">Ctrl G</span> groups them. <b>Top view</b> (<span class="kbd">T</span>) works like a floor plan.</li>
@@ -551,6 +585,13 @@ button.icon.on{background:var(--accd);color:var(--acc2)}
   </div>
   <p class="note">Your work is autosaved in this browser. Use <b>Save</b> to keep a project file you can reopen anywhere.</p>
   </div>
+</div></div>
+
+<div id="mTour" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mTourT"><div class="dlg" style="width:min(460px,94vw)">
+  <div class="starthead"><svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M5 12V5h7M20 27h7v-7" fill="none" stroke="#E7E9EC" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 23C13 15 19 22 24 9" fill="none" stroke="#FF9A3C" stroke-width="2.4" stroke-linecap="round"/><circle cx="8" cy="23" r="2.4" fill="#FF9A3C"/><circle cx="24" cy="9" r="2.4" fill="#FF9A3C"/></svg><div><b>Shot<span>Ref</span></b></div></div>
+  <h2 id="mTourT"></h2>
+  <p class="note" style="font-size:13px" id="mTourP"></p>
+  <div class="btns" style="margin-top:14px;flex-wrap:wrap"><button id="tourQuick" class="primary"></button><button id="tourHands"></button><button id="tourNo"></button></div>
 </div></div>
 
 <div id="mStart" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mStartT"><div class="dlg" style="width:min(640px,94vw)">
