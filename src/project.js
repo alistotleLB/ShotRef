@@ -156,8 +156,8 @@ export function normalizeProject(raw, defaults = {}) {
     const tid = new Set();
     st.takes = (Array.isArray(src.takes) ? src.takes : []).filter(isObj).map(x => {
       let id = str(x.id, uid()); while (tid.has(id)) id = uid(); tid.add(id);
-      let snap = null;
-      if (typeof x.snap === 'string') { try { if (isObj(JSON.parse(x.snap))) snap = x.snap; } catch (e) { } }
+      /* the copy of a take's scene is kept exactly as written, even when it can't be read: the app shows that take as unavailable and saves it back untouched */
+      const snap = typeof x.snap === 'string' ? x.snap : null;
       return { ...x, id, name: str(x.name, 'Take'), snap };
     });
   }

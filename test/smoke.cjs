@@ -1766,8 +1766,8 @@ check('artifact-format fields survive opening; dangling references are dropped',
   ok(!(by('x1').parent && by('x2').parent), 'a parent loop was kept');
   ok(s.camera.mount === null && s.camera.dof.strength === 1, 'camera mount/blur strength (junk strength in a file with depth of field reads as 1, the old look): ' + JSON.stringify([s.camera.mount, s.camera.dof]));
   ok(s.shots.length === 1 && s.shots[0].camera.lookAtId === null && s.shotId === 's1', 'shots not repaired');
-  /* batch H: Take 2 has no readable copy of its scene, so it can't be used and is left out (it was kept with an empty copy before takes could be switched to) */
-  ok(s.takes.length === 1 && s.takes[0].id === 't1' && s.takes[0].snap === null && s.takeId === 't1', 'takes not repaired: ' + JSON.stringify(s.takes));
+  /* batch H fix 1: a take that is not on screen keeps its copy exactly as it was, even when it can't be read (it shows as can't be opened) */
+  ok(s.takes.length === 2 && s.takes[1].snap === 'not json' && s.takeId === 't1', 'takes not repaired: ' + JSON.stringify(s.takes));
   ok(!('shadows' in s.settings) && s.settings.shadowSoft === 1 && s.settings.tod === 5 && s.settings.interp === 'natural', 'sun settings: ' + JSON.stringify(s.settings));
   noErrors(p);
 });
@@ -4370,6 +4370,95 @@ check('compare takes: a failure while rendering puts the scene back and unlocks 
   ok(await p.evaluate(() => [...document.body.children].every(e => !e.inert)), 'page stays locked after a failed render');
   ok(canon(await stateOf(p)) === canon(before), 'scene changed after a failed render');
   ok(await p.evaluate(() => /Could not/.test(document.querySelector('#cmpMsg').textContent)), 'no plain message: ' + await p.evaluate(() => document.querySelector('#cmpMsg').textContent));
+});
+
+/* ---- batch H fix round 1 ---- */
+check('takes: 16 rounds of switch + edit, undo into the middle, 16 more rounds (the pool prunes); undo to the start and redo to the end keep every take exact (also after an autosave restore)', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await takeCmd(p, 'newtake'); await takeCmd(p, 'newtake');
+  const ids = (await stateOf(p)).takes.map(t => t.id);
+  const counts = () => p.evaluate(() => { const S = window.__shotref, st = S.state, r = {}; for (const t of st.takes) r[t.id] = t.id === st.takeId ? st.objects.length : JSON.parse(t.snap).objects.length; return { r, active: st.takeId, names: st.takes.map(t => t.name).join() }; });
+  const at = () => p.evaluate(() => window.__shotref.history.at);
+  const rounds = async k => { for (let i = 0; i < 16; i++) { await p.evaluate(id => window.__shotref.switchTake(id), ids[(i + k) % 3]); await addBoxes(p, 1 + (i % 2)); } };
+  const start = await counts(), at0 = await at();
+  await rounds(0);
+  await undoN(p, 20);
+  const mid = await counts(), atMid = await at();
+  await rounds(1);
+  const end = await counts(), atEnd = await at();
+  ok(await p.evaluate(() => window.__shotref.snapPruned()) > 0, 'the pool never pruned, so this does not test pruning');
+  ok(end.names === start.names, 'a take went missing: ' + end.names);
+  await undoN(p, atEnd - atMid);
+  ok(canon(await counts()) === canon(mid), 'back in the middle: ' + JSON.stringify(await counts()) + ' vs ' + JSON.stringify(mid));
+  await undoN(p, atMid - at0);
+  ok(canon(await counts()) === canon(start), 'after undo to the start: ' + JSON.stringify(await counts()) + ' vs ' + JSON.stringify(start));
+  for (let i = 0; i < atEnd - at0; i++) { await p.click('#bRedo'); await p.waitForTimeout(40); }
+  ok(canon(await counts()) === canon(end), 'after redo to the end: ' + JSON.stringify(await counts()) + ' vs ' + JSON.stringify(end));
+  await settle(p, 900);
+  await p.reload(); await p.waitForFunction(() => window.__shotref && window.__shotref.state); await settle(p, 500);
+  ok(canon(await counts()) === canon(end), 'after the autosave restore: ' + JSON.stringify(await counts()));
+  noErrors(p);
+}, { timeout: 120000 });
+check('takes: a take whose copy cannot be read is kept as it is, shown disabled, and is saved back byte for byte', async ({ open, freshContext, downloads }) => {
+  const p = await open(); await settle(p, 300);
+  const cam = { base: JSON.parse(CAM_BASE), keys: [], feel: 'gentle', shake: 0, lookAtId: null, follow: false, dof: { on: false, fstop: 2.8, auto: true } };
+  const bad = '{"objects": [broken  é ';
+  const file = { app: 'ShotRef', version: 1, state: { settings: {}, camera: cam, objects: [], plate: null, v: 1, takes: [{ id: 't1', name: 'Good', snap: null }, { id: 't2', name: 'Damaged', snap: bad }], takeId: 't1' }, assets: {} };
+  await openFile(p, 'bad.shotref', JSON.stringify(file));
+  const s = await stateOf(p);
+  ok(s.takes.length === 2 && s.takes[1].snap === bad, 'damaged take lost or changed: ' + JSON.stringify(s.takes));
+  await p.click('#bTake');
+  const it = await p.evaluate(() => { const b = document.querySelector('#ctxMenu [data-cmd="take:t2"]'); return b && { t: b.textContent.trim(), d: b.disabled }; });
+  ok(it && /can't be opened/.test(it.t) && it.d, 'menu item: ' + JSON.stringify(it));
+  ok(await p.evaluate(() => document.querySelector('#ctxMenu [data-cmd="compare"]').disabled), 'compare offered with one readable take');
+  await p.keyboard.press('Escape');
+  await takeCmd(p, 'newtake');
+  await p.click('#bTake');
+  ok(await p.evaluate(() => !document.querySelector('#ctxMenu [data-cmd="compare"]').disabled), 'compare should be offered (two readable takes)');
+  await p.keyboard.press('Escape');
+  await fileCmd(p, 'save');
+  const f = JSON.parse((await downloads(p).wait('.shotref')).text());
+  ok(f.state.takes.find(t => t.id === 't2').snap === bad, 'damaged copy not saved back exactly');
+  const fc = await freshContext(); const b = await fc.open();
+  await openFile(b, 'again.shotref', JSON.stringify(f));
+  ok((await stateOf(b)).takes.find(t => t.id === 't2').snap === bad, 'damaged copy lost on reopen');
+  noErrors(b);
+});
+check('takes: a take whose copy cannot be read can still be deleted from the menu', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await takeCmd(p, 'newtake');
+  const id = await p.evaluate(() => { const S = window.__shotref; S.state.takes[0].snap = '{nope'; S.changed(true, true); return S.state.takes[0].id; });
+  await takeCmd(p, 'deltake:' + id); await settle(p, 200);
+  ok((await stateOf(p)).takes.length === 1, 'not deleted: ' + (await stateOf(p)).takes.length);
+  await undoN(p, 1);
+  ok((await stateOf(p)).takes.length === 2 && (await stateOf(p)).takes[0].snap === '{nope', 'undo did not bring it back as it was');
+});
+check('compare takes: Cancel stops the render, puts the scene back and unlocks the page', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await takeCmd(p, 'newtake'); await addBoxes(p, 2);
+  await p.evaluate(() => { window.__shotref.state.settings.duration = 30; window.__shotref.changed(true, true); });
+  const before = await stateOf(p);
+  await takeCmd(p, 'compare');
+  await p.waitForFunction(() => !document.querySelector('#cmpCancel').hidden, null, { timeout: 5000 });
+  await p.click('#cmpCancel');
+  await p.waitForFunction(() => document.querySelector('#cmpCancel').hidden, null, { timeout: 15000 });
+  ok(await p.evaluate(() => [...document.body.children].every(e => !e.inert)), 'still locked');
+  ok(canon(await stateOf(p)) === canon(before), 'scene changed');
+  ok(await p.evaluate(() => document.querySelector('#cmpView').hidden), 'a half result is shown');
+  noErrors(p);
+});
+check('compare takes: an autosave that is due is written before the scenes are swapped, and none is written while they are', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await takeCmd(p, 'newtake'); await settle(p, 700);
+  await p.evaluate(() => { window.__sv = []; const o = Storage.prototype.setItem; Storage.prototype.setItem = function (k, v) { if (k === 'shotref.autosave') { const s = JSON.parse(v).state; window.__sv.push([s.takeId, s.objects.length]); } return o.apply(this, arguments); }; });
+  await addBoxes(p, 3);
+  const n = await nObj(p), id = (await stateOf(p)).takeId;
+  await takeCmd(p, 'compare');
+  await p.waitForFunction(() => !document.querySelector('#cmpView').hidden, null, { timeout: 30000 });
+  await settle(p, 900);
+  const sv = await p.evaluate(() => window.__sv);
+  ok(sv.length >= 1 && sv.every(x => x[0] === id && x[1] === n), 'autosave wrote another scene: ' + JSON.stringify(sv) + ' expected ' + id + '/' + n);
+  noErrors(p);
 });
 
 main().catch(e => { console.error(e && e.stack || e); process.exit(2); });

@@ -363,7 +363,7 @@ let histDoc = []; /* the document id of each history step (platform.js maps it t
    hold those copies again and again, so a step stores a short reference ("@3") and the text itself lives once in snapPool. A step
    only ever refers to a copy by its number, so undo and redo bring back exactly the take copies that step had. */
 const snapPool = new Map(), snapById = []; /* copy text -> number, and number -> text (null once nothing refers to it) */
-let snapLive = 0, snapPruneAt = 12;
+let snapLive = 0, snapPruneAt = 12, snapPruned = 0, snapHold = false; /* snapHold: no pruning while an Open might still be rolled back */
 function snapRef(text) {
   let i = snapPool.get(text);
   if (i === undefined) { i = snapById.length; snapById.push(text); snapPool.set(text, i); snapLive++; }
@@ -371,9 +371,10 @@ function snapRef(text) {
 }
 /* forget the copies no step refers to any more (steps older than 100 or cut off by a new edit) */
 function pruneSnapPool() {
+  if (snapHold) return;
   const used = new Set();
-  for (const s of hist) { const re = /"snap":"@(d+)"/g; let m; while ((m = re.exec(s))) used.add(+m[1]); }
-  snapById.forEach((text, i) => { if (text !== null && !used.has(i)) { snapPool.delete(text); snapById[i] = null; snapLive--; } });
+  for (const s of hist) { const re = /"snap":"@(\d+)"/g; let m; while ((m = re.exec(s))) used.add(+m[1]); }
+  snapById.forEach((text, i) => { if (text !== null && !used.has(i)) { snapPool.delete(text); snapById[i] = null; snapLive--; snapPruned++; } });
   snapPruneAt = Math.max(12, snapLive * 2);
 }
 /* the undo step for the current project: the live scene in full, other takes by reference */
@@ -516,7 +517,7 @@ let autosaveReady = false; /* false until boot has fetched the stored assets: sa
 /* writes the localStorage part now; in IndexedDB mode also queues the asset write */
 let autosaveWaiting = false;
 function writeAutosave() {
-  if (autosaveOff) return;
+  if (autosaveOff || swapping) return;
   if (!autosaveReady) { autosaveWaiting = true; return; }
   const ids = [...usedAssetIds(state)].filter(id => assets[id]);
   const put = a => localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({ state: stateForSave(), assets: a, assetIds: ids, v: FORMAT_VERSION, dirty: platform.isDirty() })); /* dirty: unsaved changes, so a restored session keeps its "unsaved" mark */
@@ -3463,6 +3464,7 @@ function buildState(fill) {
 /* The one way to swap the whole scene. Keeps undo (pushes a step) and keeps old files in memory so undo can rebuild them.
    On any error the previous scene is put back and the error is rethrown. */
 function replaceProject(newState, newAssets = {}, label) {
+  snapHold = true;
   const prev = { state, assets, selected, selIds: selIds.slice(), T, hist: hist.slice(), histDoc: histDoc.slice(), doc: platform.getDoc(), hi };
   try {
     for (const [id, a] of Object.entries(newAssets)) if (assets[id] && assets[id].b64 !== (a && a.b64)) dropModel(id);
@@ -3470,8 +3472,10 @@ function replaceProject(newState, newAssets = {}, label) {
     state = newState; cleanTakes(); selected = null; selIds = []; promptEdit = null; shotEditId = null; setTime(0); migrateAll();
     platform.startDoc(); /* Open, New and starters are a new document: Save must not reuse the previous file */
     restore(snapshot()); pushHistory(); resetEditorCam();
+    snapHold = false; if (snapLive > snapPruneAt) pruneSnapPool();
     if (label) toast(label);
   } catch (e) {
+    snapHold = false;
     state = prev.state; assets = prev.assets; selected = prev.selected; selIds = prev.selIds; setTime(prev.T); hist = prev.hist; histDoc = prev.histDoc; platform.restoreDoc(prev.doc); hi = prev.hi;
     try { restore(snapshot()); } catch (e2) { console.error('ShotRef: could not put the previous scene back', e2); }
     throw e;
@@ -4055,8 +4059,21 @@ function ensureTakes() {
 /* a project from a file or autosave: a take that is not on screen and has no copy of its scene can't be used, so it is left out */
 function cleanTakes() {
   if (!state.takes) return;
-  state.takes = state.takes.filter(t => t.id === state.takeId || typeof t.snap === 'string');
+  state.takes = state.takes.filter(t => t.id === state.takeId || typeof t.snap === 'string'); /* a copy that can't be read stays as it is (see takeReadable) */
   if (!state.takes.length) { delete state.takes; delete state.takeId; }
+}
+/* can this take be opened? The one on screen always can; another needs a copy that reads as a scene. An unreadable copy is kept untouched, shown disabled and saved back as it was. */
+const readableCache = new Map();
+function takeReadable(t) {
+  if (t.id === state.takeId) return true;
+  if (typeof t.snap !== 'string') return false;
+  let r = readableCache.get(t.snap);
+  if (r === undefined) {
+    try { const o = JSON.parse(t.snap); r = !!o && typeof o === 'object' && !!o.camera && typeof o.camera === 'object'; } catch (e) { r = false; }
+    if (readableCache.size > 40) readableCache.clear();
+    readableCache.set(t.snap, r);
+  }
+  return r;
 }
 /* the live scene as the text kept in a take (everything except the takes themselves and the project name) */
 function takeSceneJSON() { syncShot(); const { takes, takeId, meta, ...scene } = state; return JSON.stringify(scene); }
@@ -4076,7 +4093,7 @@ function takeChanged() { editRev++; uiDirty = true; propsDirty = true; pushHisto
 function switchTake(id) {
   if (exporting || rec || id === '_') return false;
   ensureTakes(); if (id === state.takeId) return false;
-  const t = state.takes.find(x => x.id === id); if (!t || typeof t.snap !== 'string') return false;
+  const t = state.takes.find(x => x.id === id); if (!t || !takeReadable(t)) return false;
   let ns; try { ns = takeState(t.snap); } catch (e) { console.error('ShotRef: could not open the take', e); toast("That take couldn't be opened."); return false; }
   const from = activeTake(), text = takeSceneJSON();
   from.snap = text; t.snap = null; state.takeId = id;
@@ -4106,7 +4123,8 @@ function deleteTake(id) {
   const i = state.takes.findIndex(t => t.id === id); if (i < 0) return;
   const t = state.takes[i];
   if (id === state.takeId) {
-    const next = state.takes[i + 1] || state.takes[i - 1];
+    const near = state.takes.filter(x => x !== t && takeReadable(x)).sort((x, y) => Math.abs(state.takes.indexOf(x) - i) - Math.abs(state.takes.indexOf(y) - i)), next = near[0];
+    if (!next) { toast("The other takes can't be opened, so nothing was deleted."); return; }
     let ns; try { ns = takeState(next.snap); } catch (e) { console.error('ShotRef: could not open the take', e); toast("The other take couldn't be opened, so nothing was deleted."); return; }
     state.takes = state.takes.filter(x => x !== t); next.snap = null; state.takeId = next.id;
     loadScene(ns);
@@ -4125,28 +4143,30 @@ function renameTake() {
   t.name = v; takeChanged();
 }
 function takeMenuItems() {
-  const real = hasTakes(), list = real ? state.takes : [{ id: '_', name: 'Take 1' }], act = real ? activeTake().id : '_';
+  const real = hasTakes(), list = real ? state.takes : [{ id: '_', name: 'Take 1' }], act = real ? activeTake().id : '_', bad = list.filter(t => real && !takeReadable(t)), good = list.length - bad.length;
   return [{ head: 'Takes' },
-    ...list.map(t => ({ id: 'take:' + t.id, label: t.name, check: t.id === act, fn: () => switchTake(t.id) })),
+    ...list.map(t => takeReadable(t) || !real ? { id: 'take:' + t.id, label: t.name, check: t.id === act, fn: () => switchTake(t.id) } : { id: 'take:' + t.id, label: t.name + " (can't be opened)", check: false, disabled: true }),
     '-',
     { id: 'newtake', label: 'New take (copy of this one)', fn: () => newTake(true) },
     { id: 'duptake', label: 'Duplicate this take', fn: () => newTake(false) },
     { id: 'renametake', label: 'Rename this take…', fn: openTakeName },
-    { id: 'compare', label: 'Compare takes side by side…', fn: openCompare, disabled: list.length < 2 },
+    { id: 'compare', label: 'Compare takes side by side…', fn: openCompare, disabled: good < 2 },
     '-',
-    { id: 'deltake', label: 'Delete this take', danger: true, fn: () => deleteTake(act), disabled: list.length < 2 }];
+    { id: 'deltake', label: 'Delete this take', danger: true, fn: () => deleteTake(act), disabled: list.length < 2 },
+    ...bad.map(t => ({ id: 'deltake:' + t.id, label: 'Delete "' + t.name + '" (can\'t be opened)', danger: true, fn: () => deleteTake(t.id) }))];
 }
 
 /* ---- compare takes ----
    Each take plays its own current shot from its own start to its end, side by side. The frames are made one by one with the export
    renderer while the page is locked, and kept as JPEG data: URLs (no blob: URLs). The scene on screen is put back afterwards, even after an error. */
-let cmp = null, cmpBusy = false;
+let cmp = null, cmpBusy = false, cmpStop = false, swapping = false; /* swapping: another take's scene is on screen for a moment, so nothing may be autosaved */
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 function openCompare() {
   if (exporting) { toast('Wait for the export to finish.'); return; }
-  if (!hasTakes() || state.takes.length < 2) { toast('Make a second take first: Take menu → New take'); return; }
-  for (const sel of [$('#cmpA'), $('#cmpB')]) { sel.innerHTML = ''; for (const t of state.takes) sel.append(h('option', { value: t.id }, t.name)); }
-  $('#cmpA').value = state.takeId; $('#cmpB').value = state.takes.find(t => t.id !== state.takeId).id;
+  const ok2 = hasTakes() ? state.takes.filter(takeReadable) : [];
+  if (ok2.length < 2) { toast('Make a second take first: Take menu → New take'); return; }
+  for (const sel of [$('#cmpA'), $('#cmpB')]) { sel.innerHTML = ''; for (const t of ok2) sel.append(h('option', { value: t.id }, t.name)); }
+  $('#cmpA').value = state.takeId; $('#cmpB').value = ok2.find(t => t.id !== state.takeId).id;
   $('#cmpView').hidden = true; $('#cmpMsg').textContent = ''; cmp = null;
   openModal('mCompare'); renderCompare();
 }
@@ -4154,7 +4174,7 @@ async function renderCompare() {
   if (exporting || cmpBusy) return;
   cmpBusy = true; cmp = null; $('#cmpView').hidden = true; $('#cmpMsg').textContent = 'Rendering…';
   const ids = [$('#cmpA').value, $('#cmpB').value], keep = { state, T, selected, selIds: selIds.slice() }, out = {};
-  setPlaying(false);
+  setPlaying(false); flushAutosave(); cmpStop = false; $('#cmpCancel').hidden = false;
   const cw = 400, ch = Math.max(2, Math.round(cw / arOf(state.settings.aspect) / 2) * 2), fps = 10;
   let failed = false;
   try {
@@ -4165,10 +4185,12 @@ async function renderCompare() {
           const t = keep.state.takes.find(x => x.id === id) || activeTake();
           const ns = t.id === keep.state.takeId ? keep.state : takeState(t.snap);
           if (ns !== keep.state) { ns.takes = keep.state.takes; ns.takeId = keep.state.takeId; }
-          state = ns; syncScene(); applyEnv(); ensurePlate(); editRev++;
-          for (let i = 0; i < 40 && (plateBusy || [...views.values()].some(v => v.pending)); i++) await sleep(50); /* a model or photo still loading */
+          if (cmpStop) throw new Error('cancelled');
+          swapping = true; state = ns; syncScene(); applyEnv(); ensurePlate(); editRev++;
+          for (let i = 0; i < 40 && !cmpStop && (plateBusy || [...views.values()].some(v => v.pending)); i++) await sleep(50); /* a model or photo still loading */
           const end = lastT(), n = clamp(Math.round(state.settings.duration * fps), 2, 150), frames = [];
           for (let f = 0; f < n; f++) {
+            if (cmpStop) throw new Error('cancelled');
             renderExportFrame(r, f / (n - 1) * end, cw, ch); frames.push(r.domElement.toDataURL('image/jpeg', 0.82));
             if (f % 10 === 0) { $('#cmpMsg').textContent = `Rendering ${t.name}: ${f + 1}/${n}`; await sleep(0); }
           }
@@ -4176,12 +4198,13 @@ async function renderCompare() {
           out[id] = { name: t.name, frames, len: end, shot: sh ? sh.name : 'Shot 1', move: detectMove().title };
         }
       } finally {
-        state = keep.state; selected = keep.selected; selIds = keep.selIds; setTime(keep.T);
+        state = keep.state; swapping = false; selected = keep.selected; selIds = keep.selIds; setTime(keep.T);
         syncScene(); applyEnv(); editRev++; uiDirty = true; propsDirty = true; updateGizmo(); syncTopUI(); applyAll(T);
       }
     });
-  } catch (e) { console.error('ShotRef: could not render the takes', e); failed = true; }
-  cmpBusy = false;
+  } catch (e) { if (!cmpStop) console.error('ShotRef: could not render the takes', e); failed = true; }
+  cmpBusy = false; $('#cmpCancel').hidden = true; autosave();
+  if (cmpStop && failed) { $('#cmpMsg').textContent = 'Cancelled.'; return; }
   if (failed) { $('#cmpMsg').textContent = 'Could not render the takes. Try again, or close other programs and try once more.'; return; }
   $('#cmpMsg').textContent = '';
   cmp = { A: out[ids[0]], B: out[ids[1]], idB: ids[1], u: 0, playing: true, last: performance.now() };
@@ -4208,6 +4231,7 @@ function wireTakes() {
   $('#nmOk').onclick = renameTake;
   $('#nmInput').addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') renameTake(); else if (e.key === 'Escape') closeModal($('#nmInput')); });
   $('#cmpGo').onclick = renderCompare;
+  $('#cmpCancel').onclick = () => { cmpStop = true; };
   $('#cmpPlay').onclick = () => { if (cmp) { cmp.playing = !cmp.playing; cmp.last = performance.now(); showCompareFrame(); } };
   $('#cmpScrub').addEventListener('input', e => { if (cmp) { cmp.u = +e.target.value; cmp.playing = false; showCompareFrame(); } });
   $('#cmpUseB').onclick = () => { if (!cmp || exporting) return; const id = cmp.idB; closeModal($('#cmpUseB')); switchTake(id); };
@@ -4300,7 +4324,7 @@ async function pickCodec(w, hh, fps) {
 /* While a video renders nothing in the export dialog may change; only Cancel stays live. */
 function setExportLock(on) {
   $$('#mExport input, #mExport select, #mExport button').forEach(el => { if (el.id !== 'exCancel') el.disabled = on; });
-  $$('#mCompare input, #mCompare select, #mCompare button').forEach(el => { el.disabled = on; });
+  $$('#mCompare input, #mCompare select, #mCompare button').forEach(el => { el.disabled = on && el.id !== 'cmpCancel'; });
   // make everything outside the export dialog unreachable by Tab, Enter or Space
   for (const el of document.body.children) if (el.id !== 'mExport' && el.id !== 'mCompare' && el.id !== 'toast' && el.tagName !== 'SCRIPT') el.inert = on;
   if (on) { const c = $('#exCancel'); if (c && !c.hidden) c.focus(); else if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); }
@@ -4973,7 +4997,7 @@ function boot() {
   window.__shotref = { promptText, ensureDof, get selection() { return selIds; }, pickAtScreen: (x, y) => { const rc = rayFromEvent({ clientX: x, clientY: y }); const h = rc && pickAt(rc); return h ? h.id : null; }, settleTime: () => { const t0 = performance.now(); solveGround(); return performance.now() - t0; }, groundMigrate: () => groundMigrate.size, liftKnob: () => { if (!liftGrp.visible) return null; const q = liftPick.getWorldPosition(new THREE.Vector3()); return window.__shotref.project(q.x, q.y, q.z); }, attachTo, setMount, writeCam, shownObj: (id, t) => shownObj(getObj(id), t), viewOf: id => { const v = views.get(id); if (!v) return null; v.group.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(v.group), sz = bb.getSize(new THREE.Vector3()); return { p: v.group.position.toArray(), yaw: v.group.rotation.y * R2D, s: v.group.scale.toArray(), size: sz.toArray(), wheels: v.wheels ? v.wheels.list.map(w => ({ spin: w.spin.rotation.x, steer: w.piv.rotation.y, front: w.front })) : null }; }, ringKnob: () => ringGrp.visible ? ringKnob.getWorldPosition(new THREE.Vector3()).toArray() : null, getPref, setPref, showMenu, menuButton, hideMenu, project: (x, y, z) => { const r = canvas.getBoundingClientRect(); let cam = view === 'top' ? topCam : edCam, rr = { x: 0, y: 0, w: r.width, h: r.height }; if (view === 'camera') { cam = renderCam; rr = camRect(r.width, r.height); } const v = new THREE.Vector3(x, y, z).project(cam); return [r.left + rr.x + (v.x * 0.5 + 0.5) * rr.w, r.top + rr.y + (-v.y * 0.5 + 0.5) * rr.h]; }, get view() { return view; }, get selected() { return selected; }, get state() { return state; }, get assets() { return assets; }, setT: t => setTime(t, false), applyMove, addObject, select, setView, evalCam, exportVideo, exportPNG, pickCodec, _exportCanvas: () => exRenderer ? exRenderer.domElement : null, changed, writeObj, evalObj, setKey, get T() { return T; },
     get rebuilds() { return rebuilds; }, urlCacheIds: () => [...urlCache.keys()],
     /* batch H (takes) hooks for the smoke test */
-    switchTake, newTake, snapPoolSize: () => snapLive,
+    switchTake, newTake, snapPoolSize: () => snapLive, snapPruned: () => snapPruned,
     get history() { return { at: hi, length: hist.length, bytes: hist[hi].length }; },
     /* batch F (camera UX and light) hooks for the smoke test */
     editCamPos: () => edCam.position.toArray(), detectMove, describeShot, camToWorld, pointsVisible: () => ckPts.some(m => m.visible),
