@@ -3,7 +3,15 @@
 ShotRef helps you plan a shot and hand it to an AI video model. You build a rough set, move the camera, and export a clip or frames. This guide covers the basics. Everything is also in the app: press the **?** on any panel heading, or open **Quick start** from the welcome screen.
 
 **Contents**
-[The three steps](#the-three-steps) · [1. Build](#1-build-the-scene) · [2. Frame](#2-frame-the-shot-and-move-the-camera) · [3. Export](#3-export) · [Shots, takes and sets](#shots-takes-and-sets) · [Saving](#saving-and-opening) · [Shortcuts](#shortcuts) · [Advanced controls](#advanced-controls) · [Troubleshooting](#troubleshooting)
+[Tours](#tours) · [The three steps](#the-three-steps) · [1. Build](#1-build-the-scene) · [2. Frame](#2-frame-the-shot-and-move-the-camera) · [3. Export](#3-export) · [Shots, takes and sets](#shots-takes-and-sets) · [Saving](#saving-and-opening) · [Shortcuts](#shortcuts) · [Advanced controls](#advanced-controls) · [Troubleshooting](#troubleshooting)
+
+## Tours
+
+ShotRef has two guided tours. The **quick tour** has 10 stops. It points out each part of the screen and changes nothing. The **hands-on tour** has 16 stops. You try each thing for real on a practice stage, and your own scene comes back exactly as it was when the tour ends. Nothing is saved while you practise.
+
+The first time you open ShotRef, a window asks **Take a look round the set?** Choose **Take the quick tour**, **Try it hands-on** or **Not now**. After that, both tours are in the **Help** menu: in the browser, under **Help** in the gear menu, and in the Windows app, the **Help** menu. They are also at the top of the **Quick start** page.
+
+Press `Esc` or **End tour** to stop a tour at any time.
 
 ## The three steps
 
