@@ -6,16 +6,16 @@ Read this before doing anything. Claude updates it at the end of every session.
 A "very dumbed-down Blender" in one offline HTML file: block people and props, move the camera, export reference clips and frames for AI video models.
 
 ## Current state            (rewritten every session, 15 lines max)
-Works:   everything from 1.2.0/1.3.x (see Log) plus NEW onboarding tours on branch feature/onboarding-tour (not merged, not released):
-         first-run question "Take a look round the set?", quick tour (10 stops), hands-on tour (16 stops) on a practice stage that
-         puts your scene back exactly, Help menu items (gear menu Help heading + Windows Help menu), buttons on the Quick start page.
-Builds:  dist/ShotRef.html 1034 KB (built 2026-11-24 from 95456cc). No new installers built for the tours.
-Tests:   npm test 317/317 (640 s), npm run test:desktop 23/23, 0 Electron processes left. Final whole-branch review: approved after one fix wave.
-Code:    PUBLIC GitHub https://github.com/alistotleLB/ShotRef. Branch feature/onboarding-tour pushed once (3 commits); 9 newer commits only local.
-         PR #1 was opened by mistake and closed (reopen when Ali wants the merge).
-Known:   walking feet slide slightly at heel strike. Tour leftovers parked (see Handoff OPEN).
-Next:    Ali runs checklist C4 (the tours). Then: merge to main, push, release. C3 still waiting too.
-Not yet tried by Ali: the tours; everything since 2026-11-22.
+Works:   ShotRef 1.4.0, RELEASED 2026-11-24 (https://github.com/alistotleLB/ShotRef/releases/tag/v1.4.0): everything from 1.3.1 plus the
+         quick tour (10 stops, orange viewfinder corners), the first-run question "Take a look round the set?", tour items in the Help menus.
+Off:     the hands-on tour (16 stops, practice stage) is built and tested but switched off (Ali: needs a lot of improvement).
+         Turn on: HANDS_TOUR_DEFAULT in src/main.js + HANDS_TOUR in electron/main.cjs (or the hidden pref handsTour for one browser).
+Builds:  dist/ShotRef.html 1034 KB; release/ShotRef-Setup-1.4.0.exe (122 MB), ShotRef-1.4.0-portable.exe (111 MB), unsigned.
+Tests:   npm test 318/318 (628 s), npm run test:desktop 23/23, 0 Electron left (run before merging; merge changed no code).
+Code:    PUBLIC GitHub main = release 1.4.0. Branch feature/onboarding-tour merged (its GitHub copy is stale, 3 commits; PR #1 closed).
+Known:   walking feet slide slightly at heel strike. claude.ai artifact still on 1.2.0 (not republished).
+Next:    Ali tries checklist C4 (quick tour). Then: improve the hands-on tour (what Ali disliked: to ask), installable web app + website.
+Not yet tried by Ali: the quick tour; everything since 2026-11-22.
 
 ## Ali's goals              (his exact words, dated; never reworded)
 "Act as a principal software engineer leading a review of my application. Inspect the actual code, run the app and safe checks where possible, and give me a prioritized plan covering architecture, bugs and reliability, performance, and UI/UX." - Ali, 2026-11-22
@@ -82,7 +82,7 @@ Storage: build output in `dist/` (git-ignored).
 - C1: build dist/ShotRef.html of 2026-11-23. Steps in the Handoff section. Result: (waiting)
 - C2: Windows app 1.1.0. Superseded by C3 (never run).
 - C3: ShotRef 1.2.0 web + Windows. Steps in the Handoff section. Result: (waiting)
-- C4: onboarding tours, dist/ShotRef.html from branch feature/onboarding-tour (95456cc). Steps in the Handoff section. Result: (waiting)
+- C4: quick tour, ShotRef 1.4.0 (released). Steps in the Handoff section. Result: (waiting). Hands-on items dropped (tour switched off, N-012).
 
 ## Ali's notes               (every request/feedback, word for word)
 | Id | Date | Ali's words | Status |
@@ -100,6 +100,7 @@ Storage: build output in `dist/` (git-ignored).
 | N-010 | 2026-11-24 | (screenshot with arrow) "Move these buttons as pet the arrow, and give them a title of \"View\" .. In their place, add a \"Camera Settings\" button..." then "skip the camera settings button for now" (the Frame step already opens that panel) | done 2026-11-24 (Editor/Top/Camera + split moved to a centred View group in the Shots row; not released yet) |
 | N-011 | 2026-11-24 | "add: onboarding tour. Basic onboaring, and advanced interactive onboarding." then "Let's start with the onboarding process. Give me a clear plan before execution. I want you to orchestrate the development across Opus and Sonnet helpers. Use project keeper, and use all helpful skills for this tast." Answers: "Let's stop at \"they know where things are\"", "A: spotlight engine", "make sure to use UI/UX design skills", "Practice stage", then "Approved, but take these points into consideration: 1) On first run only, ask the user is they would like to take the tour. Mention that the tour can be taken later through the Help menu. 2) Use a copywriting specialized helper to write the content of the tour in an engaging and easy language." | built 2026-11-24 on branch feature/onboarding-tour, awaiting C4 (design docs/superpowers/specs/2026-11-24-onboarding-tour-design.md); guessed: "Help menu" = desktop Help menu + a Help heading in the gear menu |
 | N-012 | 2026-11-24 | "I didn't like the long tour, it needs a lot of improvement, is there a way to keep the code, but disable the feature for now until we improve it?" | done 2026-11-24 (hands-on tour switched off: all entry points hidden, code and tests kept; quick tour stays; guessed: "the long tour" = the hands-on tour) |
+| N-013 | 2026-11-24 | "publish the release when ready" | done 2026-11-24 (v1.4.0 published) |
 | N-007 | 2026-11-23 | "dont forget to orchestrate the tasks across Opus and Sonnet for maximum efficiency" | done (Sonnet built, Opus reviewed, medium effort) |
 
 ### Approved and locked     (changing these needs Ali's yes)
@@ -129,7 +130,7 @@ Not verified: the real claude.ai frame (downloads, clipboard), a normal non-head
 Proposed order: Step 0 backup + smoke test (needs OK) -> quick wins -> A1, then A2+S2 -> design/measure items -> optional tidy-ups.
 
 ## Handoff                   (replaced each session)
-STATE     Onboarding tours built on branch feature/onboarding-tour (12 commits on top of c079a82), all reviewed; 317/317 web, 23/23 desktop.
+STATE     ShotRef 1.4.0 released with the quick tour; the hands-on tour is built but switched off. 318/318 web, 23/23 desktop.
 CHANGED   src/tour.js (spotlight engine: orange viewfinder corners, bubble, camera-path progress, keyboard, pauses while a dialog is open),
           src/tour-copy.js (all tour words; copywriter helper + controller edits), src/main.js (BASIC_STOPS, handsStops(), startTour, first-run #mTour,
           practice stage enterPractice/leavePractice/endPracticeFirst, guards on autosave/recents/platform.hold), electron/main.cjs (Help menu items),
@@ -137,19 +138,16 @@ CHANGED   src/tour.js (spotlight engine: orange viewfinder corners, bubble, came
 TESTS     npm test 317/317 (640 s) and test:desktop 23/23 on a build newer than the last commit, run by Claude 2026-11-24.
 OPEN      Parked minors: refusal toast is generic during the brief boot photo load; after a dialog closes mid-tour, keyboard focus is on the page not the bubble;
           a photo decode can flash on the practice stage for one frame; drop test doesn't assert the image; one timing check allows 1.2 s.
-          Not merged, not pushed since the first 3 commits, not released. Unsigned builds as before.
+          Hands-on tour off until improved. claude.ai artifact not republished (still 1.2.0). Unsigned builds as before.
 FINDINGS  Review rounds found 2 work-loss races (see Lessons) and a dialog-under-tour bug; all fixed with tests.
-NEXT      Ali runs C4:
-          Build: dist/ShotRef.html (open in Edge or Chrome). For a true first run use a fresh browser profile or an InPrivate window.
-          1. Open it in an InPrivate window -> "Take a look round the set?" appears before the starter sets.
+NEXT      Ali runs C4 (1.4.0: the Windows app updates itself, or the release page has ShotRef.html):
+          1. Open ShotRef.html in an InPrivate window -> "Take a look round the set?" appears before the starter sets; it offers the quick tour and Not now.
           2. Click Take the quick tour -> orange corners frame each part; Next, Back and End tour work; at the end the starter sets open.
           3. Reload -> the question does not appear again.
-          4. Make a small scene (a person and a chair), then gear menu > Try it hands-on -> an empty practice stage appears.
-          5. Do each step it asks (place, drag, right-click, Top, Camera, double-click, Play, Export) -> each shows a tick and moves on.
-          6. Press ? during the hands-on tour -> Quick start opens on top and can be closed; the tour carries on.
-          7. Press End tour -> your person and chair are back exactly as they were.
-          8. Windows app (npm run desktop): Help menu -> Take the quick tour and Try it hands-on both work.
-          9. Read the tour wording as you go -> tell me any line you would change.
+          4. Gear menu -> Help -> Take the quick tour runs it again; press ? -> Quick start has the tour button at the top.
+          5. Windows app: Help menu -> Take the quick tour works; there is no hands-on item.
+          6. Read the tour wording -> tell me any line you would change.
+          Also: tell me what you disliked about the hands-on tour, so it can be improved.
           Reply with the numbers that didn't work, and what you saw.
 
 ## Log                       (append only, dated, real numbers; always last)
@@ -165,3 +163,4 @@ NEXT      Ali runs C4:
 - 2026-11-24 update mechanism: electron-updater ^6.8 (only runtime dependency; three and mp4-muxer moved to devDependencies), electron/updater.cjs, Help menu items, scripts/publish-release.mjs, version 1.3.0. test:desktop 21/21. Packaged app launched and reached GitHub (404 on v1.2.0: no latest.yml yet, handled silently). Not tested: quitAndInstall (the install step) and a real update from an installed copy: needs 1.3.0 released, installed, then a later release.
 - 2026-11-24 View buttons moved from the top bar into a centred "View" group in the Shots row (#shotRow: chips | View | contact sheet). Top bar is now two equal halves so the step bar stays centred (#top .topL/.topR). Found by tests and a screenshot: step bar off-centre, row 1 px too tall, and a stray "null" text. npm test 266/266, test:desktop 21/21. Docs and 6 README screenshots retaken. Not released (version still 1.3.0).
 - 2026-11-24 onboarding tours (N-011): design approved, 6-task plan, built by Sonnet helpers (copywriter + 5 builders), each task reviewed by Opus; 4 fix rounds + 1 final fix wave. Reviews caught 2 work-loss races and a dialog-under-tour bug. npm test 317/317 (640 s), test:desktop 23/23. Build 1034 KB. Branch feature/onboarding-tour, not merged. PR #1 opened by mistake and closed.
+- 2026-11-24 hands-on tour switched off (N-012: code and tests kept, entry points hidden, one-tour wording). npm test 318/318 (628 s), test:desktop 23/23. Merged into main, version 1.4.0, installers built (setup 122 MB, portable 111 MB), released v1.4.0 on GitHub (Ali: "publish the release when ready"); latest.yml serves 1.4.0.
