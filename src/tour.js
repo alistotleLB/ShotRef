@@ -85,8 +85,8 @@ function runTour({ stops, ui, interactive = false, onEnd = null, canKey = null }
   }
   function resolve(s) {
     if (!Array.isArray(s.target)) return rectOf(s.target);
-    const rs = s.target.map(rectOf);
-    if (!rs.length || rs.some(r => !r)) return null;
+    const rs = s.target.map(rectOf).filter(Boolean); /* the visible members; none visible means a centred bubble */
+    if (!rs.length) return null;
     const left = Math.min(...rs.map(r => r.left)), top = Math.min(...rs.map(r => r.top)), right = Math.max(...rs.map(r => r.right)), bottom = Math.max(...rs.map(r => r.bottom));
     return { left, top, right, bottom, width: right - left, height: bottom - top };
   }

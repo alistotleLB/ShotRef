@@ -7,6 +7,7 @@ export const TOUR_COPY = {
     end: 'End tour',
     finish: 'Finish',
     skip: 'Skip this step',
+    busy: "Finish what you're doing first, then start the tour.",
     progress: (n, total) => `${n} of ${total}`,
   },
 
@@ -90,7 +91,7 @@ export const TOUR_COPY = {
     },
     'h-place': {
       title: 'Place a person',
-      text: 'Click Person, then click the floor. They stand on that spot, ready for blocking.',
+      text: 'Click Man, Woman or Child, then click the floor. They stand on that spot, ready for blocking.',
       done: 'Placed',
     },
     'h-drag': {
@@ -137,8 +138,12 @@ export const TOUR_COPY = {
       text: 'Key saves the selected item\'s position at the playhead. Blue tags on the timeline mark changes in a person\'s action.',
     },
     'h-shots': {
-      title: 'Shots and takes',
-      text: 'Your shots appear in this row, and + New shot adds another camera setup. Take saves an alternative version of the whole scene.',
+      title: 'Shots',
+      text: 'Your shots appear in this row, and + New shot adds another camera setup.',
+    },
+    'h-take': {
+      title: 'Takes',
+      text: 'Take saves an alternative version of the whole scene. Switch between takes to compare ideas.',
     },
     'h-gear': {
       title: 'Advanced controls',

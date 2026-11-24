@@ -4729,13 +4729,14 @@ function handsStops() {
   const needPerson = () => personId() || addPerson('man', false).id; /* skipped h-place: one normal add (a practice edit) so the stops still work */
   const camView = () => { if (view !== 'camera') setView('camera'); };
   const tabNow = () => { const b = $('#leftTabs .on'); return b ? b.dataset.lt : 'add'; };
-  const personPos = () => { const o = getObj(personId()); return o ? evalObj(o, T).p.map(v => v.toFixed(4)).join() : ''; };
+  const personPosOf = id => { const o = getObj(id); return o ? evalObj(o, T).p.map(v => v.toFixed(4)).join() : ''; };
+  const personPos = () => personPosOf(personId());
   return [
     { ...copy('h-welcome'), target: null },
     { ...copy('h-build'), target: '#stepSeg', before: () => goStep('frame'), snap: currentStep, waitFor: s => currentStep() === 'build' && currentStep() !== s },
     { ...copy('h-place'), target: ['#left', '#vp'], corner: 'tr', before: () => goStep('build'), snap: () => persons().length,
       waitFor: n => !placing && persons().length > n && (placed = persons()[persons().length - 1].id) !== null },
-    { ...copy('h-drag'), target: '#vp', before: () => { goStep('build'); select(needPerson()); }, snap: personPos, waitFor: s => !dragActive && personPos() !== s },
+    { ...copy('h-drag'), target: '#vp', before: () => { goStep('build'); select(needPerson()); }, snap: () => { const id = personId(); return { id, pos: personPos() }; }, waitFor: s => !!s.id && !!getObj(s.id) && !dragActive && personPosOf(s.id) !== s.pos },
     { ...copy('h-rightclick'), target: '#vp', before: () => { if (view === 'camera') setView(lastWorkView); hideMenu(); }, waitFor: () => menuOpen() },
     { ...copy('h-scenetab'), target: '#leftTabs [data-lt=scene]', before: () => setLeftTab('add', false), snap: tabNow, waitFor: s => tabNow() === 'scene' && s !== 'scene' },
     { ...copy('h-top'), target: '#viewSeg [data-v=top]', before: () => { if (view === 'top') setView('editor'); }, snap: () => view, waitFor: s => view === 'top' && s !== 'top' },
@@ -4746,15 +4747,18 @@ function handsStops() {
     { ...copy('h-play'), target: '#bPlay', before: () => { if (playing) setPlaying(false); }, snap: () => playing, waitFor: s => playing && !s },
     { ...copy('h-key'), target: '#bKey', before: () => { if (playing) setPlaying(false); } },
     { ...copy('h-shots'), target: '#shotBar' },
+    { ...copy('h-take'), target: '#bTake' },
     { ...copy('h-gear'), target: '#bMenu' },
     { ...copy('h-export'), target: '#bExport', before: () => { if (currentStep() === 'export') goStep('build'); }, snap: currentStep, waitFor: s => currentStep() === 'export' && s !== 'export' },
   ];
 }
 /* the toast for a hands-on tour that cannot start: the same two lines as the quick tour, else (placing, recording, a path, a save) a plain one */
-const tourRefusal = () => exporting ? 'Wait for the export to finish.' : openModals().length ? 'Close the open window first.' : 'Finish what you are doing first.';
+const tourRefusal = () => exporting ? 'Wait for the export to finish.' : openModals().length ? 'Close the open window first.' : TOUR_COPY.ui.busy;
 /* The one way to start a tour: 'basic' or 'hands'. opts.firstRun: the Start a shot picker follows the tour. */
 function startTour(kind, opts = {}) {
   const firstRun = !!opts.firstRun;
+  /* a tour is already running: leave it exactly as it is */
+  if (tourActive() || practicing) { toast(TOUR_COPY.ui.busy); if (firstRun) openStarters(true); return null; }
   if (kind === 'hands') {
     if (!enterPractice()) { toast(tourRefusal()); if (firstRun) openStarters(true); return null; }
     const tab = getPref('leftTab', undefined); /* the tour's Add and Scene steps save the remembered tab: put it back */
@@ -4762,8 +4766,8 @@ function startTour(kind, opts = {}) {
       ui: TOUR_COPY.ui, interactive: true,
       onEnd: reason => {
         leavePractice(); setPref('leftTab', tab);
-        if (reason === 'external') return; /* an Open, New, drop... took over: its own action carries on */
         setPref('tourHandsDone', true); requestRender();
+        if (reason === 'external') return; /* an Open, New, drop... took over: its own action carries on, so no picker */
         if (firstRun) openStarters(true);
       },
     });

@@ -5684,7 +5684,7 @@ check('practice: dropping a photo mid-practice ends the tour and the photo goes 
 });
 
 /* ---------------- hands-on tour (the real UI, on the practice stage) ---------------- */
-const HANDS_IDS = ['h-welcome', 'h-build', 'h-place', 'h-drag', 'h-rightclick', 'h-scenetab', 'h-top', 'h-camera', 'h-cambar', 'h-focus', 'h-play', 'h-key', 'h-shots', 'h-gear', 'h-export'];
+const HANDS_IDS = ['h-welcome', 'h-build', 'h-place', 'h-drag', 'h-rightclick', 'h-scenetab', 'h-top', 'h-camera', 'h-cambar', 'h-focus', 'h-play', 'h-key', 'h-shots', 'h-take', 'h-gear', 'h-export'];
 const handsId = p => p.evaluate(() => { const t = window.__shotref.tour.current(); return t ? t.stop.id : null; });
 const handsTick = p => p.evaluate(() => { const d = document.querySelector('.tour-done'); return !!d && !d.hidden; });
 const handsAt = async (p, id) => { /* waits for a stop, then for the corners and the bubble to settle */
@@ -5753,7 +5753,7 @@ check('hands-on tour: each try-stop advances only after its action, through the 
   });
   ok(await p.evaluate(() => { const d = window.__shotref.state.camera.dof; return !!d && d.on && !d.auto; }), 'h-focus: depth of field is not on with a pick');
   await handsTry(p, 'h-play', async () => { await bubbleClear(p, '#bPlay', 'h-play'); await p.keyboard.press('Space'); });
-  await handsNext(p, 'h-key'); await handsNext(p, 'h-shots'); await handsNext(p, 'h-gear');
+  await handsNext(p, 'h-key'); await handsNext(p, 'h-shots'); await handsNext(p, 'h-take'); await handsNext(p, 'h-gear');
   await handsTry(p, 'h-export', async () => { await bubbleClear(p, '#bExport', 'h-export'); await p.click('#bExport'); });
   await settle(p, 300);
   ok(await noTour(p), 'the tour is still on screen after the last stop');
@@ -5766,14 +5766,52 @@ check('hands-on tour: each try-stop advances only after its action, through the 
 check('hands-on tour: a condition already true never skips a stop', async ({ open }) => {
   const p = await open(); await settle(p, 300);
   await handsStart(p);
-  await handsSkipTo(p, 'h-scenetab');
-  await p.evaluate(() => window.__shotref.setView('top'));
-  await p.click('#tourNext'); await handsAt(p, 'h-top');
+  await handsSkipTo(p, 'h-drag'); /* the practice scene now has a person */
+  ok(await p.evaluate(() => window.__shotref.state.objects.filter(o => o.type === 'person').length) === 1, 'no person to start from');
+  await p.click('#tourBack'); await handsAt(p, 'h-place');
   await settle(p, 1200);
-  ok(await handsId(p) === 'h-top' && !(await handsTick(p)), 'h-top was skipped because the view was already Top');
-  await p.keyboard.press('t'); await settle(p, 250);
-  ok(await handsTick(p) && await p.evaluate(() => window.__shotref.view) === 'top', 'a change to Top did not finish the stop');
+  ok(await handsId(p) === 'h-place' && !(await handsTick(p)), 'h-place was skipped because a person was already there');
+  await p.click('#addArea .tile[data-body=man]'); const [x, y] = await bigCentre(p); await p.mouse.move(x, y); await p.mouse.click(x, y);
+  await p.waitForFunction(() => !!document.querySelector('.tour-done') && !document.querySelector('.tour-done').hidden, null, { timeout: 2000 }).catch(() => { throw new Error('placing one more person did not finish the stop'); });
+  ok(await p.evaluate(() => window.__shotref.state.objects.filter(o => o.type === 'person').length) === 2, 'not two people');
   await p.click('#tourEnd'); await settle(p, 200);
+  noErrors(p);
+});
+
+check('hands-on tour: deleting the person at h-drag does not complete the stop', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await handsStart(p);
+  await handsSkipTo(p, 'h-drag');
+  await p.keyboard.press('Delete'); await settle(p, 300);
+  ok(await p.evaluate(() => window.__shotref.state.objects.filter(o => o.type === 'person').length) === 0, 'the person was not deleted');
+  await settle(p, 1200);
+  ok(await handsId(p) === 'h-drag' && !(await handsTick(p)), 'h-drag completed after the person was deleted');
+  await p.click('#tourNext'); await handsAt(p, 'h-rightclick');
+  await p.click('#tourEnd'); await settle(p, 200);
+  noErrors(p);
+});
+
+check('hands-on tour: starting a tour while one runs leaves it alone', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await handsStart(p);
+  await handsSkipTo(p, 'h-gear');
+  await gearCmd(p, 'tour-hands'); await settle(p, 300);
+  ok(await handsId(p) === 'h-gear' && await p.evaluate(() => window.__shotref.practicing()), 'the running tour was disturbed');
+  ok(await p.evaluate(() => /Finish what you/.test(document.querySelector('#toast').textContent)), 'no toast said why');
+  await p.evaluate(() => window.__shotref.startTour('basic')); await settle(p, 200);
+  ok(await handsId(p) === 'h-gear' && await p.evaluate(() => window.__shotref.practicing()), 'a quick tour replaced the hands-on tour');
+  await p.click('#tourEnd'); await settle(p, 200);
+  ok(await p.evaluate(() => !window.__shotref.practicing() && !document.querySelector('#tour')), 'not clean after End tour');
+  noErrors(p);
+});
+
+check('tour engine: a list target with some members hidden frames the visible ones', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => window.__shotref.tour.run([{ id: 'a', target: ['#bFile', '#nothingHere'], title: 'T', text: 't' }], { interactive: true }));
+  await settle(p, 500);
+  const g = await p.evaluate(() => { const a = document.querySelector('#bFile').getBoundingClientRect(), c = document.querySelector('.tour-corners').style; return { l: a.left - 6, cl: parseFloat(c.left) }; });
+  ok(Math.abs(g.l - g.cl) < 2, 'the corners do not frame the visible member: ' + JSON.stringify(g));
+  await p.evaluate(() => window.__shotref.tour.end());
   noErrors(p);
 });
 
