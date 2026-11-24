@@ -2900,7 +2900,7 @@ function focusLensAt(pt, name) {
   if (d < 0.1) { toast(name + ' is behind the camera'); return; }
   const dof = ensureDof(), wasOff = !dof.on, keyed = state.camera.keys.length > 0;
   dof.on = true; dof.auto = false;
-  writeCam({ fd: d }, true); propsDirty = true;
+  writeCam({ fd: d }, true); propsDirty = true; focusPicks++;
   toast(`Focus on ${name} (${d.toFixed(2)} m)` + (wasOff ? '. Depth of field is now on' : '') + (keyed ? `. Keyed at ${snapT(T).toFixed(2)} s: double-click something else later in the shot to pull focus` : ''), 4200);
 }
 function mountCamera(id) {
@@ -3502,6 +3502,7 @@ function setSimple(v) {
 
 /* ============================== commands ============================== */
 let focusPick = false;
+let focusPicks = 0; /* how many times the lens was focused on something (double-click, the menu, a pick): the hands-on tour waits for a new one */
 function startFocusPick() {
   ensureDof().on = true;
   if (view !== 'camera' && !splitOn()) setView('camera');
@@ -3517,7 +3518,7 @@ function finishFocusPick(rc) {
   const fwd = new THREE.Vector3(); renderCam.getWorldDirection(fwd);
   const d = hit.point.clone().sub(renderCam.position).dot(fwd);
   ensureDof().auto = false;
-  writeCam({ fd: d }, true); propsDirty = true;
+  writeCam({ fd: d }, true); propsDirty = true; focusPicks++;
   toast('Focus set to ' + d.toFixed(2) + ' m');
 }
 let lastWorkView = 'editor';
@@ -4718,14 +4719,56 @@ const BASIC_STOPS = [
   ['b-bye', null],
 ];
 const basicStops = () => BASIC_STOPS.map(([id, target, before]) => ({ id, target, before, title: TOUR_COPY.basic[id].title, text: TOUR_COPY.basic[id].text }));
+/* The hands-on tour: each "try" stop waits for a change made through the real UI, on the practice stage (enterPractice). snap() records what its waitFor
+   compares against when the stop begins, so something already true never skips a stop. before() puts the screen where the stop needs it (these view, step
+   and tab changes are not undo steps); keep() lets a key that moved the screen away (T on the camera bar) bring it back on the next tick. */
+function handsStops() {
+  let placed = null, framed = false; /* this run's person (the one h-place made) and whether the lens stop has framed them yet */
+  const H = TOUR_COPY.hands, copy = id => ({ id, title: H[id].title, text: H[id].text, done: H[id].done });
+  const personId = () => { if (placed && getObj(placed)) return placed; const q = persons()[0]; return q ? q.id : null; };
+  const needPerson = () => personId() || addPerson('man', false).id; /* skipped h-place: one normal add (a practice edit) so the stops still work */
+  const camView = () => { if (view !== 'camera') setView('camera'); };
+  const tabNow = () => { const b = $('#leftTabs .on'); return b ? b.dataset.lt : 'add'; };
+  const personPos = () => { const o = getObj(personId()); return o ? evalObj(o, T).p.map(v => v.toFixed(4)).join() : ''; };
+  return [
+    { ...copy('h-welcome'), target: null },
+    { ...copy('h-build'), target: '#stepSeg', before: () => goStep('frame'), snap: currentStep, waitFor: s => currentStep() === 'build' && currentStep() !== s },
+    { ...copy('h-place'), target: ['#left', '#vp'], corner: 'tr', before: () => goStep('build'), snap: () => persons().length,
+      waitFor: n => !placing && persons().length > n && (placed = persons()[persons().length - 1].id) !== null },
+    { ...copy('h-drag'), target: '#vp', before: () => { goStep('build'); select(needPerson()); }, snap: personPos, waitFor: s => !dragActive && personPos() !== s },
+    { ...copy('h-rightclick'), target: '#vp', before: () => { if (view === 'camera') setView(lastWorkView); hideMenu(); }, waitFor: () => menuOpen() },
+    { ...copy('h-scenetab'), target: '#leftTabs [data-lt=scene]', before: () => setLeftTab('add', false), snap: tabNow, waitFor: s => tabNow() === 'scene' && s !== 'scene' },
+    { ...copy('h-top'), target: '#viewSeg [data-v=top]', before: () => { if (view === 'top') setView('editor'); }, snap: () => view, waitFor: s => view === 'top' && s !== 'top' },
+    { ...copy('h-camera'), target: '#viewSeg [data-v=camera]', before: () => { if (view === 'camera') setView('editor'); }, snap: () => view, waitFor: s => view === 'camera' && s !== 'camera' },
+    { ...copy('h-cambar'), target: '#camBar', before: camView, keep: () => view === 'camera' },
+    { ...copy('h-focus'), target: '#vp', keep: () => view === 'camera', snap: () => focusPicks, waitFor: n => focusPicks > n,
+      before: () => { const id = needPerson(); camView(); select(id); if (!framed) { framed = true; frameShot('medium', id); } } },
+    { ...copy('h-play'), target: '#bPlay', before: () => { if (playing) setPlaying(false); }, snap: () => playing, waitFor: s => playing && !s },
+    { ...copy('h-key'), target: '#bKey', before: () => { if (playing) setPlaying(false); } },
+    { ...copy('h-shots'), target: '#shotBar' },
+    { ...copy('h-gear'), target: '#bMenu' },
+    { ...copy('h-export'), target: '#bExport', before: () => { if (currentStep() === 'export') goStep('build'); }, snap: currentStep, waitFor: s => currentStep() === 'export' && s !== 'export' },
+  ];
+}
+/* the toast for a hands-on tour that cannot start: the same two lines as the quick tour, else (placing, recording, a path, a save) a plain one */
+const tourRefusal = () => exporting ? 'Wait for the export to finish.' : openModals().length ? 'Close the open window first.' : 'Finish what you are doing first.';
 /* The one way to start a tour: 'basic' or 'hands'. opts.firstRun: the Start a shot picker follows the tour. */
 function startTour(kind, opts = {}) {
   const firstRun = !!opts.firstRun;
   if (kind === 'hands') {
-    /* TODO(Task 5): the hands-on tour on a practice stage. Remove this toast then. */
-    toast('The hands-on tour is coming.');
-    if (firstRun) openStarters(true);
-    return null;
+    if (!enterPractice()) { toast(tourRefusal()); if (firstRun) openStarters(true); return null; }
+    const tab = getPref('leftTab', undefined); /* the tour's Add and Scene steps save the remembered tab: put it back */
+    const handle = runStops(handsStops(), {
+      ui: TOUR_COPY.ui, interactive: true,
+      onEnd: reason => {
+        leavePractice(); setPref('leftTab', tab);
+        if (reason === 'external') return; /* an Open, New, drop... took over: its own action carries on */
+        setPref('tourHandsDone', true); requestRender();
+        if (firstRun) openStarters(true);
+      },
+    });
+    if (!handle) { leavePractice(); if (firstRun) openStarters(true); } /* refused after all (an export began, a dialog opened) */
+    return handle;
   }
   const tab = $('#leftTabs .on') ? $('#leftTabs .on').dataset.lt : 'add';
   const handle = runStops(basicStops(), {
@@ -5641,7 +5684,7 @@ function boot() {
   });
   window.addEventListener('pagehide', () => { flushAutosave(); recentFlush(); });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') recentFlush(); });
-  window.__shotref = { practice: { enter: enterPractice, leave: leavePractice, active: () => !!practicing }, practicing: () => !!practicing, stateForSave, docInfo: () => ({ dirty: platform.isDirty(), name: platform.currentName(), path: platform.currentPath(), doc: platform.getDoc() }), tour: { run: runStops, active: tourActive, end: r => tourHandle && tourHandle.end(r), current: () => tourHandle }, startTour, setSimple, promptText, ensureDof, get selection() { return selIds; }, layout: () => layout, gizmoNdc: (x, y) => { const q = gizmo._getPointer({ clientX: x, clientY: y, button: 0 }); return { x: q.x, y: q.y }; }, arrowsVisible: () => [...arrows.values()].some(a => a.visible), videoBitrate, snapValue: snapWith, rotSnapDeg: () => pref('rotSnap'), controlSpeeds: () => ({ orbit: edControls.rotateSpeed, zoom: edControls.zoomSpeed, cam: camControls.rotateSpeed }), flySpeedNow, walkSpeedNow: () => pathSpeedOf({ type: 'person', opts: { pose: 'stand' } }), buildAddPanel: () => buildAddPanel(), saveRecentNow, recentFlush, recentStats, recentBusy, selectMany: ids => { selIds = ids.slice(); selected = selIds[selIds.length - 1] || null; updateGizmo(); uiDirty = true; propsDirty = true; requestRender(); }, pickAtScreen: (x, y) => { const rc = rayFromEvent({ clientX: x, clientY: y }); const h = rc && pickAt(rc); return h ? h.id : null; }, settleTime: () => { const t0 = performance.now(); solveGround(); return performance.now() - t0; }, groundMigrate: () => groundMigrate.size, liftKnob: () => { if (!liftGrp.visible) return null; const q = liftPick.getWorldPosition(new THREE.Vector3()); return window.__shotref.project(q.x, q.y, q.z); }, attachTo, setMount, writeCam, shownObj: (id, t) => shownObj(getObj(id), t), viewOf: id => { const v = views.get(id); if (!v) return null; v.group.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(v.group), sz = bb.getSize(new THREE.Vector3()); return { p: v.group.position.toArray(), yaw: v.group.rotation.y * R2D, s: v.group.scale.toArray(), size: sz.toArray(), wheels: v.wheels ? v.wheels.list.map(w => ({ spin: w.spin.rotation.x, steer: w.piv.rotation.y, front: w.front })) : null }; }, ringKnob: () => ringGrp.visible ? ringKnob.getWorldPosition(new THREE.Vector3()).toArray() : null, getPref, setPref, showMenu, menuButton, hideMenu, project: (x, y, z) => { const r = canvas.getBoundingClientRect(), R = viewRects(r.width, r.height); let cam = view === 'top' ? topCam : edCam, rr = R.work || { x: 0, y: 0, w: r.width, h: r.height }; if (camPane() && R.frame) { cam = renderCam; rr = R.frame; } const v = new THREE.Vector3(x, y, z).project(cam); return [r.left + rr.x + (v.x * 0.5 + 0.5) * rr.w, r.top + rr.y + (-v.y * 0.5 + 0.5) * rr.h]; }, get view() { return view; }, get selected() { return selected; }, get state() { return state; }, get assets() { return assets; }, setT: t => setTime(t, false), applyMove, addObject, select, setView, evalCam, exportVideo, exportPNG, pickCodec, _exportCanvas: () => exRenderer ? exRenderer.domElement : null, changed, writeObj, evalObj, setKey, get T() { return T; },
+  window.__shotref = { practice: { enter: enterPractice, leave: leavePractice, active: () => !!practicing }, practicing: () => !!practicing, stateForSave, docInfo: () => ({ dirty: platform.isDirty(), name: platform.currentName(), path: platform.currentPath(), doc: platform.getDoc() }), tour: { run: runStops, active: tourActive, end: r => tourHandle && tourHandle.end(r), current: () => tourHandle }, startTour, setSimple, promptText, ensureDof, get selection() { return selIds; }, layout: () => layout, gizmoNdc: (x, y) => { const q = gizmo._getPointer({ clientX: x, clientY: y, button: 0 }); return { x: q.x, y: q.y }; }, arrowsVisible: () => [...arrows.values()].some(a => a.visible), videoBitrate, snapValue: snapWith, rotSnapDeg: () => pref('rotSnap'), controlSpeeds: () => ({ orbit: edControls.rotateSpeed, zoom: edControls.zoomSpeed, cam: camControls.rotateSpeed }), flySpeedNow, walkSpeedNow: () => pathSpeedOf({ type: 'person', opts: { pose: 'stand' } }), buildAddPanel: () => buildAddPanel(), saveRecentNow, recentFlush, recentStats, recentBusy, selectMany: ids => { selIds = ids.slice(); selected = selIds[selIds.length - 1] || null; updateGizmo(); uiDirty = true; propsDirty = true; requestRender(); }, pickAtScreen: (x, y) => { const rc = rayFromEvent({ clientX: x, clientY: y }); const h = rc && pickAt(rc); return h ? h.id : null; }, settleTime: () => { const t0 = performance.now(); solveGround(); return performance.now() - t0; }, groundMigrate: () => groundMigrate.size, liftKnob: () => { if (!liftGrp.visible) return null; const q = liftPick.getWorldPosition(new THREE.Vector3()); return window.__shotref.project(q.x, q.y, q.z); }, attachTo, setMount, writeCam, shownObj: (id, t) => shownObj(getObj(id), t), viewOf: id => { const v = views.get(id); if (!v) return null; v.group.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(v.group), sz = bb.getSize(new THREE.Vector3()); return { p: v.group.position.toArray(), yaw: v.group.rotation.y * R2D, s: v.group.scale.toArray(), size: sz.toArray(), wheels: v.wheels ? v.wheels.list.map(w => ({ spin: w.spin.rotation.x, steer: w.piv.rotation.y, front: w.front })) : null }; }, ringKnob: () => ringGrp.visible ? ringKnob.getWorldPosition(new THREE.Vector3()).toArray() : null, getPref, setPref, showMenu, menuButton, hideMenu, project: (x, y, z) => { const r = canvas.getBoundingClientRect(), R = viewRects(r.width, r.height); let cam = view === 'top' ? topCam : edCam, rr = R.work || { x: 0, y: 0, w: r.width, h: r.height }; if (camPane() && R.frame) { cam = renderCam; rr = R.frame; } const v = new THREE.Vector3(x, y, z).project(cam); return [r.left + rr.x + (v.x * 0.5 + 0.5) * rr.w, r.top + rr.y + (-v.y * 0.5 + 0.5) * rr.h]; }, get view() { return view; }, get placing() { return placing; }, get playing() { return playing; }, get step() { return currentStep(); }, get selected() { return selected; }, get state() { return state; }, get assets() { return assets; }, setT: t => setTime(t, false), applyMove, addObject, select, setView, evalCam, exportVideo, exportPNG, pickCodec, _exportCanvas: () => exRenderer ? exRenderer.domElement : null, changed, writeObj, evalObj, setKey, get T() { return T; },
     get rebuilds() { return rebuilds; }, urlCacheIds: () => [...urlCache.keys()],
     /* batch H (takes) hooks for the smoke test */
     switchTake, newTake, snapPoolSize: () => snapLive, snapPruned: () => snapPruned,

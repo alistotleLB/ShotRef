@@ -239,7 +239,10 @@ const ok = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
     ok(await page.evaluate(() => window.__shotref.tour.current().stop.id) === 'b-welcome', 'the basic tour did not start at its first stop');
     await page.evaluate(() => window.__shotref.tour.end());
     await helpClick(app, 'Try it hands-on');
-    await page.waitForFunction(() => /hands-on tour is coming/.test(document.querySelector('#toast').textContent), null, { timeout: 5000 });
+    await page.waitForFunction(() => window.__shotref.tour.active() && window.__shotref.practicing(), null, { timeout: 5000 });
+    ok(await page.evaluate(() => window.__shotref.tour.current().stop.id) === 'h-welcome', 'the hands-on tour did not start at its first stop');
+    await page.evaluate(() => window.__shotref.tour.end());
+    ok(await page.evaluate(() => !window.__shotref.practicing() && !document.querySelector('#tour')), 'the hands-on tour left the practice stage on');
     await kill(app);
   });
 

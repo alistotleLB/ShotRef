@@ -1,10 +1,14 @@
 /* Tour engine: a dimmed screen with viewfinder corners around one target and a small bubble beside it.
  * Pure DOM, no app state. main.js owns the stop lists and the guards (export, open dialogs).
  *
- * stop: { id, target: string | () => Element | null | null, title, text, before?: () => void,
+ * stop: { id, target: string | () => Element | null | [string | () => Element], title, text, before?: () => void,
+ *         keep?: () => boolean, corner?: 'tl' | 'tr' | 'bl' | 'br',
  *         waitFor?: (snap) => boolean, snap?: () => any, done?: string, interactive?: boolean }
- *   target   a CSS selector, a function returning an element, or null for a centred bubble.
+ *   target   a CSS selector, a function returning an element, null for a centred bubble, or a list of
+ *            selectors/functions: the corners frame their union (and a hands-on tour lets clicks through all of it).
  *   before   set-up run when the stop begins (also after Back).
+ *   keep     checked on every tick; when it returns false `before` runs again (a key moved the screen away from the stop's view).
+ *   corner   which inside corner of a very large target the bubble takes (default 'tl').
  *   snap     taken when the stop begins; waitFor(snap) must report a change since then (hands-on stops).
  *   done     the confirmation word shown with the tick once waitFor passes; the tour moves on 700 ms later.
  *   interactive: false  makes a stop of an interactive tour block clicks like a basic one.
@@ -72,12 +76,19 @@ function runTour({ stops, ui, interactive = false, onEnd = null, canKey = null }
   const stopOf = () => stops[i];
   const stopInteractive = () => !!interactive && stopOf().interactive !== false;
 
-  function resolve(s) {
+  function rectOf(x) {
     let t = null;
-    try { t = typeof s.target === 'function' ? s.target() : s.target ? document.querySelector(s.target) : null; } catch (e) { t = null; }
+    try { t = typeof x === 'function' ? x() : x ? document.querySelector(x) : null; } catch (e) { t = null; }
     if (!t || !t.getClientRects || !t.getClientRects().length) return null;
     const r = t.getBoundingClientRect();
     return r.width > 0 && r.height > 0 ? r : null;
+  }
+  function resolve(s) {
+    if (!Array.isArray(s.target)) return rectOf(s.target);
+    const rs = s.target.map(rectOf);
+    if (!rs.length || rs.some(r => !r)) return null;
+    const left = Math.min(...rs.map(r => r.left)), top = Math.min(...rs.map(r => r.top)), right = Math.max(...rs.map(r => r.right)), bottom = Math.max(...rs.map(r => r.bottom));
+    return { left, top, right, bottom, width: right - left, height: bottom - top };
   }
 
   /* where the corners go: the target plus a margin, kept inside the window */
@@ -95,7 +106,10 @@ function runTour({ stops, ui, interactive = false, onEnd = null, canKey = null }
     const pinned = () => { x = narrow ? 8 : (vw - w) / 2; y = vh - (narrow ? 8 : MARGIN) - h; };
     if (!c) { x = (vw - w) / 2; y = (vh - h) / 2; }
     else if (narrow) pinned();
-    else if ((c.right - c.left) * (c.bottom - c.top) > LARGE * vw * vh) { x = c.left + 16; y = c.top + 16; } /* a target this big leaves no room beside it: the bubble sits in its top-left corner */
+    else if ((c.right - c.left) * (c.bottom - c.top) > LARGE * vw * vh) { /* a target this big leaves no room beside it: the bubble sits inside one of its corners (top-left unless the stop says otherwise) */
+      const cn = stopOf().corner || 'tl';
+      x = cn[1] === 'r' ? c.right - 16 - w : c.left + 16; y = cn[0] === 'b' ? c.bottom - 16 - h : c.top + 16;
+    }
     else {
       const cx = (c.left + c.right) / 2, cy = (c.top + c.bottom) / 2;
       const clampX = v => Math.min(Math.max(v, MARGIN), vw - MARGIN - w);
@@ -117,7 +131,7 @@ function runTour({ stops, ui, interactive = false, onEnd = null, canKey = null }
     if (ended || i < 0) return;
     const s = stopOf(), r = resolve(s);
     let missing = false;
-    if (!r && s.target) {
+    if (!r && (Array.isArray(s.target) ? s.target.length : s.target)) {
       missing = true;
       if (!warned && performance.now() - stopAt > MISSING_MS) { warned = true; console.warn('tour: target not visible for stop "' + (s.id || i) + '", showing a centred bubble'); }
     }
@@ -183,8 +197,9 @@ function runTour({ stops, ui, interactive = false, onEnd = null, canKey = null }
 
   function tickOnce() {
     if (ended) return;
-    measure(false);
     const s = stopOf();
+    if (s.keep && !done) { let kept = true; try { kept = s.keep() !== false; } catch (e) { kept = true; } if (!kept && s.before) { try { s.before(); } catch (e) { console.error('tour: before() failed for stop "' + (s.id || i) + '"', e); } } }
+    measure(false);
     if (!done && stopInteractive() && s.waitFor) {
       let yes = false;
       try { yes = !!s.waitFor(snap); } catch (e) { yes = false; }
