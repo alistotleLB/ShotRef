@@ -121,7 +121,7 @@ Proposed order: Step 0 backup + smoke test (needs OK) -> quick wins -> A1, then 
 ## Handoff                   (replaced each session)
 STATE     ShotRef 1.2.0: claude.ai features rebuilt here; web + Windows builds; 265 web + 14 desktop checks pass; final review Ready.
 CHANGED   9 port batches (docs/plans/2026-11-23-port-plan.md, port-inventory.md). Rulings: opening/restoring never moves or changes anything (raised items become "Can float"); old files keep their blur/shadow look; with 2+ shots a length change re-times only that shot's camera; unreadable takes/sets kept byte-exact; recents never on the edit path; IndexedDB v2 (assets + projects).
-OPEN      claude.ai artifact still runs the OLD newer build (6uRy4QMBjvK9Rn5PLedSUq): republish dist/ShotRef.html there only with Ali's OK. Foot slide polish. Code signing. Auto-update. Web app install + website.
+OPEN      claude.ai artifact 6uRy4QMBjvK9Rn5PLedSUq republished 2026-11-24 from this build (v1.2.0). How: dist/ShotRef.html with the old page's <script>window.__SHOTREF_EMBED__=...</script> (Desert overlook demo, from reference/artifact.html) inserted before the app script; publish to the same URL. Foot slide polish. Code signing. Auto-update. Web app install + website.
 FINDINGS  reference/ (git-ignored) holds the artifact build used for the port.
 NEXT      Ali runs C3:
           Build: release/ShotRef-Setup-1.2.0.exe (or portable), and dist/ShotRef.html in Chrome/Edge.
@@ -145,3 +145,4 @@ NEXT      Ali runs C3:
 - 2026-11-23 branding applied to the app: title "ShotRef", SVG+PNG tab icon (data: URLs), theme-color, top-bar mark + tagline (word hidden below 1100 px), first-launch welcome header "Start a shot" with slogan. New smoke check; npm test 79/79. Build 876 KB.
 - 2026-11-23 git + private GitHub repo. Phase 1 (src/platform.js, .shotref, Save as, unsaved mark) and Phase 2 (Electron 45.4.1, electron-builder 26.18.0) built by Sonnet implementers, reviewed by Opus (5 review rounds, 8 Important findings fixed). npm test 89/89, test:desktop 13/13. Installer 121 MB, portable 111 MB. Version 1.1.0.
 - 2026-11-24 port of the claude.ai version done: 9 batches + final fix wave (Sonnet built, Opus reviewed; 2 Critical and 14 Important found and fixed in review). npm test 265/265 (~9 min), test:desktop 14/14. Version 1.2.0, installer 122 MB, portable 111 MB. Desktop tests now kill Electron process trees.
+- 2026-11-24 claude.ai artifact 6uRy4QMBjvK9Rn5PLedSUq republished from the 1.2.0 build with the Desert overlook demo embedded (Ali: "Yes, republish it"). Checked headless first: 23 objects + photo, 0 errors.
