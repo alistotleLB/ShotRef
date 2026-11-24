@@ -1,0 +1,4 @@
+# Only read by electron-updater when ShotRef runs from source (npm run desktop, test/desktop.cjs). Not packaged into the installer.
+provider: generic
+url: http://127.0.0.1/
+updaterCacheDirName: shotref-updater

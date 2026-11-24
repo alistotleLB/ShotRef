@@ -9,6 +9,7 @@ ShotRef is a "very dumbed-down Blender" for **blocking and camera moves only**. 
 - The app must stay a **single offline HTML file**: no external requests, CDNs or fonts.
 - Check changes in Chrome or Edge.
 - Desktop app (Windows, Electron, `electron/main.cjs` + `preload.cjs`, loads the same `dist/ShotRef.html`): `npm run desktop` builds the page and starts it; `npm run dist:win` writes `release/ShotRef-Setup-<ver>.exe` and `ShotRef-<ver>-portable.exe` (unsigned). If `electron` has no `dist` folder after `npm install`, run `node node_modules/electron/install.js`.
+- **Desktop updates** (`electron/updater.cjs`, electron-updater, GitHub Releases of alistotleLB/ShotRef): native dialogs only, nothing in the page or preload. Ship with: raise `version`, `npm run dist:win`, `npm run publish:win` (needs the release's `latest.yml`; the script attaches it). `hardenSession` still blocks all page network; `updater.allowsRequest` lets through main-process requests to GitHub only. `three` and `mp4-muxer` are devDependencies (bundled into the page); only `electron-updater` is a runtime dependency, so keep `files` in package.json free of a `node_modules` exclusion. The install step (`quitAndInstall`) can't run under test; the check, download and verify can (`SHOTREF_UPDATE_URL`, see `test/desktop.cjs`).
 - **mp4-muxer** is deprecated: it's superseded by Mediabunny upstream. It works and is bundled; don't upgrade or swap it without testing exports.
 
 ## Testing

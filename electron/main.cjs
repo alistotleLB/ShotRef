@@ -3,6 +3,7 @@
 const { app, BrowserWindow, Menu, dialog, ipcMain, session } = require('electron');
 const fs = require('fs');
 const path = require('path');
+const updater = require('./updater.cjs');
 
 const PAGE = path.join(__dirname, '..', 'dist', 'ShotRef.html');
 const ICON = path.join(__dirname, '..', 'branding', 'shotref.ico');
@@ -17,13 +18,14 @@ const allowedPaths = new Set(); /* paths the page may write to: only ones that c
 
 /* ---------- small settings file: last folder per kind + recent list ---------- */
 const settingsFile = () => path.join(app.getPath('userData'), 'shotref-settings.json');
-let settings = { folders: {}, recent: [] };
+let settings = { folders: {}, recent: [], autoUpdate: true };
 function loadSettings() {
   try {
     const s = JSON.parse(fs.readFileSync(settingsFile(), 'utf8'));
     settings = {
       folders: s && typeof s.folders === 'object' && s.folders ? s.folders : {},
       recent: Array.isArray(s && s.recent) ? s.recent.filter(p => typeof p === 'string').slice(0, 8) : [],
+      autoUpdate: !(s && s.autoUpdate === false), /* on unless the user turned it off in Help */
     };
   } catch (e) { /* first run or unreadable: start fresh */ }
 }
@@ -166,6 +168,10 @@ function buildMenu() {
     ] },
     { label: 'Help', submenu: [
       { label: 'Quick start', click: () => send('shotref:menu', 'help') },
+      { type: 'separator' },
+      { label: 'Check for updates…', click: () => updater.checkNow(true) },
+      { label: 'Check for updates automatically', type: 'checkbox', checked: settings.autoUpdate, click: i => { settings.autoUpdate = i.checked; saveSettings(); } },
+      { type: 'separator' },
       { label: 'About ShotRef', click: () => dialog.showMessageBox(win, {
         type: 'info', title: 'About ShotRef', message: 'ShotRef', detail: 'Version ' + app.getVersion() + '\nBlocking and camera moves for AI video reference.' }) },
     ] },
@@ -175,7 +181,8 @@ function buildMenu() {
 
 /* ---------- window ---------- */
 function hardenSession(ses) {
-  ses.webRequest.onBeforeRequest((d, cb) => cb({ cancel: !/^(file|data|devtools|chrome-extension):/i.test(d.url) })); /* no network of any kind */
+  /* no network for the page; the updater's own requests (main process, GitHub only) are let through by updater.allowsRequest */
+  ses.webRequest.onBeforeRequest((d, cb) => cb({ cancel: !/^(file|data|devtools|chrome-extension):/i.test(d.url) && !updater.allowsRequest(d) }));
   /* the only thing the page may ask for is writing a copied frame to the clipboard */
   ses.setPermissionRequestHandler((wc, perm, cb) => cb(perm === 'clipboard-sanitized-write'));
   ses.setPermissionCheckHandler((wc, perm) => perm === 'clipboard-sanitized-write');
@@ -238,8 +245,11 @@ else {
   });
   app.whenReady().then(() => {
     app.setAppUserModelId('app.shotref.desktop');
-    loadSettings(); hardenSession(session.defaultSession); buildMenu();
+    loadSettings(); hardenSession(session.defaultSession);
+    updater.init({ getWin: () => win, getSettings: () => settings });
+    buildMenu();
     createWindow(fileFromArgs(process.argv));
+    updater.scheduleAutoCheck();
   });
-  app.on('window-all-closed', () => app.quit());
+  app.on('window-all-closed', () => { if (updater.installRequested()) updater.install(); else app.quit(); });
 }

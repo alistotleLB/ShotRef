@@ -23,6 +23,25 @@ npm run dist:win    # writes release/ShotRef-Setup-<version>.exe and ShotRef-<ve
 
 If Electron has no `dist` folder after `npm install`, run `node node_modules/electron/install.js`.
 
+### Shipping an update
+
+The installed Windows app checks this repository's GitHub Releases ([electron-updater](https://www.electron.build/auto-update), code in `electron/updater.cjs`). To ship a change to everyone:
+
+```bash
+# 1. raise "version" in package.json (for example 1.3.0 -> 1.3.1), then commit and push
+npm run build && npm test && npm run test:desktop
+npm run dist:win       # builds release/ShotRef-Setup-<version>.exe, the blockmap, the portable exe and latest.yml
+npm run publish:win    # makes the GitHub release with those files (add --draft to look at it first)
+```
+
+`latest.yml` is what installed copies read, so it must be attached to the release: the script does that. Optionally write `docs/RELEASE-NOTES-<version>.md` first; otherwise GitHub writes the notes from the commits.
+
+Installed copies check about 8 seconds after launch (switch off in **Help, Check for updates automatically**) and offer the update. **Help, Check for updates…** checks on demand. "Restart now" closes the window the normal way, so the page still asks about unsaved work. The portable `.exe` cannot replace itself, so it only offers to open the download page.
+
+The updater only runs in the installed app. From source, `SHOTREF_UPDATE_URL=http://127.0.0.1:<port>` points the check at a local folder that serves `latest.yml` (the desktop tests do this). The first build with the updater was 1.3.0, so people on 1.2.0 or older install 1.3.0 by hand once.
+
+Updates are unsigned like the installer. electron-updater checks the file's SHA-512 against `latest.yml`, but the app does not check a publisher signature until a code-signing certificate is set up.
+
 ## Tests
 
 ```bash

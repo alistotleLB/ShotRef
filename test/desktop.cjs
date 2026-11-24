@@ -14,7 +14,7 @@ const apps = [];
 
 async function launch(args = [], opts = {}) {
   const userData = opts.userData || path.join(tmp, 'profile' + (++launches));
-  const app = await electron.launch({ executablePath: require('electron'), args: [ROOT, '--user-data-dir=' + userData, ...args], cwd: ROOT });
+  const app = await electron.launch({ executablePath: require('electron'), args: [ROOT, '--user-data-dir=' + userData, ...args], cwd: ROOT, env: { ...process.env, ...(opts.env || {}) } });
   apps.push(app);
   const page = await app.firstWindow();
   const errors = [];
@@ -47,6 +47,37 @@ const killTree = pid => { try { require('child_process').execFileSync('taskkill'
 const kill = async app => { try { const pid = app.process().pid; if (process.platform === 'win32') killTree(pid); else app.process().kill(); } catch (e) { /* gone */ } };
 process.on('exit', () => { for (const a of apps) { try { const pid = a.process().pid; if (process.platform === 'win32') killTree(pid); else a.process().kill(); } catch (e) { /* gone */ } } });
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+
+/* ---- update tests: a local feed that looks like GitHub's latest.yml + installer, and a stub for message boxes ---- */
+const http = require('http');
+const crypto = require('crypto');
+const INSTALLER = crypto.randomBytes(4096);
+function startFeed(version) {
+  const hits = [];
+  const sha = crypto.createHash('sha512').update(INSTALLER).digest('base64');
+  const name = 'ShotRef-Setup-' + version + '.exe';
+  const yml = 'version: ' + version + '\nfiles:\n  - url: ' + name + '\n    sha512: ' + sha + '\n    size: ' + INSTALLER.length + '\npath: ' + name + '\nsha512: ' + sha + "\nreleaseDate: '2026-11-24T00:00:00.000Z'\n";
+  const srv = http.createServer((req, res) => {
+    const u = req.url.split('?')[0]; hits.push(u);
+    if (u === '/latest.yml') { res.writeHead(200, { 'Content-Type': 'text/yaml' }); res.end(yml); }
+    else if (u === '/' + name) { res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': INSTALLER.length }); res.end(INSTALLER); }
+    else { res.writeHead(404); res.end('no'); }
+  });
+  return new Promise(r => srv.listen(0, '127.0.0.1', () => r({ srv, hits, url: 'http://127.0.0.1:' + srv.address().port, close: () => srv.close() })));
+}
+async function stubMsg(app, answers) {
+  await app.evaluate(({ dialog }, a) => {
+    globalThis.__msg = [];
+    dialog.showMessageBox = async (...args) => { globalThis.__msg.push(args[args.length - 1]); return { response: a.length ? a.shift() : 0 }; };
+  }, answers);
+}
+const msgs = app => app.evaluate(() => globalThis.__msg.map(m => [m.message, m.detail || '', (m.buttons || []).join('/')]));
+async function waitMsgs(app, n, ms = 15000) {
+  const t0 = Date.now();
+  for (;;) { const m = await msgs(app); if (m.length >= n) return m; if (Date.now() - t0 > ms) throw new Error('expected ' + n + ' message box(es), got: ' + JSON.stringify(m)); await sleep(150); }
+}
+const helpClick = (app, label) => app.evaluate(({ Menu }, l) => { Menu.getApplicationMenu().items.find(i => i.label === 'Help').submenu.items.find(i => i.label === l).click(); }, label);
 
 const results = [];
 async function check(name, fn) {
@@ -260,6 +291,93 @@ const ok = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
     popped = await app.evaluate(() => globalThis.__popped);
     ok(popped.length === 1, '3D view opened a native menu: ' + JSON.stringify(popped));
     ok(await page.evaluate(() => document.querySelector('#ctxMenu').style.display === 'block'), 'the 3D view should show the page own menu');
+  });
+
+
+  const appVersion = require('../package.json').version;
+  const NOAUTO = { SHOTREF_UPDATE_DELAY_MS: '999999' };
+
+  await check('updates: a copy running from source says updates work in the installed app', async () => {
+    const { app } = await launch();
+    await stubMsg(app, []); await helpClick(app, 'Check for updates…');
+    const m = await waitMsgs(app, 1);
+    ok(/installed ShotRef/.test(m[0][0]), m[0][0]);
+    await kill(app);
+  });
+
+  await check('updates: manual check with nothing newer says ShotRef is up to date', async () => {
+    const feed = await startFeed(appVersion);
+    const { app } = await launch([], { env: { SHOTREF_UPDATE_URL: feed.url, ...NOAUTO } });
+    await stubMsg(app, []); await helpClick(app, 'Check for updates…');
+    const m = await waitMsgs(app, 1);
+    ok(/up to date/.test(m[0][0]) && m[0][1].includes(appVersion), JSON.stringify(m[0]));
+    ok(!feed.hits.some(h => h.endsWith('.exe')), 'downloaded an installer');
+    await kill(app); feed.close();
+  });
+
+  await check('updates: a newer version is offered, and Later downloads nothing', async () => {
+    const feed = await startFeed('99.0.0');
+    const { app } = await launch([], { env: { SHOTREF_UPDATE_URL: feed.url, ...NOAUTO } });
+    await stubMsg(app, [1]); await helpClick(app, 'Check for updates…');
+    const m = await waitMsgs(app, 1);
+    ok(/99\.0\.0 is available/.test(m[0][0]) && m[0][2] === 'Download update/Later', JSON.stringify(m[0]));
+    await sleep(800);
+    ok(!feed.hits.some(h => h.endsWith('.exe')), 'downloaded although the user said Later');
+    ok((await msgs(app)).length === 1, 'extra dialogs after Later');
+    await kill(app); feed.close();
+  });
+
+  await check('updates: Download update fetches the installer, verifies it and offers to restart (window stays open on Later)', async () => {
+    const feed = await startFeed('99.0.0');
+    const { app } = await launch([], { env: { SHOTREF_UPDATE_URL: feed.url, ...NOAUTO } });
+    await stubMsg(app, [0, 1]); await helpClick(app, 'Check for updates…');
+    const m = await waitMsgs(app, 2, 30000);
+    ok(/99\.0\.0 is ready to install/.test(m[1][0]) && m[1][2] === 'Restart now/Later', JSON.stringify(m[1]));
+    ok(feed.hits.includes('/ShotRef-Setup-99.0.0.exe'), 'installer was not requested: ' + feed.hits.join(','));
+    ok((await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)) === 1, 'window closed');
+    /* a second manual check goes straight to "ready" instead of downloading again */
+    const n = feed.hits.length;
+    await stubMsg(app, [1]); await helpClick(app, 'Check for updates…');
+    const m2 = await waitMsgs(app, 1);
+    ok(/ready to install/.test(m2[0][0]) && feed.hits.length === n, 'second check: ' + m2[0][0] + ', new requests ' + (feed.hits.length - n));
+    await kill(app); feed.close();
+  });
+
+  await check('updates: a feed that cannot be reached gives a plain message, not a crash', async () => {
+    const feed = await startFeed('99.0.0'); const url = feed.url; feed.close(); await sleep(200);
+    const { app, page } = await launch([], { env: { SHOTREF_UPDATE_URL: url, ...NOAUTO } });
+    await stubMsg(app, []); await helpClick(app, 'Check for updates…');
+    const m = await waitMsgs(app, 1);
+    ok(/Could not check for updates/.test(m[0][0]) && /could not reach GitHub|Something went wrong/.test(m[0][1]), JSON.stringify(m[0]));
+    ok(await page.evaluate(() => !!window.__shotref.state), 'page died');
+    await kill(app);
+  });
+
+  await check('updates: the automatic check runs after launch, and not when switched off in the Help menu (remembered)', async () => {
+    const feed = await startFeed('99.0.0');
+    const first = await launch([], { env: { SHOTREF_UPDATE_URL: feed.url, SHOTREF_UPDATE_DELAY_MS: '1500' }, userData: path.join(tmp, 'prof-upd') });
+    await stubMsg(first.app, [1]);
+    await waitMsgs(first.app, 1, 12000);
+    ok(feed.hits.includes('/latest.yml'), 'no automatic check');
+    await helpClick(first.app, 'Check for updates automatically'); /* switch it off through the menu item and look at what was saved */
+    await sleep(300);
+    const saved = JSON.parse(fs.readFileSync(path.join(first.userData, 'shotref-settings.json'), 'utf8'));
+    ok(saved.autoUpdate === false, 'setting not saved: ' + JSON.stringify(saved));
+    await kill(first.app);
+    const before = feed.hits.length;
+    const second = await launch([], { env: { SHOTREF_UPDATE_URL: feed.url, SHOTREF_UPDATE_DELAY_MS: '1500' }, userData: first.userData });
+    await sleep(4500);
+    ok(feed.hits.length === before, 'checked although automatic checks are off');
+    await kill(second.app); feed.close();
+  });
+
+  await check('updates: the page itself still cannot reach even the update server', async () => {
+    const feed = await startFeed('99.0.0');
+    const { app, page } = await launch([], { env: { SHOTREF_UPDATE_URL: feed.url, ...NOAUTO } });
+    const r = await page.evaluate(async u => { try { await fetch(u + '/latest.yml'); return 'reached'; } catch (e) { return 'blocked'; } }, feed.url);
+    ok(r === 'blocked', 'page fetch to the feed got through');
+    ok(!feed.hits.length, 'feed saw a request from the page');
+    await kill(app); feed.close();
   });
 
   for (const a of apps) await kill(a);

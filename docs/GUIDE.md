@@ -120,6 +120,15 @@ Your work is **autosaved in the app**, but a file is safer. Use **File, Save** (
 
 Project files hold your photos and models, so they can be moved to another computer.
 
+## Updates (Windows app)
+
+The installed Windows app looks for a new version a few seconds after it starts. If there is one, it asks whether to download it, then whether to restart now or install when you next close ShotRef. ShotRef asks about unsaved work before it closes, and your projects are not touched.
+
+- **Help, Check for updates…** checks on demand.
+- **Help, Check for updates automatically** switches the check on launch off.
+- The portable version can't update itself. It opens the download page instead.
+- The browser version (`ShotRef.html`) has no updater: download the new file from the [Releases page](https://github.com/alistotleLB/ShotRef/releases/latest).
+
 ## Shortcuts
 
 | Key | What it does |

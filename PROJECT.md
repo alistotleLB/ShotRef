@@ -10,8 +10,9 @@ Works:   ShotRef 1.2.0 = the claude.ai version's features (artifact 6uRy4QMBjvK9
          Right-click menus, double-click lens focus, Build/Frame/Export steps, takes + compare, shots + shot bar, Export panel + AI prompt, frame pack, contact sheet,
          multi-select/lock/groups, people (body types, eyeline, sitting, actions), parenting/ground/camera mount, camera tabs, light/sun, My sets, Recent projects, Settings, split view.
 Builds:  dist/ShotRef.html (1.0 MB). Windows: release/ShotRef-Setup-1.2.0.exe (122 MB), release/ShotRef-1.2.0-portable.exe (111 MB), unsigned.
-Tests:   npm test 265/265 (~9 min), npm run test:desktop 14/14. Final whole-port review: Ready.
-Code:    private GitHub https://github.com/alistotleLB/ShotRef (main).
+Tests:   npm test 265/265 (~9 min, last run on 1.2.0; no page code changed since), npm run test:desktop 21/21 (7 new update checks). Final whole-port review: Ready.
+Code:    PUBLIC GitHub https://github.com/alistotleLB/ShotRef (main), MIT. Release v1.2.0 published 2026-11-24 (README, docs/GUIDE.md, screenshots in docs/img).
+Updates: desktop app 1.3.0 (built, NOT yet released) checks GitHub Releases (electron/updater.cjs); ship with `npm run dist:win` then `npm run publish:win`.
 Known:   walking feet slide slightly at heel strike (same in the claude.ai version). Minor parity leftovers listed in docs/plans (toolbar order, Add tab order, hint wording).
 Next:    Ali runs checklist C3 (replaces C1 and C2). Then: installable web app + website.
 Not yet tried by Ali: everything since 2026-11-22.
@@ -91,6 +92,8 @@ Storage: build output in `dist/` (git-ignored).
 
 | N-005 | 2026-11-23 | "The right click context menu doesnt work .. I need the same menu that is implemented in the webapp version .. the same with double click to focus. It doesnt work properly. Cant you please diagnose why the UI doesnt work like the webapp does, and fix the problem." | done 2026-11-24 (cause: the claude.ai version was a newer app whose source was lost; all its features rebuilt here in 9 reviewed batches) |
 | N-006 | 2026-11-23 | (asked where the newer version's source is) "Only on claude.ai" | done 2026-11-24 |
+| N-008 | 2026-11-24 | "Can you publish the latest release on github, along with proper basic documentation, and screenshots. Make it read to attract users." | done 2026-11-24 (repo public, MIT, v1.2.0; unsigned: Ali chose to publish anyway) |
+| N-009 | 2026-11-24 | "Please add an update mechanism to the desktop app so I'm able to update the app whenever a make changes to the github." | built 2026-11-24 as 1.3.0, awaiting release + Ali's try-out (guessed: electron-updater, ask-before-download, Help menu check + auto-check switch, portable only opens the download page) |
 | N-007 | 2026-11-23 | "dont forget to orchestrate the tasks across Opus and Sonnet for maximum efficiency" | done (Sonnet built, Opus reviewed, medium effort) |
 
 ### Approved and locked     (changing these needs Ali's yes)
@@ -146,3 +149,5 @@ NEXT      Ali runs C3:
 - 2026-11-23 git + private GitHub repo. Phase 1 (src/platform.js, .shotref, Save as, unsaved mark) and Phase 2 (Electron 45.4.1, electron-builder 26.18.0) built by Sonnet implementers, reviewed by Opus (5 review rounds, 8 Important findings fixed). npm test 89/89, test:desktop 13/13. Installer 121 MB, portable 111 MB. Version 1.1.0.
 - 2026-11-24 port of the claude.ai version done: 9 batches + final fix wave (Sonnet built, Opus reviewed; 2 Critical and 14 Important found and fixed in review). npm test 265/265 (~9 min), test:desktop 14/14. Version 1.2.0, installer 122 MB, portable 111 MB. Desktop tests now kill Electron process trees.
 - 2026-11-24 claude.ai artifact 6uRy4QMBjvK9Rn5PLedSUq republished from the 1.2.0 build with the Desert overlook demo embedded (Ali: "Yes, republish it"). Checked headless first: 23 objects + photo, 0 errors.
+- 2026-11-24 repo made public (MIT), release v1.2.0 with installer, portable exe and ShotRef.html; README + user guide + 6 screenshots. Ali chose to publish unsigned.
+- 2026-11-24 update mechanism: electron-updater ^6.8 (only runtime dependency; three and mp4-muxer moved to devDependencies), electron/updater.cjs, Help menu items, scripts/publish-release.mjs, version 1.3.0. test:desktop 21/21. Packaged app launched and reached GitHub (404 on v1.2.0: no latest.yml yet, handled silently). Not tested: quitAndInstall (the install step) and a real update from an installed copy: needs 1.3.0 released, installed, then a later release.
