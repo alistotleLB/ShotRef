@@ -168,6 +168,9 @@ function buildMenu() {
     ] },
     { label: 'Help', submenu: [
       { label: 'Quick start', click: () => send('shotref:menu', 'help') },
+      /* the same two labels as TOUR_COPY.menu in src/tour-copy.js (this file cannot import the page's ES module) */
+      { label: 'Take the quick tour', click: () => send('shotref:menu', 'tour-basic') },
+      { label: 'Try it hands-on', click: () => send('shotref:menu', 'tour-hands') },
       { type: 'separator' },
       { label: 'Check for updates…', click: () => updater.checkNow(true) },
       { label: 'Check for updates automatically', type: 'checkbox', checked: settings.autoUpdate, click: i => { settings.autoUpdate = i.checked; saveSettings(); } },

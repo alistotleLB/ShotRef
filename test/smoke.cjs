@@ -857,6 +857,8 @@ check('dropping a file outside the view does not leave the page', async ({ open 
 
 const blurAll = p => p.evaluate(() => document.activeElement && document.activeElement.blur && document.activeElement.blur());
 const toastText = p => p.evaluate(() => document.querySelector('#toast').textContent);
+/* first launch asks about the tour before the starter picker: say Not now */
+const skipTour = async p => { await p.waitForFunction(() => !document.querySelector('#mTour').classList.contains('hidden'), null, { timeout: 3000 }).catch(() => { throw new Error('the first-run tour question did not open'); }); await p.click('#tourNo'); };
 const isOpen = (p, id) => p.evaluate(id => { const m = document.getElementById(id); return !!m && !m.classList.contains('hidden'); }, id);
 
 check('path cancel is clickable at 1366', async ({ freshContext }) => {
@@ -982,6 +984,7 @@ check('section headings have readable contrast', async ({ open }) => {
 check('first launch shows starter sets', async ({ freshContext }) => {
   const fc = await freshContext({ firstLaunch: true });
   const p = await fc.open();
+  await skipTour(p);
   await p.waitForFunction(() => !document.querySelector('#mStart').classList.contains('hidden'), null, { timeout: 3000 }).catch(() => { throw new Error('starter sets did not open on first launch'); });
   await p.click('#startGrid .card:has-text("Street")');
   await p.waitForTimeout(200);
@@ -1333,6 +1336,7 @@ check('selecting an object does not resize the view', async ({ open }) => {
 check('first launch focuses a starter set, not the close button', async ({ freshContext }) => {
   const fc = await freshContext({ firstLaunch: true });
   const p = await fc.open();
+  await skipTour(p);
   await p.waitForFunction(() => !document.querySelector('#mStart').classList.contains('hidden'), null, { timeout: 3000 });
   const a = await p.evaluate(() => { const e = document.activeElement; return e ? e.className + ':' + e.textContent.slice(0, 20) : 'none'; });
   ok(/^card:/.test(a), 'focus is on "' + a + '"');
@@ -1379,6 +1383,8 @@ check('no storage: one clear toast, no size warning, no console spam', async ({ 
   await fc.ctx.addInitScript(TOAST_LOG);
   const p = await fc.open();
   await p.waitForTimeout(800);
+  ok(await isOpen(p, 'mTour'), 'the tour question did not open on this first visit');
+  await p.click('#tourNo');
   ok(await isOpen(p, 'mStart'), 'starter sets did not open on this first visit');
   await p.evaluate(() => { const S = window.__shotref; S.addObject('box'); S.changed(true); });
   await p.waitForTimeout(700);
@@ -1500,6 +1506,7 @@ check('branding: tab icon, top-bar mark and welcome header', async ({ open, fres
   ok(r.tag === 'Camera moves for AI video', 'tagline ' + r.tag);
   const fc = await freshContext({ firstLaunch: true });
   const q = await fc.open();
+  await skipTour(q);
   await q.waitForFunction(() => !document.querySelector('#mStart').classList.contains('hidden'), null, { timeout: 3000 });
   const w = await q.evaluate(() => ({ head: getComputedStyle(document.querySelector('#startHead')).display, h: document.querySelector('#mStartT').textContent }));
   ok(w.head !== 'none' && w.h === 'Start a shot', 'welcome header ' + JSON.stringify(w));
@@ -5276,6 +5283,164 @@ check('tour engine: reduced motion jumps the corners, otherwise they travel in 3
   ok(/^0s/.test(d2), 'reduced motion should not travel, got ' + d2);
   await p.evaluate(() => window.__t.end());
   noErrors(p);
+});
+
+/* ---------------- basic tour, first-run question, Help menu items ---------------- */
+const TOUR_TARGET = `(() => { const t = window.__shotref.tour.current(); if (!t) return null; const s = t.stop; let e = null; try { e = typeof s.target === 'function' ? s.target() : s.target ? document.querySelector(s.target) : null; } catch (x) { } return { id: s.id, hasTarget: !!s.target, rect: e && e.getClientRects().length ? (r => ({ l: r.left, t: r.top, r: r.right, b: r.bottom, w: r.width, h: r.height }))(e.getBoundingClientRect()) : null, vw: innerWidth, vh: innerHeight }; })()`;
+const tourWarns = p => { p.__warns = []; p.on('console', m => { if (m.type() === 'warning' && /tour/i.test(m.text())) p.__warns.push(m.text()); }); };
+const waitOpen = (p, id, ms = 3000) => p.waitForFunction(id => { const m = document.getElementById(id); return !!m && !m.classList.contains('hidden'); }, id, { timeout: ms });
+
+for (const vp of [{ width: 1600, height: 900 }, { width: 1280, height: 720 }]) {
+  check('basic tour: every stop finds a visible target at ' + vp.width + 'x' + vp.height, async ({ freshContext }) => {
+    const fc = await freshContext({ viewport: vp });
+    const p = await fc.open(); tourWarns(p); await settle(p, 300);
+    ok(await p.evaluate(() => !!window.__shotref.startTour('basic')), 'the basic tour did not start');
+    const seen = [];
+    for (let n = 0; n < 12; n++) {
+      await settle(p, 550); /* longer than the engine's missing-target delay, so a missing target would warn */
+      const g = await p.evaluate(TOUR_TARGET);
+      if (!g) break;
+      seen.push(g.id);
+      if (g.hasTarget) {
+        ok(g.rect, 'stop ' + g.id + ' has no visible target');
+        ok(g.rect.w > 0 && g.rect.h > 0 && g.rect.l >= 0 && g.rect.t >= 0 && g.rect.r <= g.vw && g.rect.b <= g.vh, 'stop ' + g.id + ' is outside the window: ' + JSON.stringify(g.rect));
+      }
+      await p.click('#tourNext');
+    }
+    ok(seen.join() === 'b-welcome,b-steps,b-add,b-picture,b-view,b-panel,b-timeline,b-file,b-gear,b-bye', 'stops were ' + seen.join());
+    ok(await p.evaluate(() => !window.__shotref.tour.active()), 'the tour did not finish');
+    ok(p.__warns.length === 0, 'tour warnings: ' + p.__warns.join(' | '));
+    noErrors(p);
+  });
+}
+
+check('basic tour: Advanced controls switched and window resized mid-tour', async ({ freshContext }) => {
+  const fc = await freshContext({ viewport: { width: 1600, height: 900 } });
+  const p = await fc.open(); await settle(p, 300);
+  await p.evaluate(() => window.__shotref.startTour('basic'));
+  for (let n = 0; n < 5; n++) { await p.click('#tourNext'); await settle(p, 60); }
+  ok(await p.evaluate(() => window.__shotref.tour.current().stop.id) === 'b-panel', 'not at b-panel');
+  const corners = () => p.evaluate(() => { const c = document.querySelector('.tour-corners').style, t = document.querySelector('#right').getBoundingClientRect(); return { c: [parseFloat(c.left), parseFloat(c.top), parseFloat(c.width), parseFloat(c.height)], t: [t.left, t.top, t.width, t.height] }; });
+  await p.evaluate(() => { const S = window.__shotref; S.setSimple(!document.body.classList.contains('simple')); });
+  await p.setViewportSize({ width: 1100, height: 700 });
+  await p.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const g = await corners();
+  const near = (a, b) => Math.abs(a - b) <= 14;
+  ok(near(g.c[0], Math.max(0, g.t[0] - 6)) && near(g.c[1], Math.max(0, g.t[1] - 6)) && near(g.c[2], g.t[2] + 12) && near(g.c[3], g.t[3] + 12), 'corners ' + JSON.stringify(g.c) + ' do not frame the panel ' + JSON.stringify(g.t));
+  ok(await p.evaluate(() => window.__shotref.tour.active()), 'the tour ended');
+  await p.evaluate(() => window.__shotref.tour.end());
+  noErrors(p);
+});
+
+check('first run asks about the tour, once', async ({ freshContext }) => {
+  const fc = await freshContext({ firstLaunch: true });
+  const p = await fc.open();
+  await waitOpen(p, 'mTour');
+  ok(!(await isOpen(p, 'mStart')), 'the starter picker opened before the tour question');
+  const t = await p.evaluate(() => ({ title: document.querySelector('#mTourT').textContent, q: document.querySelector('#tourQuick').textContent, h: document.querySelector('#tourHands').textContent, n: document.querySelector('#tourNo').textContent }));
+  ok(t.title && t.q === 'Take the quick tour' && t.h === 'Try it hands-on' && t.n === 'Not now', 'welcome text: ' + JSON.stringify(t));
+  await p.click('#tourNo');
+  ok(!(await isOpen(p, 'mTour')), 'Not now left the question open');
+  await waitOpen(p, 'mStart');
+  await p.reload(); await p.waitForFunction(() => window.__shotref && window.__shotref.state); await settle(p, 900);
+  ok(!(await isOpen(p, 'mTour')) && !(await isOpen(p, 'mStart')), 'the first-run windows came back after a reload');
+  noPageErrors(p);
+});
+
+check('first run: Take the quick tour runs the basic tour, then the starter picker', async ({ freshContext }) => {
+  const fc = await freshContext({ firstLaunch: true });
+  const p = await fc.open();
+  await waitOpen(p, 'mTour');
+  await p.click('#tourQuick');
+  ok(!(await isOpen(p, 'mTour')), 'the question stayed open');
+  ok(await p.evaluate(() => window.__shotref.tour.active()), 'the tour did not start');
+  ok(!(await isOpen(p, 'mStart')), 'the starter picker opened during the tour');
+  for (let n = 0; n < 12 && await p.evaluate(() => window.__shotref.tour.active()); n++) { await p.click('#tourNext'); await settle(p, 40); }
+  await waitOpen(p, 'mStart', 1500);
+  ok(await p.evaluate(() => window.__shotref.getPref('tourBasicDone', false)) === true, 'tourBasicDone was not remembered');
+  noPageErrors(p);
+});
+
+check('first run: ending the tour early still opens the starter picker', async ({ freshContext }) => {
+  const fc = await freshContext({ firstLaunch: true });
+  const p = await fc.open();
+  await waitOpen(p, 'mTour');
+  await p.click('#tourQuick'); await settle(p, 200);
+  await p.keyboard.press('Escape');
+  await waitOpen(p, 'mStart', 1500);
+  ok(await p.evaluate(() => !window.__shotref.tour.active()), 'the tour is still running');
+  /* a tour started later from the gear menu does not open the picker */
+  await p.click('#mStart .x'); await gearCmd(p, 'tour-basic');
+  ok(await p.evaluate(() => window.__shotref.tour.active()), 'the gear menu did not start the tour');
+  await p.click('#tourEnd'); await settle(p, 300);
+  ok(!(await isOpen(p, 'mStart')), 'a later tour opened the starter picker');
+});
+
+check('first run question is skipped for restored, opened and embedded sessions', async ({ freshContext }) => {
+  const fc = await freshContext({ firstLaunch: true });
+  const p = await fc.open();
+  await waitOpen(p, 'mTour');
+  await p.click('#tourNo'); await p.click('#mStart .x');
+  await p.evaluate(() => { const S = window.__shotref; S.addObject('box'); S.changed(true); });
+  await settle(p, 900);
+  await p.evaluate(() => { try { localStorage.removeItem('shotref.seenHelp'); } catch (e) { } });
+  await p.reload(); await p.waitForFunction(() => window.__shotref && window.__shotref.state); await settle(p, 900);
+  ok(!(await isOpen(p, 'mTour')) && !(await isOpen(p, 'mStart')), 'a restored session asked about the tour');
+  const fe = await freshContext({ firstLaunch: true });
+  await fe.ctx.addInitScript(() => { window.__SHOTREF_EMBED__ = { key: 'tourdemo', project: { app: 'ShotRef', version: 1, state: { camera: { base: { p: [3, 1.6, 6], tg: [0, 1, 0], f: 35, roll: 0, fd: 7 }, keys: [] }, objects: [], settings: {} } } }; });
+  const q = await fe.open(); await settle(q, 900);
+  ok(!(await isOpen(q, 'mTour')) && !(await isOpen(q, 'mStart')), 'an embedded session asked about the tour');
+});
+
+check('Help heading in the gear menu starts both tours; Quick start page has both buttons', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.click('#bMenu');
+  const m = await p.evaluate(() => ({ head: [...document.querySelectorAll('#ctxMenu .head')].map(e => e.textContent), cmds: [...document.querySelectorAll('#ctxMenu [data-cmd]')].map(e => e.dataset.cmd), role: document.querySelector('#ctxMenu [data-cmd="tour-basic"]').getAttribute('role') }));
+  ok(m.head.includes('Help'), 'no Help heading: ' + m.head);
+  ok(m.cmds.join() === 'advanced,ground,settings,tour-basic,tour-hands,help,about', 'items: ' + m.cmds.join());
+  ok(m.role === 'menuitemcheckbox', 'the tour item has no tick slot');
+  await p.click('#ctxMenu [data-cmd="tour-basic"]');
+  ok(await p.evaluate(() => window.__shotref.tour.active()), 'the gear menu item did not start the basic tour');
+  await p.evaluate(() => window.__shotref.tour.end());
+  ok(await p.evaluate(() => window.__shotref.getPref('tourBasicDone', false)) === true, 'ending the tour did not set tourBasicDone');
+  await p.click('#bMenu');
+  ok(await p.evaluate(() => document.querySelector('#ctxMenu [data-cmd="tour-basic"]').getAttribute('aria-checked')) === 'true', 'no tick after the tour');
+  await p.keyboard.press('Escape');
+  /* hands-on: a toast until the practice tour exists */
+  await gearCmd(p, 'tour-hands');
+  ok(/hands-on tour is coming/.test(await p.evaluate(() => document.querySelector('#toast').textContent)), 'no hands-on toast');
+  ok(await p.evaluate(() => !window.__shotref.tour.active()), 'the hands-on tour started');
+  await gearCmd(p, 'help');
+  ok(await isOpen(p, 'mHelp'), 'Quick start did not open');
+  const b = await p.evaluate(() => ({ q: document.querySelector('#helpTourQuick').textContent, h: document.querySelector('#helpTourHands').textContent, lead: document.querySelector('#helpTourLead').textContent }));
+  ok(b.q === 'Take the quick tour' && b.h === 'Try it hands-on' && /guided walk/.test(b.lead), 'help page: ' + JSON.stringify(b));
+  await p.click('#helpTourQuick');
+  ok(!(await isOpen(p, 'mHelp')), 'the Quick start page stayed open');
+  ok(await p.evaluate(() => window.__shotref.tour.active()), 'the Quick start button did not start the tour');
+  await p.evaluate(() => window.__shotref.tour.end());
+  noErrors(p);
+});
+
+check('tour dimming is the charcoal at about 62 percent', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => window.__shotref.startTour('basic')); await settle(p, 500);
+  const c = await p.evaluate(() => getComputedStyle(document.querySelector('.tour-dim')).boxShadow);
+  /* the browser reports color-mix() as rgba(...) or as color(srgb r g b / a) with 0..1 channels */
+  let m = /rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/.exec(c), rgb, a;
+  if (m) { rgb = [+m[1], +m[2], +m[3]]; a = m[4] === undefined ? 1 : parseFloat(m[4]); }
+  else { m = /color\(srgb ([\d.]+) ([\d.]+) ([\d.]+)(?: \/ ([\d.]+))?\)/.exec(c); ok(m, 'no colour in the dim shadow: ' + c); rgb = [m[1], m[2], m[3]].map(v => Math.round(parseFloat(v) * 255)); a = m[4] === undefined ? 1 : parseFloat(m[4]); }
+  ok(rgb.join() === '20,21,24' && Math.abs(a - 0.62) < 0.03, 'dim colour is ' + c);
+  await p.evaluate(() => window.__shotref.tour.end());
+});
+
+check('first run: Esc on the tour question counts as Not now and opens the starter picker', async ({ freshContext }) => {
+  const fc = await freshContext({ firstLaunch: true });
+  const p = await fc.open();
+  await waitOpen(p, 'mTour');
+  await p.keyboard.press('Escape');
+  ok(!(await isOpen(p, 'mTour')), 'Esc left the question open');
+  await waitOpen(p, 'mStart', 1500);
+  ok(await p.evaluate(() => !window.__shotref.tour.active()), 'a tour started');
 });
 
 main().catch(e => { console.error(e && e.stack || e); process.exit(2); });

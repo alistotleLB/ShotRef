@@ -22,9 +22,9 @@ async function launch(args = [], opts = {}) {
   page.on('pageerror', e => errors.push(String(e)));
   await page.waitForFunction(() => window.__shotref && window.__shotref.state, null, { timeout: 30000 });
   page.setDefaultTimeout(8000);
-  if (!opts.raw) { /* first launch opens the starter sets: close them so clicks reach the page */
-    await page.waitForFunction(() => !document.querySelector('#mStart').classList.contains('hidden'), null, { timeout: 4000 }).catch(() => {});
-    await page.evaluate(() => document.querySelector('#mStart').classList.add('hidden'));
+  if (!opts.raw) { /* first launch asks about the tour, then opens the starter sets: hide the question so clicks reach the page */
+    await page.waitForFunction(() => !document.querySelector('#mTour').classList.contains('hidden'), null, { timeout: 4000 }).catch(() => {});
+    await page.evaluate(() => { document.querySelector('#mTour').classList.add('hidden'); document.querySelector('#mStart').classList.add('hidden'); });
   }
   await page.evaluate(() => { window.__edit = () => { window.__shotref.addObject('box'); window.__shotref.changed(true); }; });
   return { app, page, errors, userData };
@@ -226,6 +226,20 @@ const ok = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
     ok(JSON.parse(fs.readFileSync(path.join(userData, 'shotref-settings.json'), 'utf8')).folders.import === tmp, 'import folder not remembered');
     await app.evaluate(({ Menu }) => { const help = Menu.getApplicationMenu().items.find(i => i.label === 'Help'); help.submenu.items.find(i => i.label === 'Quick start').click(); });
     await page.waitForSelector('#mHelp:not(.hidden)', { timeout: 5000 });
+    await kill(app);
+  });
+
+  await check('Help menu has the two tour items and they reach the page', async () => {
+    const { app, page } = await launch();
+    const labels = await app.evaluate(({ Menu }) => Menu.getApplicationMenu().items.find(i => i.label === 'Help').submenu.items.map(i => i.label));
+    const qs = labels.indexOf('Quick start');
+    ok(qs >= 0 && labels[qs + 1] === 'Take the quick tour' && labels[qs + 2] === 'Try it hands-on', 'Help menu: ' + labels.join(' | '));
+    await helpClick(app, 'Take the quick tour');
+    await page.waitForFunction(() => window.__shotref.tour.active(), null, { timeout: 5000 });
+    ok(await page.evaluate(() => window.__shotref.tour.current().stop.id) === 'b-welcome', 'the basic tour did not start at its first stop');
+    await page.evaluate(() => window.__shotref.tour.end());
+    await helpClick(app, 'Try it hands-on');
+    await page.waitForFunction(() => /hands-on tour is coming/.test(document.querySelector('#toast').textContent), null, { timeout: 5000 });
     await kill(app);
   });
 

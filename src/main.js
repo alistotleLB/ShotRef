@@ -7,6 +7,7 @@ import { normalizeProject, FORMAT_VERSION, describeChange } from './project.js';
 import * as K from './keys.js';
 import { platform } from './platform.js';
 import { runTour, tourActive, tourTick } from './tour.js';
+import { TOUR_COPY } from './tour-copy.js';
 
 /* ---- shared values: every module-level `let`, what it holds, and what changes it ----
  * state, assets                  the project and its photos/models: restore, buildState, replaceProject, boot
@@ -2846,6 +2847,9 @@ function gearMenuItems() {
     { id: 'ground', label: 'Keep things on the ground', check: groundOn(), fn: () => setGround(!groundOn()) }, /* the same switch as in Settings */
     { id: 'settings', label: 'Settings\u2026', fn: openSettings },
     '-',
+    { head: TOUR_COPY.menu.heading },
+    { id: 'tour-basic', label: TOUR_COPY.menu.quick, check: !!getPref('tourBasicDone', false), fn: () => startTour('basic') },
+    { id: 'tour-hands', label: TOUR_COPY.menu.hands, check: !!getPref('tourHandsDone', false), fn: () => startTour('hands') },
     { id: 'help', label: 'Quick start and shortcuts', fn: () => openModal('mHelp'), key: '?' },
     { id: 'about', label: 'About ShotRef', fn: () => { const v = platform.version || APP_VERSION; $('#aboutVer').textContent = v ? 'Version ' + v : ''; openModal('mAbout'); } }];
 }
@@ -4603,19 +4607,70 @@ function renderExportDialog() {
 }
 
 /* ============================== tour ============================== */
-/* Labels for the tour bubble. Task 1 (src/tour-copy.js) will replace this stub with the real copy. */
-const TOUR_UI = { next: 'Next', back: 'Back', end: 'End tour', finish: 'Finish', skip: 'Skip this step', progress: (n, t) => n + ' of ' + t };
 let tourHandle = null;
-/* Starts a tour (see src/tour.js for the stop shape). Returns null, with a toast, while an export runs or a dialog is open. */
-function startTour(stops, opts = {}) {
+/* Runs a list of stops (see src/tour.js for the stop shape). Returns null, with a toast, while an export runs or a dialog is open. */
+function runStops(stops, opts = {}) {
   if (exporting) { toast('Wait for the export to finish.'); return null; }
   if (openModals().length) { toast('Close the open window first.'); return null; }
   const { onEnd, canKey, ui, interactive } = opts;
   /* Esc goes to the app first when it has something to cancel */
   const appCanEsc = e => e.key === 'Escape' && (menuOpen() || !!rec || !!placing || !!pathMode || focusPick || (canKey ? canKey(e) : false));
-  tourHandle = runTour({ stops, ui: ui || TOUR_UI, interactive: !!interactive, canKey: appCanEsc, onEnd: reason => { tourHandle = null; requestRender(); if (onEnd) onEnd(reason); } });
+  tourHandle = runTour({ stops, ui: ui || TOUR_COPY.ui, interactive: !!interactive, canKey: appCanEsc, onEnd: reason => { tourHandle = null; requestRender(); if (onEnd) onEnd(reason); } });
   requestRender();
   return tourHandle;
+}
+/* The quick tour: look, no touching. The set-up hooks only switch what is shown (the left tab); they never edit the scene. */
+const BASIC_STOPS = [
+  ['b-welcome', null],
+  ['b-steps', '#stepSeg'],
+  ['b-add', '#left', () => setLeftTab('add', false)],
+  ['b-picture', '#vp'],
+  ['b-view', '#viewGrp'],
+  ['b-panel', '#right'],
+  ['b-timeline', '#tl'],
+  ['b-file', '#bFile'],
+  ['b-gear', '#bMenu'],
+  ['b-bye', null],
+];
+const basicStops = () => BASIC_STOPS.map(([id, target, before]) => ({ id, target, before, title: TOUR_COPY.basic[id].title, text: TOUR_COPY.basic[id].text }));
+/* The one way to start a tour: 'basic' or 'hands'. opts.firstRun: the Start a shot picker follows the tour. */
+function startTour(kind, opts = {}) {
+  const firstRun = !!opts.firstRun;
+  if (kind === 'hands') {
+    /* TODO(Task 5): the hands-on tour on a practice stage. Remove this toast then. */
+    toast('The hands-on tour is coming.');
+    if (firstRun) openStarters(true);
+    return null;
+  }
+  const tab = $('#leftTabs .on') ? $('#leftTabs .on').dataset.lt : 'add';
+  return runStops(basicStops(), {
+    ui: TOUR_COPY.ui,
+    onEnd: reason => {
+      setLeftTab(tab, false);
+      if (reason === 'external') return; /* another tour took over, or a project was swapped in */
+      setPref('tourBasicDone', true);
+      if (firstRun) openStarters(true);
+    },
+  });
+}
+/* the first-run question and the buttons that start a tour from a dialog: close the dialog first, since a tour will not start over one */
+/* while the first-run question is open, any way of closing it other than the two tour buttons counts as Not now (Esc, a click outside) */
+let tourAsk = false;
+function tourFromDialog(modalId, kind, firstRun) {
+  tourAsk = false;
+  closeModal($('#' + modalId));
+  startTour(kind, { firstRun });
+}
+function wireTourDialogs() {
+  const W = TOUR_COPY.welcome, H = TOUR_COPY.helpPage;
+  $('#mTourT').textContent = W.title; $('#mTourP').textContent = W.body;
+  $('#tourQuick').textContent = W.quick; $('#tourHands').textContent = W.hands; $('#tourNo').textContent = W.notNow;
+  $('#tourQuick').onclick = () => tourFromDialog('mTour', 'basic', true);
+  $('#tourHands').onclick = () => tourFromDialog('mTour', 'hands', true);
+  $('#tourNo').onclick = () => closeModal($('#mTour'));
+  $('#helpTourLead').textContent = H.lead; $('#helpTourQuick').textContent = H.quick; $('#helpTourHands').textContent = H.hands;
+  $('#helpTourQuick').onclick = () => tourFromDialog('mHelp', 'basic', false);
+  $('#helpTourHands').onclick = () => tourFromDialog('mHelp', 'hands', false);
 }
 
 /* ============================== modals ============================== */
@@ -4637,6 +4692,7 @@ function openModal(id) {
 function closeModal(el) {
   const m = el.closest('.modal'); if (exporting && (m.id === 'mExport' || m.id === 'mCompare')) return;
   m.classList.add('hidden'); placeToast(); requestRender();
+  if (m.id === 'mTour' && tourAsk) { tourAsk = false; openStarters(true); }
   if (!openModals().length && modalReturn) { const r = modalReturn; modalReturn = null; if (r.isConnected && !r.closest('.modal')) r.focus(); }
 }
 /* Tab and Shift+Tab cycle inside the topmost open dialog (U4) */
@@ -4687,6 +4743,8 @@ function onDesktopMenu(cmd) {
   else if (cmd === 'save') saveProject(false);
   else if (cmd === 'save-as') saveProject(true);
   else if (cmd === 'help') openModal('mHelp');
+  else if (cmd === 'tour-basic') startTour('basic');
+  else if (cmd === 'tour-hands') startTour('hands');
 }
 
 /* ============================== Settings window ============================== */
@@ -4985,6 +5043,7 @@ function syncTopUI() {
   drawGuides();
 }
 function wire() {
+  wireTourDialogs();
   buildAddPanel();
   setLeftTab(getPref('leftTab', 'add'), false);
   $$('#leftTabs button').forEach(b => b.onclick = () => setLeftTab(b.dataset.lt));
@@ -5459,7 +5518,7 @@ function boot() {
   if (autosaveOff) toast(NO_AUTOSAVE, 6000); /* starter sets still open below on a first visit */
   if (broken) toast("Your last session couldn't be restored, so ShotRef started a fresh scene.", 5000);
   else if (embedded) { if (EMBED.message) toast(EMBED.message, 7000); }
-  else if (!restored && !seen) setTimeout(() => { if (!openModals().length && !launchFile) openStarters(true); }, 400);
+  else if (!restored && !seen) setTimeout(() => { if (!openModals().length && !launchFile) { tourAsk = true; openModal('mTour'); } }, 400);
   /* photos and models come from IndexedDB (async); legacy autosaves carry them inline */
   if (broken) idb.noPrune = true; /* the broken autosave's files may live only in IndexedDB */
   /* while a broken autosave is kept aside, never prune the files it lists (C4) */
@@ -5489,7 +5548,7 @@ function boot() {
   });
   window.addEventListener('pagehide', () => { flushAutosave(); recentFlush(); });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') recentFlush(); });
-  window.__shotref = { tour: { run: startTour, active: tourActive, end: r => tourHandle && tourHandle.end(r) }, promptText, ensureDof, get selection() { return selIds; }, layout: () => layout, gizmoNdc: (x, y) => { const q = gizmo._getPointer({ clientX: x, clientY: y, button: 0 }); return { x: q.x, y: q.y }; }, arrowsVisible: () => [...arrows.values()].some(a => a.visible), videoBitrate, snapValue: snapWith, rotSnapDeg: () => pref('rotSnap'), controlSpeeds: () => ({ orbit: edControls.rotateSpeed, zoom: edControls.zoomSpeed, cam: camControls.rotateSpeed }), flySpeedNow, walkSpeedNow: () => pathSpeedOf({ type: 'person', opts: { pose: 'stand' } }), buildAddPanel: () => buildAddPanel(), saveRecentNow, recentFlush, recentStats, recentBusy, selectMany: ids => { selIds = ids.slice(); selected = selIds[selIds.length - 1] || null; updateGizmo(); uiDirty = true; propsDirty = true; requestRender(); }, pickAtScreen: (x, y) => { const rc = rayFromEvent({ clientX: x, clientY: y }); const h = rc && pickAt(rc); return h ? h.id : null; }, settleTime: () => { const t0 = performance.now(); solveGround(); return performance.now() - t0; }, groundMigrate: () => groundMigrate.size, liftKnob: () => { if (!liftGrp.visible) return null; const q = liftPick.getWorldPosition(new THREE.Vector3()); return window.__shotref.project(q.x, q.y, q.z); }, attachTo, setMount, writeCam, shownObj: (id, t) => shownObj(getObj(id), t), viewOf: id => { const v = views.get(id); if (!v) return null; v.group.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(v.group), sz = bb.getSize(new THREE.Vector3()); return { p: v.group.position.toArray(), yaw: v.group.rotation.y * R2D, s: v.group.scale.toArray(), size: sz.toArray(), wheels: v.wheels ? v.wheels.list.map(w => ({ spin: w.spin.rotation.x, steer: w.piv.rotation.y, front: w.front })) : null }; }, ringKnob: () => ringGrp.visible ? ringKnob.getWorldPosition(new THREE.Vector3()).toArray() : null, getPref, setPref, showMenu, menuButton, hideMenu, project: (x, y, z) => { const r = canvas.getBoundingClientRect(), R = viewRects(r.width, r.height); let cam = view === 'top' ? topCam : edCam, rr = R.work || { x: 0, y: 0, w: r.width, h: r.height }; if (camPane() && R.frame) { cam = renderCam; rr = R.frame; } const v = new THREE.Vector3(x, y, z).project(cam); return [r.left + rr.x + (v.x * 0.5 + 0.5) * rr.w, r.top + rr.y + (-v.y * 0.5 + 0.5) * rr.h]; }, get view() { return view; }, get selected() { return selected; }, get state() { return state; }, get assets() { return assets; }, setT: t => setTime(t, false), applyMove, addObject, select, setView, evalCam, exportVideo, exportPNG, pickCodec, _exportCanvas: () => exRenderer ? exRenderer.domElement : null, changed, writeObj, evalObj, setKey, get T() { return T; },
+  window.__shotref = { tour: { run: runStops, active: tourActive, end: r => tourHandle && tourHandle.end(r), current: () => tourHandle }, startTour, setSimple, promptText, ensureDof, get selection() { return selIds; }, layout: () => layout, gizmoNdc: (x, y) => { const q = gizmo._getPointer({ clientX: x, clientY: y, button: 0 }); return { x: q.x, y: q.y }; }, arrowsVisible: () => [...arrows.values()].some(a => a.visible), videoBitrate, snapValue: snapWith, rotSnapDeg: () => pref('rotSnap'), controlSpeeds: () => ({ orbit: edControls.rotateSpeed, zoom: edControls.zoomSpeed, cam: camControls.rotateSpeed }), flySpeedNow, walkSpeedNow: () => pathSpeedOf({ type: 'person', opts: { pose: 'stand' } }), buildAddPanel: () => buildAddPanel(), saveRecentNow, recentFlush, recentStats, recentBusy, selectMany: ids => { selIds = ids.slice(); selected = selIds[selIds.length - 1] || null; updateGizmo(); uiDirty = true; propsDirty = true; requestRender(); }, pickAtScreen: (x, y) => { const rc = rayFromEvent({ clientX: x, clientY: y }); const h = rc && pickAt(rc); return h ? h.id : null; }, settleTime: () => { const t0 = performance.now(); solveGround(); return performance.now() - t0; }, groundMigrate: () => groundMigrate.size, liftKnob: () => { if (!liftGrp.visible) return null; const q = liftPick.getWorldPosition(new THREE.Vector3()); return window.__shotref.project(q.x, q.y, q.z); }, attachTo, setMount, writeCam, shownObj: (id, t) => shownObj(getObj(id), t), viewOf: id => { const v = views.get(id); if (!v) return null; v.group.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(v.group), sz = bb.getSize(new THREE.Vector3()); return { p: v.group.position.toArray(), yaw: v.group.rotation.y * R2D, s: v.group.scale.toArray(), size: sz.toArray(), wheels: v.wheels ? v.wheels.list.map(w => ({ spin: w.spin.rotation.x, steer: w.piv.rotation.y, front: w.front })) : null }; }, ringKnob: () => ringGrp.visible ? ringKnob.getWorldPosition(new THREE.Vector3()).toArray() : null, getPref, setPref, showMenu, menuButton, hideMenu, project: (x, y, z) => { const r = canvas.getBoundingClientRect(), R = viewRects(r.width, r.height); let cam = view === 'top' ? topCam : edCam, rr = R.work || { x: 0, y: 0, w: r.width, h: r.height }; if (camPane() && R.frame) { cam = renderCam; rr = R.frame; } const v = new THREE.Vector3(x, y, z).project(cam); return [r.left + rr.x + (v.x * 0.5 + 0.5) * rr.w, r.top + rr.y + (-v.y * 0.5 + 0.5) * rr.h]; }, get view() { return view; }, get selected() { return selected; }, get state() { return state; }, get assets() { return assets; }, setT: t => setTime(t, false), applyMove, addObject, select, setView, evalCam, exportVideo, exportPNG, pickCodec, _exportCanvas: () => exRenderer ? exRenderer.domElement : null, changed, writeObj, evalObj, setKey, get T() { return T; },
     get rebuilds() { return rebuilds; }, urlCacheIds: () => [...urlCache.keys()],
     /* batch H (takes) hooks for the smoke test */
     switchTake, newTake, snapPoolSize: () => snapLive, snapPruned: () => snapPruned,
