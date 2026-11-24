@@ -37,6 +37,10 @@ import { platform } from './platform.js';
  * menuBtn, menuClosedAt           button whose menu is open, when a menu last closed: showMenu, hideMenu, menuButton
  * ttKey                          history entries the undo/redo titles were last worked out for: undoTitles
  * prefs                          per-browser preferences (localStorage shotref.prefs): setPref
+ * layout, pane                  single or split view (Settings, #bSplit: setLayout), and the half the pointer is in: setPane (paneOf)
+ * libraryMem, libraryBad           My sets kept for this visit when storage is blocked, and unreadable stored text: writeLibrary
+ * placeRest, placeSetName          the rest of a set being placed and its name: placeSet, commitPlacing, cancelPlacing
+ * recentSession, recentTimer       id of a project without meta.id (renewed by replaceProject), recent-list save timer: scheduleRecent
  * focusPick, lastWorkView        picking focus in the view: start/finishFocusPick; last non-camera view: setView
  * exRenderer                     offscreen export renderer: getExportRenderer (dropped on context loss)
  * copyBlob                       last copied frame: copyFrame
@@ -74,7 +78,28 @@ const PREFS_KEY = 'shotref.prefs';
 let prefs = {};
 try { const p = JSON.parse(localStorage.getItem(PREFS_KEY) || '{}'); if (p && typeof p === 'object' && !Array.isArray(p)) prefs = p; } catch (e) { }
 const getPref = (k, d) => (Object.prototype.hasOwnProperty.call(prefs, k) ? prefs[k] : d);
-function setPref(k, v) { prefs[k] = v; try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch (e) { } }
+function savePrefs() { try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch (e) { } }
+function setPref(k, v) { prefs[k] = v; savePrefs(); }
+/* the Settings window's preferences: what each one is when nothing is stored, and the values a list-type one may take.
+   pref(k) always answers with a usable value (a stored value of the wrong kind or outside its list counts as not stored). */
+const PREF_DEFAULTS = {
+  newDuration: 5, newFps: 24, newAspect: '16:9', newSize: 1920, walkSpeed: 1.4, autoSit: true, ground: true,
+  videoQuality: 'high', filePrefix: 'shotref', dateStamp: true, quality: 'high', layout: 'single', liveShadows: true, pipDefault: true,
+  showLabels: true, showArrows: true, showHints: true, showSun: true, selBar: true, camPoints: true,
+  orbitSpeed: 1, zoomSpeed: 1, flySpeed: 2, snapStep: 0.25, rotSnap: 15, autosave: true, keepRecent: 12,
+};
+const PREF_LISTS = {
+  newDuration: [5, 8, 10, 15], newFps: [24, 25, 30, 50, 60], newSize: [1280, 1920, 2560, 3840], videoQuality: ['standard', 'high', 'max'],
+  quality: ['low', 'balanced', 'high'], layout: ['single', 'split'], snapStep: [0.1, 0.25, 0.5, 1], rotSnap: [5, 15, 45, 90], keepRecent: [5, 12, 25, 50],
+};
+const PREF_RANGES = { walkSpeed: [0.6, 2.5], orbitSpeed: [0.3, 2.5], zoomSpeed: [0.3, 2.5], flySpeed: [0.5, 10] };
+function pref(k) {
+  const d = PREF_DEFAULTS[k], v = getPref(k, d);
+  if (typeof v !== typeof d) return d;
+  if (typeof v === 'number') { if (!isFinite(v)) return d; if (PREF_LISTS[k] && !PREF_LISTS[k].includes(v)) return d; if (PREF_RANGES[k]) return clamp(v, PREF_RANGES[k][0], PREF_RANGES[k][1]); return v; }
+  if (typeof v === 'string') { if (k === 'newAspect') return ASPECTS.some(a => a[0] === v) ? v : d; if (k === 'filePrefix') return v.trim() ? v : d; if (PREF_LISTS[k] && !PREF_LISTS[k].includes(v)) return d; }
+  return v;
+}
 let toastTimer;
 /* while a dialog is open the toast moves to the top of the window, so the dialog doesn't hide it (U7) */
 function placeToast() { const t = $('#toast'); if (t) t.classList.toggle('top', $$('.modal').some(m => !m.classList.contains('hidden'))); }
@@ -213,11 +238,13 @@ function defaultState() {
     camera: { base: { p: [3.4, 1.6, 6.2], tg: [0, 1.15, 0], f: 35, roll: 0, fd: 7.2 }, keys: [], shake: 0, lookAtId: null, follow: false, feel: 'gentle', dof: { on: false, fstop: 2.8, auto: true, strength: 3 } },
     objects: [],
   };
+  /* a new scene starts with the length, frame rate, shape and size chosen in Settings (an opened file never does: it has its own) */
+  Object.assign(s.settings, { duration: pref('newDuration'), fps: pref('newFps'), aspect: pref('newAspect'), size: pref('newSize') });
   return s;
 }
 let state = defaultState();
 let assets = {}; // id -> {kind, name, b64, mime, aspect}
-let T = 0, playing = false, view = 'editor', selected = null, pipOn = true, editRev = 1, uiDirty = true, propsDirty = true;
+let T = 0, playing = false, view = 'editor', selected = null, pipOn = pref('pipDefault'), editRev = 1, uiDirty = true, propsDirty = true;
 let selIds = []; /* the selected objects' ids, `selected` (the one clicked last) among them: select, sanitizeSel */
 let dragActive = false; /* a drag on the floor, the ring or a box is under way: the pointer handlers in wire */
 const frames = () => Math.max(2, Math.round(state.settings.duration * state.settings.fps));
@@ -399,7 +426,7 @@ function pushHistory() {
   platform.setDirty(true);
   autosave();
 }
-function changed(commit, props = false) { editRev++; uiDirty = true; if (props) propsDirty = true; if (commit) { groundDirty = true; pushHistory(); } } /* a real edit: things settle once it is over */
+function changed(commit, props = false) { editRev++; uiDirty = true; if (props) propsDirty = true; if (commit) { groundDirty = true; pushHistory(); scheduleRecent(); } } /* a real edit: things settle once it is over */
 function restore(s) {
   state = parseStep(s);
   sanitizeSel();
@@ -407,14 +434,23 @@ function restore(s) {
 }
 /* undo/redo autosave too, so an undone delete puts its photo or model back in the autosave */
 const changeLabel = (word, before, after) => { const d = describeChange(before, after); return d ? word + ': ' + d : word; };
-function undo() { if (exporting) return; if (hi > 0) { hi--; restore(hist[hi]); platform.restoreDoc(histDoc[hi]); platform.setDirty(true); autosave(); toast(changeLabel('Undo', hist[hi], hist[hi + 1])); } }
-function redo() { if (exporting) return; if (hi < hist.length - 1) { hi++; restore(hist[hi]); platform.restoreDoc(histDoc[hi]); platform.setDirty(true); autosave(); toast(changeLabel('Redo', hist[hi - 1], hist[hi])); } }
+function undo() { if (exporting) return; if (hi > 0) { hi--; restore(hist[hi]); platform.restoreDoc(histDoc[hi]); platform.setDirty(true); autosave(); scheduleRecent(); toast(changeLabel('Undo', hist[hi], hist[hi + 1])); } }
+function redo() { if (exporting) return; if (hi < hist.length - 1) { hi++; restore(hist[hi]); platform.restoreDoc(histDoc[hi]); platform.setDirty(true); autosave(); scheduleRecent(); toast(changeLabel('Redo', hist[hi - 1], hist[hi])); } }
 /* ---- autosave ----
    localStorage 'shotref.autosave' = { state, assets: {}, assetIds: [...], v: 2 } (small).
    Photos and models go to IndexedDB (db 'shotref', store 'assets', key = asset id).
    If IndexedDB is unavailable (sandboxed iframe, private mode…), the used assets go inline as before;
    if even that does not fit, the scene is saved without them and the user is told once. */
-const AUTOSAVE_KEY = 'shotref.autosave';
+/* A page that publishes ShotRef with its own scene can set window.__SHOTREF_EMBED__ = { key, project, message } before the app starts:
+   its visitors begin with that project and message, and their own work is kept under its own key. Anything unreadable is ignored. */
+const EMBED = (() => {
+  try {
+    const e = window.__SHOTREF_EMBED__; if (!e || typeof e !== 'object') return null;
+    return { key: typeof e.key === 'string' ? e.key.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40) : '', project: e.project, message: typeof e.message === 'string' ? e.message.slice(0, 300) : '' };
+  } catch (err) { return null; }
+})();
+const AUTOSAVE_KEY = 'shotref.autosave' + (EMBED && EMBED.key ? '.' + EMBED.key : '');
+const IDB_NAME = EMBED && EMBED.key ? 'shotref-' + EMBED.key : 'shotref';
 const SIZE_WARNING = 'Photos and models are too big to autosave in this browser. Use Save to keep them.';
 const NO_AUTOSAVE = "Autosave isn't available here. Use Save to keep your work.";
 /* true when this page can't use localStorage at all (claude.ai sandbox): autosave is skipped, boot says so once */
@@ -461,11 +497,12 @@ function idbOpen() {
     };
     const timer = setTimeout(() => finish(null), 1500);
     try {
-      const rq = indexedDB.open('shotref', 1);
-      rq.onupgradeneeded = () => { try { if (!rq.result.objectStoreNames.contains('assets')) rq.result.createObjectStore('assets'); } catch (e) { } };
+      const rq = indexedDB.open(IDB_NAME, 2);
+      /* version 2 adds the recent projects next to the photos and models; a version 1 database keeps everything it has */
+      rq.onupgradeneeded = () => { try { const d = rq.result; if (!d.objectStoreNames.contains('assets')) d.createObjectStore('assets'); if (!d.objectStoreNames.contains('projects')) d.createObjectStore('projects', { keyPath: 'id' }); } catch (e) { } };
       rq.onsuccess = () => {
         const db = rq.result;
-        if (!db.objectStoreNames.contains('assets')) { try { db.close(); } catch (e) { } finish(null); return; }
+        if (!db.objectStoreNames.contains('assets') || !db.objectStoreNames.contains('projects')) { try { db.close(); } catch (e) { } finish(null); return; }
         finish(db);
       };
       rq.onerror = e => { if (e && e.preventDefault) e.preventDefault(); finish(null); };
@@ -474,11 +511,11 @@ function idbOpen() {
   return idb.opening;
 }
 /* wraps one IndexedDB transaction; resolves with fn's result, or null on any failure */
-function idbTx(mode, fn) {
+function idbTx(mode, fn, store = 'assets') {
   return idbOpen().then(db => new Promise(res => {
     if (!db) return res(null);
     try {
-      const tx = db.transaction('assets', mode), st = tx.objectStore('assets'), out = fn(st);
+      const tx = db.transaction(store, mode), st = tx.objectStore(store), out = fn(st);
       tx.oncomplete = () => res(out);
       tx.onerror = e => { const err = e && e.target && e.target.error; idb.lastErr = err || tx.error; console.error('ShotRef: IndexedDB request failed', err); if (e && e.preventDefault) e.preventDefault(); res(null); };
       tx.onabort = () => { if (tx.error) idb.lastErr = tx.error; console.error('ShotRef: could not autosave photos and models', tx.error); res(null); };
@@ -540,6 +577,7 @@ let inlineTooBig = null;
 let saveTimer = null;
 function autosave() {
   clearTimeout(saveTimer);
+  if (!pref('autosave')) { saveTimer = null; return; } /* Settings: autosave off */
   saveTimer = setTimeout(() => { saveTimer = null; writeAutosave(); }, 400);
 }
 /* write a pending autosave straight away (page closing) */
@@ -615,6 +653,17 @@ function applyEnv() {
   sun.castShadow = s.shadows !== false; sun.shadow.radius = 1 + (typeof s.shadowSoft === 'number' ? s.shadowSoft : 0.3) * 6; /* softness 0..1 */
   ground.material.color.set(s.groundColor); ground.visible = s.groundOn;
   grid.visible = s.gridOn;
+}
+
+/* the Settings choices that need pushing into three.js: preview resolution, live shadows, how fast the mouse moves the views */
+function applyPrefs() {
+  const dpr = window.devicePixelRatio || 1, q = pref('quality');
+  renderer.setPixelRatio(q === 'low' ? 0.75 : q === 'balanced' ? Math.min(dpr, 1.25) : Math.min(dpr, 2));
+  const sh = pref('liveShadows');
+  if (renderer.shadowMap.enabled !== sh) { renderer.shadowMap.enabled = sh; scene.traverse(o => { if (o.material) for (const m of arr(o.material)) m.needsUpdate = true; }); } /* exports always render with shadows */
+  const o = pref('orbitSpeed'), z = pref('zoomSpeed');
+  edControls.rotateSpeed = o; edControls.zoomSpeed = z; topControls.zoomSpeed = z; camControls.rotateSpeed = 0.6 * o; camControls.zoomSpeed = 0.6 * z;
+  updateGizmo(); requestRender();
 }
 
 /* ---- time of day and the sun ----
@@ -1391,7 +1440,7 @@ function updateHelpers() {
     const vv = views.get(o.id); if (!vv || !vv.person) continue;
     seen.add(o.id);
     let a = arrows.get(o.id); if (!a) { a = new THREE.Mesh(arrowGeo, arrowMat); a.renderOrder = 3; helpers.add(a); arrows.set(o.id, a); }
-    a.visible = vv.group.visible; a.position.set(vv.group.position.x, vv.group.position.y + 0.02, vv.group.position.z); a.rotation.y = vv.group.rotation.y;
+    a.visible = vv.group.visible && pref('showArrows'); a.position.set(vv.group.position.x, vv.group.position.y + 0.02, vv.group.position.z); a.rotation.y = vv.group.rotation.y;
     const sc = (o.opts.height || 1.75) / 1.75 * vv.group.scale.x; a.scale.setScalar(sc);
   }
   for (const [id, a] of arrows) if (!seen.has(id)) { helpers.remove(a); arrows.delete(id); }
@@ -1479,7 +1528,7 @@ function updateSelBar() {
   const cam = view === 'top' ? topCam : edCam; cam.updateMatrixWorld();
   _sbBox.getCenter(_sbPt); _sbPt.y = liftGrp.visible ? Math.max(_sbBox.max.y, liftGrp.position.y + 0.72 * liftGrp.scale.y) : _sbBox.max.y; _sbPt.project(cam); /* clear of the lift arrow */
   if (_sbPt.z > 1 || _sbPt.z < -1) return hide();
-  const w = vpEl.clientWidth, hh = vpEl.clientHeight, gap = list.some(o => o.type === 'person') ? 30 : 10; /* people carry a name label above them */
+  const wr = viewRects(vpEl.clientWidth, vpEl.clientHeight).work, w = wr ? wr.w : vpEl.clientWidth, hh = vpEl.clientHeight, gap = list.some(o => o.type === 'person') ? 30 : 10; /* people carry a name label above them */
   putStyle(bar, 'left', clamp((_sbPt.x * 0.5 + 0.5) * w, 110, Math.max(110, w - 110)) + 'px');
   putStyle(bar, 'top', clamp((-_sbPt.y * 0.5 + 0.5) * hh - gap, 100, Math.max(100, hh - 60)) + 'px');
   putStyle(bar, 'display', 'flex');
@@ -1491,7 +1540,7 @@ gizmo.setSize(0.9);
 const gizmoHelper = gizmo.getHelper(); scene.add(gizmoHelper);
 let gizmoMode = 'translate', snapOn = false, gizmoUsed = false;
 gizmo.addEventListener('dragging-changed', e => {
-  edControls.enabled = !e.value;
+  if (e.value) edControls.enabled = false; else syncControls();
   if (e.value) { gizmoUsed = true; if (playing) setPlaying(false); }
   else { changed(true, false); }
 });
@@ -1517,7 +1566,7 @@ function updateGizmo() {
   else if (selected === 'target') { if (!subject()) { gizmo.attach(tgtProxy); gizmo.setMode('translate'); } }
   /* the arrows move one unlocked item; several at once are moved by dragging or turned with the ring */
   else if (!simple && !isMulti() && !(getObj(selected) || {}).locked) { const v = views.get(selected); if (v && v.group.visible) { gizmo.attach(v.group); gizmo.setMode(gizmoMode); } }
-  gizmo.setTranslationSnap(snapOn ? 0.25 : null); gizmo.setRotationSnap(snapOn ? 15 * D2R : null); gizmo.setScaleSnap(snapOn ? 0.1 : null);
+  gizmo.setTranslationSnap(snapOn ? pref('snapStep') : null); gizmo.setRotationSnap(snapOn ? pref('rotSnap') * D2R : null); gizmo.setScaleSnap(snapOn ? 0.1 : null);
 }
 
 /* ---- writers ---- */
@@ -1550,11 +1599,45 @@ function writeCam(fields, commit) {
 /* ============================== drawing ============================== */
 let vw = 0, vh = 0;
 const vpEl = $('#vp');
-function camRect(w, hh) {
-  const ar = arOf(state.settings.aspect), m = 28;
-  let rw = w - 2 * m, rh = rw / ar;
-  if (rh > hh - 2 * m - 20) { rh = hh - 2 * m - 20; rw = rh * ar; }
-  return { x: Math.round((w - rw) / 2), y: Math.round((hh - rh) / 2 + 8), w: Math.round(rw), h: Math.round(rh) };
+/* Split view: the editor (or Top) on the left and the shot on the right, in one canvas. In split view `view` is the left half's
+   view; Camera view is always the whole canvas. `pane` is the half the pointer is over (or was pressed in): it decides which view the
+   mouse, wheel and fly keys steer. */
+let layout = pref('layout'), pane = 'work';
+const splitOn = () => layout === 'split' && view !== 'camera';
+const camPane = () => view === 'camera' || (splitOn() && pane === 'cam');
+/* the shot's frame inside a region, letterboxed to the aspect: whole window in Camera view, the right half in split view */
+function camRectIn(r, split) {
+  const ar = arOf(state.settings.aspect), m = split ? 14 : 28, top = split ? 34 : 20;
+  let rw = r.w - 2 * m, rh = rw / ar;
+  if (rh > r.h - 2 * m - top) { rh = r.h - 2 * m - top; rw = rh * ar; }
+  return { x: Math.round(r.x + (r.w - rw) / 2), y: Math.round(r.y + (r.h - rh) / 2 + (split ? 12 : 8)), w: Math.round(rw), h: Math.round(rh) };
+}
+const camRect = (w, hh) => camRectIn({ x: 0, y: 0, w, h: hh }, false);
+/* where each thing is drawn, in pixels from the top left of the canvas: work = the editor/top half, cam = the shot's half, frame = the shot's picture */
+function viewRects(w, hh) {
+  if (view === 'camera') return { work: null, cam: { x: 0, y: 0, w, h: hh }, frame: camRect(w, hh) };
+  if (!splitOn()) return { work: { x: 0, y: 0, w, h: hh }, cam: null, frame: null };
+  const half = Math.floor(w / 2), cam = { x: half + 1, y: 0, w: w - half - 1, h: hh };
+  return { work: { x: 0, y: 0, w: half - 1, h: hh }, cam, frame: camRectIn(cam, true) };
+}
+/* which half a pointer event is in */
+function paneOf(e) {
+  if (!splitOn()) return view === 'camera' ? 'cam' : 'work';
+  const r = canvas.getBoundingClientRect();
+  return e.clientX - r.left < Math.floor(r.width / 2) ? 'work' : 'cam';
+}
+/* only the view under the pointer listens to the mouse (the three orbit controls share the canvas) */
+function syncControls() {
+  const sp = splitOn();
+  edControls.enabled = view === 'editor' && (!sp || pane === 'work'); topControls.enabled = view === 'top' && (!sp || pane === 'work'); camControls.enabled = view === 'camera' || (sp && pane === 'cam');
+  gizmo.enabled = !dragActive && (!sp || pane === 'work');
+}
+function setPane(p) { if (p === pane) return; pane = p; if (gizmo.axis) { gizmo.axis = null; } syncControls(); }
+function setLayout(l, toastIt = true) {
+  l = l === 'split' ? 'split' : 'single'; layout = l; setPref('layout', l);
+  if (l === 'split' && view === 'camera') setView(lastWorkView); else setView(view);
+  if (toastIt) toast(l === 'split' ? 'Split view: build on the left, see the shot on the right' : 'Single view');
+  requestRender();
 }
 function pipRect(w, hh) {
   const ar = arOf(state.settings.aspect);
@@ -1668,25 +1751,37 @@ function draw() {
   if (w !== vw || hh !== vh) { vw = w; vh = hh; renderer.setSize(w, hh, false); }
   if (!w || !hh) return;
   renderer.setScissorTest(false);
-  const pip = $('#pipFrame'), cf = $('#camFrame');
+  const pip = $('#pipFrame'), cf = $('#camFrame'), sl = $('#splitLine'), sp = splitOn(), R = viewRects(w, hh);
+  putStyle(sl, 'display', sp ? 'block' : 'none');
+  if (view === 'camera') {
+    renderer.setViewport(0, 0, w, hh); renderer.setClearColor(0x0e0f11, 1); renderer.clear();
+    renderShotInto(renderer, R.frame, hh); place(cf, R.frame); cf.style.display = 'block'; pip.style.display = 'none';
+    return;
+  }
+  const o = R.work, wy = hh - o.y - o.h;
+  renderer.setViewport(o.x, wy, o.w, o.h);
+  if (sp) { renderer.setScissor(o.x, wy, o.w, o.h); renderer.setScissorTest(true); }
   if (view === 'editor') {
-    edCam.aspect = w / hh; edCam.updateProjectionMatrix();
-    renderer.setViewport(0, 0, w, hh);
+    edCam.aspect = o.w / o.h; edCam.updateProjectionMatrix();
     camRig.visible = true;
     renderer.render(scene, edCam);
-    if (pipOn) { const r = pipRect(w, hh); renderShotInto(renderer, r, hh); place(pip, r); pip.style.display = 'block'; } else pip.style.display = 'none';
-    cf.style.display = 'none';
-  } else if (view === 'top') {
-    const half = 5.5; topCam.left = -half * w / hh; topCam.right = half * w / hh; topCam.top = half; topCam.bottom = -half; topCam.updateProjectionMatrix();
-    renderer.setViewport(0, 0, w, hh);
+  } else {
+    const half = 5.5; topCam.left = -half * o.w / o.h; topCam.right = half * o.w / o.h; topCam.top = half; topCam.bottom = -half; topCam.updateProjectionMatrix();
     const gv = grid.visible; grid.visible = true;
     renderer.render(scene, topCam);
     grid.visible = gv;
+  }
+  renderer.setScissorTest(false);
+  if (sp) {
+    const c = R.cam; renderer.setViewport(c.x, hh - c.y - c.h, c.w, c.h); renderer.setScissor(c.x, hh - c.y - c.h, c.w, c.h); renderer.setScissorTest(true);
+    renderer.setClearColor(0x0e0f11, 1); renderer.clear(); renderer.setScissorTest(false);
+    renderShotInto(renderer, R.frame, hh); place(cf, R.frame); cf.style.display = 'block'; pip.style.display = 'none';
+    putStyle(sl, 'left', (c.x - 1) + 'px');
+    gizmo.viewport = (gizmo.viewport || new THREE.Vector4()).set(o.x, wy, o.w, o.h); /* the arrows' pointer maths covers the left half only */
+  } else {
+    gizmo.viewport = null;
     if (pipOn) { const r = pipRect(w, hh); renderShotInto(renderer, r, hh); place(pip, r); pip.style.display = 'block'; } else pip.style.display = 'none';
     cf.style.display = 'none';
-  } else {
-    renderer.setViewport(0, 0, w, hh); renderer.setClearColor(0x0e0f11, 1); renderer.clear();
-    const r = camRect(w, hh); renderShotInto(renderer, r, hh); place(cf, r); cf.style.display = 'block'; pip.style.display = 'none';
   }
 }
 function drawGuides() {
@@ -1702,9 +1797,10 @@ function drawGuides() {
 /* ============================== main loop ============================== */
 let lastNow = performance.now();
 const flyKeys = new Set();
+const flySpeedNow = shift => pref('flySpeed') * (shift ? 3 : 1); /* metres per second; Shift is three times faster */
 function fly(dt) {
-  if (view !== 'camera' || !flyKeys.size) return;
-  const sp = (flyKeys.has('shift') ? 6 : 2) * dt;
+  if (!camPane() || !flyKeys.size) return;
+  const sp = flySpeedNow(flyKeys.has('shift')) * dt;
   const fwd = new THREE.Vector3(); shotCam.getWorldDirection(fwd);
   const flat = new THREE.Vector3(fwd.x, 0, fwd.z).normalize(), right = new THREE.Vector3().crossVectors(flat, new THREE.Vector3(0, 1, 0)).normalize();
   const mv = new THREE.Vector3();
@@ -1727,7 +1823,7 @@ function frameSig() {
   const e = edCam.position, q = edCam.quaternion, tp = topCam.position, pm = pathMode;
   return [editRev, T, view, selected, selIds.join(), dragActive, playing, rec ? rec.phase : '', pipOn, simple, vpEl.clientWidth, vpEl.clientHeight, window.devicePixelRatio,
     gizmo.dragging, gizmo.axis, e.x, e.y, e.z, q.x, q.y, q.z, q.w, edCam.zoom, tp.x, tp.y, tp.z, topCam.zoom,
-    plateKey, plateBusy, placing, focusPick, hi, hist.length, pm ? pm.pts.length + ':' + pm.cursor : ''].join('|');
+    layout, plateKey, plateBusy, placing, focusPick, hi, hist.length, pm ? pm.pts.length + ':' + pm.cursor : ''].join('|');
 }
 function frame(now) {
   requestAnimationFrame(frame);
@@ -1861,6 +1957,13 @@ function buildAddPanel() {
   area.append(h('div', { class: 'addgrid' },
     ...Object.entries(BODIES).map(([k, b]) => h('button', { class: 'tile', 'data-body': k, title: 'Add a ' + b.label.toLowerCase() + ', then click where they stand', onclick: () => addPerson(k) }, h('span', { html: svgI(k === 'man' ? 'person' : k) }), b.label)),
     h('button', { class: 'tile big', title: 'Floor mark (like tape on set). Not visible in the shot.', onclick: () => addObject('mark', null, true) }, h('span', { html: svgI('mark') }), 'Add floor mark')));
+  const mine = librarySets();
+  if (mine.length) {
+    area.append(h('div', { class: 'addcat' }, 'My sets'));
+    area.append(h('div', { class: 'addgrid' }, mine.map(set => h('div', { class: 'setile' },
+      h('button', { class: 'tile', title: 'Add "' + set.name + '" (' + set.items.length + ' item' + (set.items.length > 1 ? 's' : '') + '), then click where it goes', onclick: () => placeSet(set) }, h('span', { html: svgI('group') }), set.name),
+      h('button', { class: 'setdel', title: 'Delete this set', 'aria-label': 'Delete the set ' + set.name, onclick: e => { e.stopPropagation(); deleteSet(set); } }, '\u00d7')))));
+  }
   for (const cat of ['Props', 'Shapes']) {
     const fewer = cat === 'Shapes' && simple && !getPref('moreShapes', false);
     const list = fewer ? cats[cat].filter(k => SIMPLE_SHAPES.includes(k)) : cats[cat];
@@ -2049,9 +2152,10 @@ function renderProps() {
   if (selected === 'sun') return propsSun(p);
   if (selected === 'camera' || selected === 'target' || (view === 'camera' && !selected)) return propsCamera(p);
   const o = selected && getObj(selected);
-  if (o && isMulti()) return propsMulti(p);
-  if (o) return propsObject(p, o);
+  if (o && isMulti()) { propsMulti(p); p.append(setSaveSection(() => selObjs(), 'the ' + selIds.length + ' selected items')); return; }
+  if (o) { propsObject(p, o); if (o.type !== 'image' && o.type !== 'model') p.append(setSaveSection(() => [o], o.name)); return; }
   propsScene(p);
+  if (state.objects.length) p.append(setSaveSection(() => state.objects, 'everything in the scene'));
 }
 function propsScene(p) {
   const s = state.settings;
@@ -2344,7 +2448,7 @@ function propsObject(p, o) {
     h('div', { class: 'btns' }, h('button', { class: 'primary', onclick: () => startPath(o.id), title: 'Click points on the floor; ' + (o.type === 'person' ? 'they walk' : 'it moves') + ' through them' }, h('span', { html: svgI('path'), class: 'bi' }), 'Draw ' + who + 'path')),
     slider('Speed', () => pathSpeedOf(o), (v, cm) => { o.opts.pathSpeed = v; changed(cm); }, { min: 0.3, max: o.type === 'car' ? 30 : 8, step: 0.1, fmt: v => v.toFixed(1) + ' m/s' }),
     check('Fit the path to the end of the shot', () => pathFit, v => { pathFit = v; }, 'Ignore the speed: arrive exactly on the last frame'),
-    h('p', { class: 'note' }, 'Starts at the playhead (' + snapT(T).toFixed(2) + ' s). Walking ≈ 1.4 m/s, jogging ≈ 3 m/s.'),
+    h('p', { class: 'note' }, 'Starts at the playhead (' + snapT(T).toFixed(2) + ' s). Walking ≈ ' + pref('walkSpeed') + ' m/s, jogging ≈ 3 m/s.'),
   ];
   const marks = state.objects.filter(m => m.type === 'mark');
   if (marks.length) {
@@ -2526,7 +2630,7 @@ function actDrag(tag, o, act, laneEl) {
   });
 }
 function selKeysTarget() {
-  if (view === 'camera') return 'camera';
+  if (camPane()) return 'camera';
   if (selected === 'target') return 'camera';
   if (selected === 'sun' || selected === 'export') return null;
   return selected || (view === 'camera' ? 'camera' : null);
@@ -2569,9 +2673,9 @@ function setPlaying(v) { playing = v; $('#bPlay').textContent = v ? '❚❚' : '
 const labelEls = new Map();
 function updateLabels() {
   const box = $('#labels');
-  if (view === 'camera') { box.style.display = 'none'; return; }
+  if (view === 'camera' || !pref('showLabels')) { box.style.display = 'none'; return; }
   box.style.display = 'block';
-  const cam = view === 'top' ? topCam : edCam, w = vpEl.clientWidth, hh = vpEl.clientHeight, seen = new Set();
+  const cam = view === 'top' ? topCam : edCam, wr = viewRects(vpEl.clientWidth, vpEl.clientHeight).work, w = wr ? wr.w : vpEl.clientWidth, hh = vpEl.clientHeight, seen = new Set();
   for (const o of state.objects) {
     if (o.type !== 'person') continue;
     const v = views.get(o.id); if (!v || !v.group.visible) continue;
@@ -2595,20 +2699,28 @@ function tickUI() {
   ensurePlate();
   const ov = state.plate && plateURL ? (state.plate.overlay || 0) : 0;
   $$('.plateImg').forEach(i => { putStyle(i, 'opacity', String(ov)); putStyle(i, 'display', ov > 0 ? 'block' : 'none'); });
-  if (view === 'camera') { const en = camEnds(); $('#cbStart').classList.toggle('on', en.s); $('#cbEnd').classList.toggle('on', en.e); putText($('#cbStart'), (en.s ? '✓ ' : '') + 'Set start'); putText($('#cbEnd'), (en.e ? '✓ ' : '') + 'Set end'); $('#cbRec').classList.toggle('on', !!rec); }
+  const camUI = view === 'camera' || splitOn();
+  if (camUI) { const en = camEnds(); $('#cbStart').classList.toggle('on', en.s); $('#cbEnd').classList.toggle('on', en.e); putText($('#cbStart'), (en.s ? '✓ ' : '') + 'Set start'); putText($('#cbEnd'), (en.e ? '✓ ' : '') + 'Set end'); $('#cbRec').classList.toggle('on', !!rec); }
   const L = lastT(), W = laneW();
   putStyle($('#tlHead'), 'left', (168 + T / L * W) + 'px');
   putText($('#tcode'), fmtTime(T));
   putText($('#tframe'), 'frame ' + (Math.round(T * state.settings.fps) + 1) + ' / ' + frames());
   for (const f of live) f();
   const hint = $('#hint');
-  if (view === 'camera') {
+  putStyle(hint, 'display', pref('showHints') ? '' : 'none');
+  if (camUI) {
     putHTML($('#hud'), `<span><b>CAMERA</b></span><span class="shotdesc">${describeShot()}</span>${dofActive() ? `<span>f/${ensureDof().fstop.toFixed(1)} · focus ${focusDist(camState).toFixed(2)} m</span>` : ''}${focusPick ? '<span class="rec">Click to set focus</span>' : ''}${playing ? '<span class="rec">● PLAY</span>' : ''}`);
     putStyle($('#hud'), 'display', 'flex');
+  } else putStyle($('#hud'), 'display', 'none');
+  /* the overlays sit over the half they belong to */
+  { const sp = splitOn(), R = viewRects(vpEl.clientWidth, vpEl.clientHeight), bar = $('#camBar');
+    putStyle(bar, 'left', (sp ? R.cam.x : 0) + 10 + 'px'); putStyle(bar, 'maxWidth', sp ? (R.cam.w - 20) + 'px' : '');
+    putStyle($('#hud'), 'left', sp ? R.cam.x + 'px' : '0px'); putStyle($('#hud'), 'top', sp ? (10 + bar.offsetHeight + 6) + 'px' : '');
+    putStyle($('#vpRight'), 'right', (sp ? vpEl.clientWidth - R.work.w + 10 : 10) + 'px'); putStyle(hint, 'maxWidth', sp ? (R.work.w - 30) + 'px' : ''); }
+  if (camPane()) {
     putHTML(hint, rec ? (rec.phase === 'rec' ? '<b style="color:#ff6b6b">● Recording</b> · steer the camera · <kbd>Esc</kbd> cancel' : 'Get ready… position the camera now')
       : 'Drag: orbit · Right-drag: pan · Scroll: dolly · <kbd>Alt</kbd>+scroll: lens · <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> <kbd>Q</kbd><kbd>E</kbd> fly · <kbd>K</kbd> key camera');
   } else {
-    putStyle($('#hud'), 'display', 'none');
     const nav = view === 'top' ? 'Drag empty space: pan · Scroll: zoom' : 'Drag empty space: orbit · Right-drag: pan · Scroll: zoom';
     putHTML(hint, placing || pathMode ? '<kbd>Esc</kbd> cancel' + (pathMode ? ' · <kbd>Enter</kbd> done · right-click removes the last point' : '')
       : isMulti() ? 'Drag any of them to move them all · drag the orange ring to turn them together · <kbd>Shift</kbd> click adds or removes · <kbd>Ctrl</kbd><kbd>G</kbd> group · <kbd>Ctrl</kbd><kbd>L</kbd> lock'
@@ -2632,8 +2744,8 @@ function goStep(s) {
   if (placing) cancelPlacing();
   if (pathMode) cancelPath();
   if (s === 'build') { if (view === 'camera') setView(lastWorkView); if (selected === 'camera' || selected === 'target' || selected === 'export') select(null); setLeftTab('add'); }
-  else if (s === 'frame') { setView('camera'); select('camera'); }
-  else if (s === 'export') { if (view !== 'camera') setView('camera'); select('export'); }
+  else if (s === 'frame') { if (!splitOn()) setView('camera'); select('camera'); }
+  else if (s === 'export') { if (view !== 'camera' && !splitOn()) setView('camera'); select('export'); }
   requestRender();
 }
 /* timeline tracks: open while something is keyed, unless you opened or closed them by hand */
@@ -2690,7 +2802,8 @@ const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '
 function fileMenuItems() {
   return [{ head: 'Project' },
     { id: 'new', label: 'New\u2026', fn: () => openStarters() },
-    { id: 'open', label: 'Open\u2026', fn: openDialog, key: 'Ctrl O' },
+    { id: 'open', label: 'Open\u2026', fn: openProjectUI, key: 'Ctrl O' },
+    { id: 'recent', label: 'Recent projects\u2026', fn: openRecent },
     '-',
     { id: 'save', label: 'Save', fn: () => saveProject(false), key: 'Ctrl S' },
     { id: 'saveas', label: 'Save as\u2026', fn: () => saveProject(true), key: 'Ctrl Shift S' },
@@ -2699,8 +2812,8 @@ function fileMenuItems() {
 }
 function gearMenuItems() {
   return [{ id: 'advanced', label: 'Advanced controls', check: !simple, fn: () => setSimple(!simple) },
-    { id: 'ground', label: 'Keep things on the ground', check: groundOn(), fn: () => { const on = !groundOn(); setPref('ground', on); if (on) migrateAll(); requestRender(); propsDirty = true; updateGizmo(); toast(on ? 'Things now rest on the floor or on what is under them. Raised items were left where they are.' : 'Things are no longer kept on the ground.', 3500); } }, /* switching on never moves anything: raised items become "Can float" */
-    { id: 'settings', label: 'Settings\u2026', fn: () => openModal('mSettings') },
+    { id: 'ground', label: 'Keep things on the ground', check: groundOn(), fn: () => setGround(!groundOn()) }, /* the same switch as in Settings */
+    { id: 'settings', label: 'Settings\u2026', fn: openSettings },
     '-',
     { id: 'help', label: 'Quick start and shortcuts', fn: () => openModal('mHelp'), key: '?' },
     { id: 'about', label: 'About ShotRef', fn: () => { const v = platform.version || APP_VERSION; $('#aboutVer').textContent = v ? 'Version ' + v : ''; openModal('mAbout'); } }];
@@ -2840,12 +2953,14 @@ function ctxItems(hit, floor) {
 let simple = true; try { simple = localStorage.getItem('shotref.simple') !== '0'; } catch (e) { }
 let placing = null, pathMode = null, pathFit = false, rec = null;
 const MODE_TIP_MS = 6500; /* path and recording tips stay up long enough to read (U7) */
-const snapV = v => snapOn ? Math.round(v * 4) / 4 : r4(v);
+const snapWith = (v, on) => on ? r4(Math.round(v / pref('snapStep')) * pref('snapStep')) : r4(v); /* the Snap button rounds to the step chosen in Settings */
+const snapV = v => snapWith(v, snapOn);
 const _rc = new THREE.Raycaster();
 function rayFromEvent(e) {
   const rect = canvas.getBoundingClientRect(), px = e.clientX - rect.left, py = e.clientY - rect.top;
-  let r = { x: 0, y: 0, w: rect.width, h: rect.height }, cam = view === 'top' ? topCam : edCam;
-  if (view === 'camera') { r = camRect(rect.width, rect.height); cam = renderCam; prepRenderCam(T); }
+  const R = viewRects(rect.width, rect.height);
+  let r = R.work || { x: 0, y: 0, w: rect.width, h: rect.height }, cam = view === 'top' ? topCam : edCam;
+  if (camPane() && R.frame) { r = R.frame; cam = renderCam; prepRenderCam(T); }
   if (px < r.x || py < r.y || px > r.x + r.w || py > r.y + r.h) return null;
   if (view === 'top') topCam.updateMatrixWorld();
   _rc.setFromCamera(new THREE.Vector2((px - r.x) / r.w * 2 - 1, -((py - r.y) / r.h) * 2 + 1), cam);
@@ -2853,8 +2968,8 @@ function rayFromEvent(e) {
 }
 function planeHit(rc, y = 0) { const pt = new THREE.Vector3(); return rc.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -y), pt) ? pt : null; }
 function pickAt(rc, noRing = false) {
-  const targets = [...views.values()].filter(v => v.group.visible && !(view === 'camera' && v.isMark)).map(v => v.group);
-  if (view !== 'camera') {
+  const targets = [...views.values()].filter(v => v.group.visible && !(camPane() && v.isMark)).map(v => v.group);
+  if (!camPane()) {
     /* the camera's path points and the sun win over what is behind them */
     const hs = ckPts.filter(m => m.visible);
     const hh = hs.length ? rc.intersectObjects(hs, false) : [];
@@ -2868,7 +2983,7 @@ function pickAt(rc, noRing = false) {
     while (ob) { if (ob.userData.pick) return { id: ob.userData.pick, point: hit.point }; if (ob.userData.objId) return { id: ob.userData.objId, point: hit.point }; ob = ob.parent; }
   }
   /* nothing solid: the camera's path line (right-click it to add a point) */
-  if (view !== 'camera' && camPath.line.visible && !noRing) {
+  if (!camPane() && camPath.line.visible && !noRing) {
     const L = rc.params.Line, old = L.threshold;
     L.threshold = view === 'top' ? 0.16 / topCam.zoom : clamp(edCam.position.distanceTo(edControls.target) * 0.012, 0.09, 0.6);
     const lh = rc.intersectObject(camPath.line, false); L.threshold = old;
@@ -2889,22 +3004,23 @@ function startPlacing(id) {
   showModeBar('Click on the floor to place ' + getObj(id).name, [['Cancel', cancelPlacing]]);
 }
 function commitPlacing() {
-  const o = getObj(placing); placing = null; hideModeBar(); canvas.style.cursor = '';
-  changed(true, true); if (o) toast(o.name + ' placed');
+  const o = getObj(placing), what = placeSetName || (o && o.name); placing = null; placeRest = []; placeSetName = null; hideModeBar(); canvas.style.cursor = '';
+  changed(true, true); if (o) toast(what + ' placed');
 }
 function cancelPlacing() {
-  const id = placing; placing = null; hideModeBar(); canvas.style.cursor = '';
-  if (id) { state.objects = state.objects.filter(o => o.id !== id); selIds = selIds.filter(x => x !== id); if (selected === id) selected = null; syncScene(); updateGizmo(); changed(false, true); autosave(); }
+  const id = placing, gone = new Set([id, ...placeRest.map(r => r.id)]); placing = null; placeRest = []; placeSetName = null; hideModeBar(); canvas.style.cursor = '';
+  if (id) { state.objects = state.objects.filter(o => !gone.has(o.id)); selIds = selIds.filter(x => !gone.has(x)); if (gone.has(selected)) selected = selIds[selIds.length - 1] || null; pruneGroups(); if (state.groups && !Object.keys(state.groups).length) delete state.groups; syncScene(); updateGizmo(); changed(false, true); autosave(); }
 }
 function movePlacing(e) {
   const rc = rayFromEvent(e); if (!rc) return; const g = planeHit(rc, 0); const o = getObj(placing); if (!g || !o) return;
   o.base.p = [snapV(g.x), o.base.p[1], snapV(g.z)]; editRev++;
+  for (const r of placeRest) { const q = getObj(r.id); if (q) q.base.p = [r4(o.base.p[0] + r.dx), q.base.p[1], r4(o.base.p[2] + r.dz)]; }
 }
 
 /* ---- draw a path ---- */
 function pathSpeedOf(o) {
   if (o.opts.pathSpeed) return o.opts.pathSpeed;
-  if (o.type === 'person') return o.opts.pose === 'run' ? 3.5 : 1.4;
+  if (o.type === 'person') return o.opts.pose === 'run' ? 3.5 : pref('walkSpeed');
   if (o.type === 'car') return 8;
   return 1.5;
 }
@@ -3100,6 +3216,11 @@ function underneath(o) {
 /* ground rule: an item rests on the floor, or on what is under it, unless it rides on a parent, sits, or "Can float" is ticked.
    The preference "ground" (default on) switches the whole rule off. */
 const groundOn = () => getPref('ground', true) !== false;
+/* switching on never moves anything: raised items become "Can float". The gear menu and Settings both come here. */
+function setGround(on, quiet = false) {
+  setPref('ground', on); if (on) migrateAll(); requestRender(); propsDirty = true; updateGizmo();
+  if (!quiet) toast(on ? 'Things now rest on the floor or on what is under them. Raised items were left where they are.' : 'Things are no longer kept on the ground.', 3500);
+}
 const isGrounded = o => !!o && o.type !== 'mark' && groundOn() && !o.parent && !(o.opts && (o.opts.seated || o.opts.free));
 /* how far the item's underside is below its origin when turned and scaled like this (0 or less): that is what rests, not the origin */
 function restOffset(v, r, s) {
@@ -3338,7 +3459,7 @@ function setSimple(v) {
 let focusPick = false;
 function startFocusPick() {
   ensureDof().on = true;
-  if (view !== 'camera') setView('camera');
+  if (view !== 'camera' && !splitOn()) setView('camera');
   focusPick = true; canvas.style.cursor = 'crosshair';
   toast('Click on what should be sharp');
 }
@@ -3362,13 +3483,14 @@ function setView(v) {
   }
   if (v !== 'camera') lastWorkView = v;
   view = v;
-  edControls.enabled = v === 'editor'; camControls.enabled = v === 'camera'; topControls.enabled = v === 'top';
+  syncControls();
   $$('#viewSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
   $$('#vpRight [data-g], #vpRight [data-g2], #bSnapGrid, #bFocus').forEach(b => { b.style.display = v === 'camera' ? 'none' : ''; }); /* in Camera view only Grid stays */
-  $('#camBar').style.display = v === 'camera' ? 'flex' : 'none';
+  $('#camBar').style.display = v === 'camera' || splitOn() ? 'flex' : 'none';
   $('#bCamHere').style.display = v === 'editor' ? '' : 'none';
-  $('#bPip').style.display = v !== 'camera' ? '' : 'none';
-  if (focusPick && v !== 'camera') { focusPick = false; canvas.style.cursor = ''; }
+  $('#bPip').style.display = v !== 'camera' && !splitOn() ? '' : 'none';
+  $('#bSplit').classList.toggle('on', layout === 'split'); $('#bSplit').setAttribute('aria-pressed', String(layout === 'split'));
+  if (focusPick && v !== 'camera' && !splitOn()) { focusPick = false; canvas.style.cursor = ''; }
   updateGizmo(); propsDirty = true;
 }
 function camToEditorView() {
@@ -3469,7 +3591,7 @@ function replaceProject(newState, newAssets = {}, label) {
   try {
     for (const [id, a] of Object.entries(newAssets)) if (assets[id] && assets[id].b64 !== (a && a.b64)) dropModel(id);
     assets = { ...assets, ...newAssets };
-    state = newState; cleanTakes(); selected = null; selIds = []; promptEdit = null; shotEditId = null; setTime(0); migrateAll();
+    recentSession = uid(); state = newState; cleanTakes(); selected = null; selIds = []; promptEdit = null; shotEditId = null; setTime(0); migrateAll();
     platform.startDoc(); /* Open, New and starters are a new document: Save must not reuse the previous file */
     restore(snapshot()); pushHistory(); resetEditorCam();
     snapHold = false; if (snapLive > snapPruneAt) pruneSnapPool();
@@ -3573,11 +3695,14 @@ async function saveProject(saveAs = false) {
 }
 /* the project name as a file name part: "Desert chase" -> desert-chase */
 const projectSlug = () => String(state.meta && state.meta.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
-async function doSaveProject(saveAs) {
-  /* only the files this scene uses (memory also keeps older ones for undo) */
+/* the project as a file's text: only the files this scene uses (memory also keeps older ones for undo) */
+function projectText() {
   const used = {};
   for (const id of usedAssetIds(state)) if (assets[id]) used[id] = assets[id];
-  const data = JSON.stringify({ app: 'ShotRef', version: FORMAT_VERSION, state: stateForSave(), assets: used });
+  return JSON.stringify({ app: 'ShotRef', version: FORMAT_VERSION, state: stateForSave(), assets: used });
+}
+async function doSaveProject(saveAs) {
+  const data = projectText();
   const r = await platform.saveProject(data, { saveAs: saveAs === true, name: `${projectSlug() || 'shotref'}-${stamp()}.shotref` });
   if (r.ok) { toast('Saved ' + (r.name || 'project')); autosave(); } /* the autosave records that nothing is unsaved now */
   else if (r.canceled) toast('Save cancelled');
@@ -4244,6 +4369,8 @@ function exportSize() {
   const ev = x => Math.max(2, Math.round(x / 2) * 2);
   return { w: ev(w), h: ev(hh) };
 }
+/* bits per second for an MP4: 'High' is what ShotRef always used; Standard makes smaller files, Maximum larger ones */
+const videoBitrate = (w, hh, fps) => Math.round(clamp(w * hh * fps * { standard: 0.14, high: 0.22, max: 0.4 }[pref('videoQuality')], 3e6, 80e6));
 let exRenderer = null;
 function getExportRenderer(w, hh) {
   if (exRenderer) { let lost = false; try { lost = exRenderer.getContext().isContextLost(); } catch (e) { lost = true; } if (lost) { try { exRenderer.dispose(); } catch (e) { } exRenderer = null; } }
@@ -4263,7 +4390,7 @@ function renderExportFrame(r, t, w, hh) {
   try { shotPass(r, w, hh); } finally { exportingRender = false; }
 }
 function canvasBlob(c, type = 'image/png') { return new Promise(res => c.toBlob(res, type)); }
-const nameFrom = parts => ['shotref', ...parts, stamp()].filter(Boolean).join('-').replace(/[\\/:*?"<>|\s]+/g, '_');
+const nameFrom = parts => [pref('filePrefix'), ...parts, pref('dateStamp') ? stamp() : null].filter(Boolean).join('-').replace(/[\\/:*?"<>|\s]+/g, '_');
 const outName = (...parts) => nameFrom([shotName(), ...parts]);
 const stamp = () => { const d = new Date(); const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`; };
 async function exportPNG(t, label) {
@@ -4313,7 +4440,7 @@ let copyBlob = null;
 let exCancel = false, exporting = false;
 async function pickCodec(w, hh, fps) {
   if (typeof VideoEncoder === 'undefined') return null;
-  const br = Math.round(clamp(w * hh * fps * 0.22, 4e6, 60e6));
+  const br = videoBitrate(w, hh, fps);
   for (const codec of ['avc1.640033', 'avc1.640028', 'avc1.4d0033', 'avc1.4d0028', 'avc1.42e033', 'avc1.42001f']) {
     const cfg = { codec, width: w, height: hh, bitrate: br, framerate: fps, avc: { format: 'avc' } };
     try { const s = await VideoEncoder.isConfigSupported(cfg); if (s.supported) return cfg; } catch (e) { }
@@ -4370,7 +4497,7 @@ async function exportVideo(opts = {}) {
       if (!c.captureStream || typeof MediaRecorder === 'undefined') { const e = new Error('This browser cannot record video. Please use Chrome or Edge.'); e.plain = true; throw e; }
       const stream = c.captureStream(0), track = stream.getVideoTracks()[0];
       const mime = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'].find(m => MediaRecorder.isTypeSupported(m));
-      const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 16e6 }); const parts = [];
+      const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: { standard: 12e6, high: 16e6, max: 24e6 }[pref('videoQuality')] }); const parts = [];
       rec.ondataavailable = e => e.data.size && parts.push(e.data);
       const stopped = new Promise(res => rec.onstop = res);
       rec.start();
@@ -4490,6 +4617,258 @@ function onDesktopMenu(cmd) {
   else if (cmd === 'help') openModal('mHelp');
 }
 
+/* ============================== Settings window ============================== */
+/* Settings are per browser (localStorage 'shotref.prefs'); pref(k) reads them, changePref(k, v) saves one and puts it to work. */
+function changePref(k, v) {
+  setPref(k, v);
+  if (k === 'quality' || k === 'liveShadows' || k === 'orbitSpeed' || k === 'zoomSpeed' || k === 'snapStep' || k === 'rotSnap') applyPrefs();
+  else if (k === 'pipDefault') { pipOn = v; syncTopUI(); requestRender(); }
+  else if (k === 'autosave') { if (v) autosave(); }
+  else requestRender();
+}
+function prefSelect(key, label, options, get = () => pref(key), parse = Number) {
+  const s = h('select', { class: 'grow', 'data-pref': key }, options.map(([v, l]) => h('option', { value: String(v) }, l)));
+  s.value = String(get()); s.addEventListener('change', () => changePref(key, parse(s.value)));
+  return h('div', { class: 'row' }, h('label', null, label), s);
+}
+function prefCheck(key, label, get = () => pref(key), set = v => changePref(key, v)) {
+  const c = h('input', { type: 'checkbox', 'data-pref': key }); c.checked = !!get();
+  c.addEventListener('change', () => set(c.checked));
+  return h('label', { class: 'row', style: 'gap:8px;cursor:pointer;width:auto' }, c, label);
+}
+function prefRange(key, label, { min, max, step, fmt }) {
+  const val = h('span', { class: 'sval' }), r = h('input', { type: 'range', min, max, step, class: 'grow', 'data-pref': key });
+  r.value = pref(key); val.textContent = fmt(pref(key));
+  r.addEventListener('input', () => { val.textContent = fmt(+r.value); changePref(key, +r.value); });
+  return h('div', { class: 'row' }, h('label', null, label), r, val);
+}
+function resetPrefs() {
+  const wasGround = groundOn();
+  for (const k of Object.keys(PREF_DEFAULTS)) delete prefs[k];
+  savePrefs();
+  if (!wasGround) setGround(true, true);
+  pipOn = pref('pipDefault'); setLayout('single', false); applyPrefs(); syncTopUI(); uiDirty = true; propsDirty = true; requestRender();
+  buildSettings(); toast('Settings reset to defaults');
+}
+function buildSettings() {
+  const body = $('#setBody'); body.innerHTML = '';
+  const ex = h('p', { class: 'note' }), showEx = () => { ex.textContent = 'Example file name: ' + nameFrom(['frame0001', 'shaded']) + '.png'; };
+  const pre = h('input', { type: 'text', class: 'grow', maxlength: 40, 'data-pref': 'filePrefix', value: pref('filePrefix') });
+  pre.addEventListener('keydown', e => { if (e.key !== 'Tab') e.stopPropagation(); if (e.key === 'Enter') pre.blur(); });
+  pre.addEventListener('change', () => { const v = pre.value.trim().replace(/[\\/:*?"<>|]+/g, '') || PREF_DEFAULTS.filePrefix; changePref('filePrefix', v); pre.value = v; showEx(); });
+  showEx();
+  body.append(
+    h('div', { class: 'setcol' },
+      sec('New scenes',
+        prefSelect('newDuration', 'Length', PREF_LISTS.newDuration.map(v => [v, v + ' s'])),
+        prefSelect('newFps', 'Frame rate', PREF_LISTS.newFps.map(v => [v, v + ' fps'])),
+        prefSelect('newAspect', 'Aspect', ASPECTS.map(a => [a[0], a[2]]), undefined, String),
+        prefSelect('newSize', 'Size', SIZES.map(([v, l]) => [v, l])),
+        h('p', { class: 'note' }, 'Used when you start a new scene or pick a starter set. Opened files keep their own.')),
+      sec('Blocking',
+        prefRange('walkSpeed', 'Walking speed', { min: 0.6, max: 2.5, step: 0.05, fmt: v => (+v).toFixed(2) + ' m/s' }),
+        prefCheck('autoSit', 'Sit automatically when a person is dropped on a seat'),
+        prefCheck('ground', 'Keep things on the ground (nothing floats or sinks)', groundOn, v => setGround(v)),
+        h('p', { class: 'note' }, 'Things rest on the floor, or on the surface right under them (a cup on a table). Riders and people sitting are left alone. For a drone or a hanging lamp, tick "Can float" on that object.')),
+      sec('Export',
+        prefSelect('videoQuality', 'Video quality', [['standard', 'Standard (smaller files)'], ['high', 'High'], ['max', 'Maximum (large files)']], undefined, String),
+        h('div', { class: 'row' }, h('label', null, 'File names'), pre),
+        prefCheck('dateStamp', 'Add the date and time to file names', undefined, v => { changePref('dateStamp', v); showEx(); }),
+        ex)),
+    h('div', { class: 'setcol' },
+      sec('Viewport',
+        prefSelect('quality', 'Preview quality', [['low', 'Fast (lower resolution)'], ['balanced', 'Balanced'], ['high', 'Sharp (uses more GPU)']], undefined, String),
+        prefSelect('layout', 'Layout', [['single', 'One view'], ['split', 'Split: editor + camera']], () => layout, v => { setLayout(v); }, String),
+        prefCheck('liveShadows', 'Shadows in the live view'),
+        prefCheck('pipDefault', 'Camera preview in the corner'),
+        prefCheck('showLabels', 'Name labels over people'),
+        prefCheck('showArrows', 'Facing arrows under people'),
+        prefCheck('showHints', 'Hint bar at the bottom'),
+        prefCheck('showSun', 'Draggable sun in the editor'),
+        prefCheck('selBar', 'Toolbar over the selection'),
+        prefCheck('camPoints', 'Draggable camera path points'),
+        h('p', { class: 'note' }, 'Exports always render at full quality with shadows.')),
+      sec('Mouse & keys',
+        prefRange('orbitSpeed', 'Orbit speed', { min: 0.3, max: 2.5, step: 0.05, fmt: v => (+v).toFixed(2) + '×' }),
+        prefRange('zoomSpeed', 'Zoom speed', { min: 0.3, max: 2.5, step: 0.05, fmt: v => (+v).toFixed(2) + '×' }),
+        prefRange('flySpeed', 'Fly speed', { min: 0.5, max: 10, step: 0.1, fmt: v => (+v).toFixed(1) + ' m/s' }),
+        prefSelect('snapStep', 'Snap step', [[0.1, '10 cm'], [0.25, '25 cm'], [0.5, '50 cm'], [1, '1 m']]),
+        prefSelect('rotSnap', 'Turn snap', [[5, '5°'], [15, '15°'], [45, '45°'], [90, '90°']]),
+        h('p', { class: 'note' }, 'Snapping applies while the Snap button is on. Shift while flying moves 3× faster.')),
+      sec('Saving',
+        prefCheck('autosave', 'Autosave and keep recent projects'),
+        prefSelect('keepRecent', 'Recent projects to keep', PREF_LISTS.keepRecent.map(v => [v, String(v)])),
+        h('div', { class: 'btns', style: 'margin-top:6px' },
+          h('button', { onclick: () => { closeModal($('#mSettings')); confirmBox('Clear recent projects?', 'This removes the list of recent projects stored in this browser. Your current scene stays open.', async () => { const r = await clearRecents(); toast(r === null ? 'Recent projects are not available in this browser window.' : 'Recent projects cleared'); }, 'Clear'); } }, 'Clear recent projects'),
+          h('button', { onclick: () => { closeModal($('#mSettings')); openModal('mHelp'); } }, 'Show quick start')))),
+    h('div', { class: 'btns', style: 'margin-top:4px' }, h('button', { onclick: resetPrefs }, 'Reset all settings')));
+}
+function openSettings() { buildSettings(); openModal('mSettings'); }
+
+/* ============================== My sets ============================== */
+/* localStorage 'shotref.library' = [{ id, name, items: [{ type, name, color, opts, base: { p, r, s } }] }], per browser.
+   A set this version cannot read (a newer file, a damaged entry) is kept exactly as it is and simply not shown; text that is not
+   JSON at all is moved to 'shotref.library.broken' before a new library is started. When the browser refuses to store (claude.ai
+   window, private mode) the sets live for this visit only, and a plain note says so. */
+const LIBRARY_KEY = 'shotref.library';
+let libraryMem = null; /* the library for this visit when storage is blocked */
+let libraryBad = null; /* unreadable library text found in storage (moved aside on the next save) */
+function libraryEntries() {
+  if (libraryMem) return libraryMem;
+  let raw = null;
+  try { raw = localStorage.getItem(LIBRARY_KEY); } catch (e) { return []; }
+  if (!raw) return [];
+  try { const a = JSON.parse(raw); if (Array.isArray(a)) { libraryBad = null; return a; } } catch (e) { }
+  libraryBad = raw;
+  return [];
+}
+const isNum3 = a => Array.isArray(a) && a.length === 3 && a.every(v => typeof v === 'number' && isFinite(v));
+function usableSet(e) {
+  return !!e && typeof e === 'object' && typeof e.id === 'string' && typeof e.name === 'string' && Array.isArray(e.items) && e.items.length > 0 &&
+    e.items.every(i => !!i && typeof i === 'object' && typeof i.type === 'string' && CATALOG[i.type] && i.type !== 'image' && i.type !== 'model' && i.opts && typeof i.opts === 'object' && !Array.isArray(i.opts) && i.base && isNum3(i.base.p) && isNum3(i.base.r) && isNum3(i.base.s));
+}
+const librarySets = () => libraryEntries().filter(usableSet);
+/* writes the whole library back; returns false when the browser would not store it */
+function writeLibrary(list) {
+  if (libraryBad !== null) {
+    try { localStorage.setItem(LIBRARY_KEY + '.broken', libraryBad); libraryBad = null; } catch (e) { libraryMem = list; return false; }
+  }
+  try { localStorage.setItem(LIBRARY_KEY, JSON.stringify(list)); libraryMem = null; return true; }
+  catch (e) { libraryMem = list; return false; }
+}
+/* the part of a person or thing worth keeping in a set: its look and where it stands (not who it sits on, rides in or looks at) */
+function setItemOf(o, tr, cx, cz) {
+  const opts = clone(o.opts || {});
+  delete opts.seated; delete opts.asset; if (opts.lookAt && opts.lookAt !== 'camera') delete opts.lookAt;
+  if (opts.pose === 'sit' && o.opts.seated) opts.pose = 'stand';
+  return { type: o.type, name: o.name, color: o.color, opts, base: { p: [r4(tr.p[0] - cx), r4(tr.p[1]), r4(tr.p[2] - cz)], r: tr.r.map(r4), s: tr.s.map(r4) } };
+}
+function saveSet(name, objs) {
+  const keep = objs.filter(o => o.type !== 'image' && o.type !== 'model'), left = objs.length - keep.length;
+  if (!keep.length) { toast('Nothing to save'); return false; }
+  const trs = keep.map(o => evalObj(o, T)), cx = trs.reduce((a, t) => a + t.p[0], 0) / trs.length, cz = trs.reduce((a, t) => a + t.p[2], 0) / trs.length;
+  const list = libraryEntries().slice();
+  name = (name || '').trim().slice(0, 40) || 'Set ' + (librarySets().length + 1);
+  list.push({ id: uid(), name, items: keep.map((o, i) => setItemOf(o, trs[i], cx, cz)) });
+  const stored = writeLibrary(list);
+  buildAddPanel(); propsDirty = true;
+  const note = left ? ' (' + left + ' imported item' + (left > 1 ? 's' : '') + ' left out)' : '';
+  if (stored) toast('Saved "' + name + '" to My sets' + note, 4000);
+  else toast('Saved "' + name + '" for this visit only: this browser blocks storage here, so it will not be kept when the page is closed' + note, 6500);
+  return true;
+}
+function deleteSet(set) {
+  confirmBox('Delete the set "' + set.name + '"?', 'This only removes it from My sets. Scenes that use it are not changed.', () => {
+    writeLibrary(libraryEntries().filter(e => e !== set && !(e && e.id === set.id)));
+    buildAddPanel();
+  }, 'Delete');
+}
+/* the new objects follow the pointer until it is clicked on the floor, then they are one undo step */
+let placeRest = [], placeSetName = null;
+function placeSet(set) {
+  if (placing) commitPlacing();
+  if (pathMode) cancelPath();
+  const at = groundPointInView(), made = [], gid = set.items.length > 1 ? 'g' + uid() : null;
+  if (gid) { state.groups = state.groups || {}; state.groups[gid] = { name: set.name }; }
+  for (const it of set.items) {
+    const o = makeObject(it.type, [at[0] + it.base.p[0], it.base.p[1], at[2] + it.base.p[2]]);
+    o.color = typeof it.color === 'string' ? it.color : o.color; o.opts = clone(it.opts); o.base.r = it.base.r.slice(); o.base.s = it.base.s.slice();
+    if (gid) o.grp = gid;
+    if (it.type === 'mark') { o.opts.letter = nextMarkLetter(); o.name = 'Mark ' + o.opts.letter; }
+    else o.name = nextName(String(it.name || catalogOf(it.type).label).replace(/\s+\d+$/, '') || catalogOf(it.type).label);
+    state.objects.push(o); made.push(o);
+  }
+  syncScene(); selIds = made.map(o => o.id); selected = made[0].id; updateGizmo();
+  changed(false, true);
+  startPlacing(made[0].id);
+  placeRest = made.slice(1).map(o => ({ id: o.id, dx: o.base.p[0] - made[0].base.p[0], dz: o.base.p[2] - made[0].base.p[2] })); placeSetName = set.name;
+  showModeBar('Click on the floor where "' + set.name + '" goes', [['Cancel', cancelPlacing]]);
+}
+/* "Save as a reusable set": a name and a Save button. `getObjs` says what is saved (the selection, or the whole scene). */
+function setSaveSection(getObjs, what) {
+  const nm = h('input', { type: 'text', class: 'grow', placeholder: 'Name', maxlength: 40, 'aria-label': 'Name for the set' });
+  const go = () => { if (saveSet(nm.value, getObjs())) nm.value = ''; };
+  nm.addEventListener('keydown', e => { if (e.key !== 'Tab') e.stopPropagation(); if (e.key === 'Enter') go(); });
+  const s = sec('Save as a reusable set', h('div', { class: 'row' }, nm, h('button', { onclick: go }, 'Save')),
+    h('p', { class: 'note' }, 'Saves ' + what + '. Saved sets appear under "My sets" in the Add tab, ready to drop into any scene. Photos and models are left out.'));
+  s.classList.add('setsave');
+  return s;
+}
+
+/* ============================== Recent projects ============================== */
+/* IndexedDB 'shotref', store 'projects' { id, name, updated, thumb (a small JPEG data: URL), data (the project file text) }, newest
+   `keepRecent` of them. Where IndexedDB cannot be used (claude.ai window, private mode) the list is hidden with a plain note.
+   Saving one never changes the scene. An entry this version cannot read stays in the list, with its own note, until you delete it. */
+let recentSession = uid(); /* the id of a project that has no meta.id: renewed whenever a project is opened or started */
+const recentId = () => (state.meta && state.meta.id) || recentSession;
+function recentTx(mode, fn) { return idbTx(mode, fn, 'projects'); }
+async function recentRows() {
+  const rq = await recentTx('readonly', st => st.getAll());
+  return rq && Array.isArray(rq.result) ? rq.result.filter(r => r && typeof r === 'object') : null;
+}
+const clearRecents = () => recentTx('readwrite', st => { st.clear(); return true; });
+/* a small picture of the shot at the playhead (a data: URL: no blob: URLs on claude.ai) */
+function recentThumb() {
+  try {
+    const w = 320, hh = Math.max(2, Math.round(w / arOf(state.settings.aspect) / 2) * 2), r = getExportRenderer(w, hh);
+    renderExportFrame(r, T, w, hh);
+    const d = r.domElement.toDataURL('image/jpeg', 0.72);
+    applyAll(T);
+    return d;
+  } catch (e) { console.error('ShotRef: could not make the picture for the recent list', e); return ''; }
+}
+let recentTimer = null;
+function scheduleRecent() {
+  if (!pref('autosave')) return;
+  clearTimeout(recentTimer);
+  recentTimer = setTimeout(() => { recentTimer = null; if (exporting || swapping || cmpBusy) scheduleRecent(); else saveRecentNow(); }, 2500);
+}
+/* writes this project into the list and drops the oldest beyond the number to keep. Resolves true when it was stored. */
+async function saveRecentNow() {
+  if (!pref('autosave') || exporting || swapping || cmpBusy) return false;
+  const keep = pref('keepRecent');
+  const row = { id: recentId(), name: (state.meta && state.meta.name) || 'Untitled scene', updated: Date.now(), thumb: recentThumb(), data: projectText() };
+  const ok = await recentTx('readwrite', st => {
+    st.put(row);
+    const rq = st.getAll();
+    rq.onsuccess = () => { for (const r of rq.result.slice().sort((a, b) => (b && b.updated || 0) - (a && a.updated || 0)).slice(keep)) if (r && r.id != null) st.delete(r.id); };
+    return true;
+  });
+  return !!ok;
+}
+const agoText = t => { const m = Math.round((Date.now() - t) / 6e4); return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : m < 1440 ? Math.round(m / 60) + ' h ago' : new Date(t).toLocaleDateString(); };
+async function openRecent() {
+  if (exporting) { toast('Wait for the export to finish.'); return; }
+  $('#recentGrid').innerHTML = ''; $('#recNote').textContent = 'Loading…';
+  openModal('mRecent');
+  await renderRecent();
+}
+async function renderRecent() {
+  const g = $('#recentGrid'), note = $('#recNote'), rows = await recentRows();
+  g.innerHTML = '';
+  if (rows === null) { note.textContent = 'Recent projects are not available in this browser window. Use Save, then "Open a file…", instead.'; return; }
+  if (!rows.length) { note.textContent = 'No recent projects yet. Projects you work on appear here automatically.'; return; }
+  note.textContent = 'Recent projects are saved automatically in this browser.';
+  rows.sort((a, b) => (b.updated || 0) - (a.updated || 0));
+  for (const r of rows) {
+    const cur = r.id === recentId(), readable = (() => { try { normalizeProject(JSON.parse(r.data), projectDefaults()); return true; } catch (e) { return false; } })();
+    const del = h('button', { class: 'del', title: 'Remove from recent projects', 'aria-label': 'Remove ' + String(r.name || 'project') + ' from recent projects', onclick: async e => { e.stopPropagation(); await recentTx('readwrite', st => { st.delete(r.id); return true; }); renderRecent(); } }, '×');
+    const card = h('div', { class: 'rcard' + (cur ? ' cur' : '') + (readable ? '' : ' bad'), role: 'button', tabindex: 0, 'data-id': String(r.id), onclick: () => openRecentRow(r, readable, cur) },
+      typeof r.thumb === 'string' && /^data:image\//.test(r.thumb) ? h('img', { src: r.thumb, alt: '' }) : h('div', { class: 'noimg' }),
+      h('b', null, String(r.name || 'Untitled scene')), h('small', null, !readable ? "Can't be opened here" : cur ? 'Open now' : typeof r.updated === 'number' ? agoText(r.updated) : ''), del);
+    card.addEventListener('keydown', e => { if (e.target === card && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); card.click(); } });
+    g.append(card);
+  }
+}
+function openRecentRow(r, readable, cur) {
+  if (!readable) { toast("This project can't be opened here (damaged, or made by a newer ShotRef). It stays in the list until you remove it.", 5000); return; }
+  closeModal($('#mRecent'));
+  if (cur) return;
+  loadProjectText(r.data, undefined, false);
+}
+/* Open: the recent projects (web, claude.ai); the desktop app keeps its own native dialog (File > Recent projects shows the list) */
+const openProjectUI = () => platform.kind === 'desktop' ? openDialog() : openRecent();
+
 /* ============================== wiring ============================== */
 function syncTopUI() {
   $('#inDur').value = state.settings.duration; $('#inFps').value = String(state.settings.fps);
@@ -4531,6 +4910,7 @@ function wire() {
   $('#bFocus').onclick = focusSel;
   $('#bCamHere').onclick = camToEditorView;
   $('#bPip').onclick = () => { pipOn = !pipOn; syncTopUI(); };
+  $('#bSplit').onclick = () => setLayout(layout === 'split' ? 'single' : 'split');
   $('#bGrid').onclick = () => { state.settings.gridOn = !state.settings.gridOn; applyEnv(); changed(true, true); syncTopUI(); };
   $('#pipFrame').onclick = () => setView('camera');
   $('#bPlay').onclick = () => { if (!playing && T >= lastT() - 1e-6) setTime(0); setPlaying(!playing); };
@@ -4549,6 +4929,8 @@ function wire() {
   $('#inFps').onchange = e => { if (exporting) return; state.settings.fps = +e.target.value; setTime(snapT(T)); resnapAll(t => t); changed(true, true); };
   for (const inp of ['#inDur']) $(inp).addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') e.target.blur(); });
   // files
+  $('#recFile').onclick = () => { closeModal($('#mRecent')); openDialog(); };
+  $('#recNew').onclick = () => { closeModal($('#mRecent')); openStarters(); };
   $('#fOpen').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (f) loadProjectText(await readFile(f, 'text')); };
   $('#fModel').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (f) importModel(f); };
   $('#fImage').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (f) importImage(f); };
@@ -4566,7 +4948,7 @@ function wire() {
     e.preventDefault(); drop.style.display = 'none';
     for (const f of e.dataTransfer.files) {
       if (/\.(glb|gltf)$/i.test(f.name)) await importModel(f);
-      else if (/^image\//.test(f.type)) { if (view === 'camera') await importPlate(f); else await importImage(f); }
+      else if (/^image\//.test(f.type)) { if (view === 'camera' || (splitOn() && paneOf(e) === 'cam')) await importPlate(f); else await importImage(f); }
       else if (/\.(json|shotref)$/i.test(f.name)) loadProjectText(await readFile(f, 'text'), { name: f.name });
     }
   });
@@ -4600,6 +4982,7 @@ function wire() {
   const dragItems = () => { const sel = selObjs().filter(o => !o.locked), ids = new Set(sel.map(o => o.id)); return sel.filter(o => { for (let q = parentOf(o), n = 0; q && n < 30; q = parentOf(q), n++) if (ids.has(q.id)) return false; return true; }).map(o => ({ id: o.id, tr: clone(evalObj(o, T)) })); };
   canvas.addEventListener('pointerdown', e => {
     canvas.focus(); gizmoUsed = false;
+    if (!drag && !box) setPane(paneOf(e)); /* the half that was pressed steers */
     pdown = { x: e.clientX, y: e.clientY, b: e.button };
     if (e.button === 2) rdown = { x: e.clientX, y: e.clientY };
     if (placing) { e.stopImmediatePropagation(); rdown = null; if (e.button === 0) { movePlacing(e); commitPlacing(); } else cancelPlacing(); pdown = null; return; }
@@ -4610,8 +4993,8 @@ function wire() {
       rdown = null;
       pdown = null; return;
     }
-    if (focusPick && view === 'camera') { rdown = null; e.stopImmediatePropagation(); const rc = rayFromEvent(e); if (e.button === 0 && rc) finishFocusPick(rc); pdown = null; return; }
-    if (rec || e.button !== 0 || view === 'camera' || gizmo.axis) return;
+    if (focusPick && camPane()) { rdown = null; e.stopImmediatePropagation(); const rc = rayFromEvent(e); if (e.button === 0 && rc) finishFocusPick(rc); pdown = null; return; }
+    if (rec || e.button !== 0 || camPane() || gizmo.axis) return;
     const rc = rayFromEvent(e); if (!rc) return;
     const hit = pickAt(rc);
     if (!hit) {
@@ -4665,6 +5048,7 @@ function wire() {
     try { canvas.setPointerCapture(e.pointerId); } catch (_) { }
   }, { capture: true });
   canvas.addEventListener('pointermove', e => {
+    if (!e.buttons && !drag && !box) setPane(paneOf(e)); /* hovering: the half under the pointer takes the wheel and the keys */
     if (drag) {
       if (!drag.moved && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < 3) return;
       drag.moved = true; canvas.style.cursor = 'grabbing';
@@ -4711,7 +5095,7 @@ function wire() {
         if (th) { const tp = th.id === 'camera' ? camState.p : evalObj(getObj(th.id), T).p; face = { id: th.id, name: th.id === 'camera' ? 'the camera' : getObj(th.id).name }; yaw = Math.atan2(tp[0] - prim.p[0], tp[2] - prim.p[2]) * R2D; showModeBar('Release to face ' + face.name, []); }
         else {
           yaw = drag.yaw0 + (Math.atan2(g.x - drag.cx, g.z - drag.cz) - drag.a0) * R2D;
-          if (snapOn) yaw = Math.round(yaw / 15) * 15;
+          if (snapOn) yaw = Math.round(yaw / pref('rotSnap')) * pref('rotSnap');
           if ($('#modeBar').textContent.startsWith('Release')) hideModeBar();
         }
         drag.face = face;
@@ -4760,7 +5144,7 @@ function wire() {
     }
     if (placing) { movePlacing(e); return; }
     if (pathMode) { const rc = rayFromEvent(e), g = rc && planeHit(rc, pathMode.y); pathMode.cursor = g ? [g.x, g.z] : null; return; }
-    if (!e.buttons && view !== 'camera' && !focusPick && performance.now() - hoverT > 50) {
+    if (!e.buttons && !focusPick && !camPane() && performance.now() - hoverT > 50) {
       hoverT = performance.now();
       const rc = rayFromEvent(e), hit = rc && !gizmo.axis && pickAt(rc);
       canvas.style.cursor = hit ? (hit.id === 'ring' ? 'ew-resize' : hit.id === 'lift' ? 'ns-resize' : hit.id === 'sun' || hit.id.startsWith('ck:') ? 'move' : hit.id === 'cpath' ? 'pointer' : (getObj(hit.id) || {}).locked ? '' : 'grab') : '';
@@ -4768,7 +5152,7 @@ function wire() {
   });
   /* a drag ends on mouse-up, or when the browser cuts it off (pointercancel, lost capture): either way it is saved (K2) */
   const endDrag = e => {
-    const d = drag; drag = null; dragActive = false; gizmo.enabled = true; canvas.style.cursor = ''; sunDragging = false; ckHot = -1;
+    const d = drag; drag = null; dragActive = false; syncControls(); canvas.style.cursor = ''; sunDragging = false; ckHot = -1;
     try { canvas.releasePointerCapture(e.pointerId); } catch (_) { }
     if (/^(Release|On top|Raised|Camera point at|Sun:)|above the floor$/.test($('#modeBar').textContent)) hideModeBar();
     /* a click that did not drag narrows the selection to what was clicked (its group, or just it with Alt) */
@@ -4826,6 +5210,7 @@ function wire() {
     else if (hit.id !== 'ring' && hit.id !== 'lift' && (getObj(hit.id) || selected !== hit.id)) select(hit.id, e.altKey && getObj(hit.id) ? 'single' : undefined);
   });
   canvas.addEventListener('dblclick', e => {
+    setPane(paneOf(e));
     if (pathMode) { finishPath(); return; }
     if (placing || rec || focusPick) return;
     const rc = rayFromEvent(e); if (!rc) return;
@@ -4834,7 +5219,7 @@ function wire() {
   });
   /* right-click opens the page's own menu (never the native one); a right-drag is a pan and opens nothing */
   canvas.addEventListener('contextmenu', e => {
-    e.preventDefault();
+    e.preventDefault(); if (!dragActive) setPane(paneOf(e));
     const d = rdown; rdown = null;
     if (!d || placing || pathMode || focusPick || rec) return; /* no press of ours (or it cancelled placing, a path, a pick): no menu */
     if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4) return;
@@ -4846,7 +5231,8 @@ function wire() {
     showMenu(e.clientX, e.clientY, ctxItems(hit, g));
   });
   canvas.addEventListener('wheel', e => {
-    if (view === 'camera' && (e.altKey || e.ctrlKey)) {
+    if (!dragActive) setPane(paneOf(e)); /* the wheel goes to the half the pointer is over */
+    if (camPane() && (e.altKey || e.ctrlKey)) {
       e.preventDefault(); e.stopImmediatePropagation();
       const f = clamp(camState.f * Math.pow(1.0015, -e.deltaY), 8, 300);
       if (rec) { rec.f = f; return; }
@@ -4881,7 +5267,7 @@ function wire() {
       if (k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
       else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); redo(); }
       else if (k === 's') { e.preventDefault(); saveProject(e.shiftKey); }
-      else if (k === 'o') { e.preventDefault(); openDialog(); }
+      else if (k === 'o') { e.preventDefault(); openProjectUI(); }
       else if (k === 'd') { e.preventDefault(); duplicateSel(); }
       else if (k === 'a') { e.preventDefault(); selectAll(); }
       else if (k === 'g') { e.preventDefault(); if (e.shiftKey) ungroupSel(); else groupSel(); }
@@ -4889,7 +5275,7 @@ function wire() {
       else if (k === 'c' && !e.shiftKey && !(window.getSelection && String(window.getSelection()))) { e.preventDefault(); copyFrame(); }
       return;
     }
-    if (view === 'camera' && 'wasdqe'.includes(k) && k.length === 1) { flyKeys.add(k); if (e.shiftKey) flyKeys.add('shift'); e.preventDefault(); return; }
+    if (camPane() && 'wasdqe'.includes(k) && k.length === 1) { flyKeys.add(k); if (e.shiftKey) flyKeys.add('shift'); e.preventDefault(); return; }
     if (k === 'escape' && (rec || placing || pathMode)) { if (rec) cancelRecord(); else if (placing) cancelPlacing(); else cancelPath(); return; }
     if (pathMode && (k === 'enter')) { finishPath(); return; }
     if (pathMode && (k === 'backspace' || k === 'delete')) { e.preventDefault(); removePathPoint(); return; }
@@ -4941,35 +5327,41 @@ function boot() {
       wasDirty = typeof rec.dirty === 'boolean' ? rec.dirty : !!(state.objects.length || state.plate); }
     catch (e) { broken = true; console.error('ShotRef: could not read the autosave', e); }
   }
-  if (!restored) seedScene();
+  let embedded = false;
+  if (!restored && EMBED && EMBED.project) {
+    try { const d = normalizeProject(typeof EMBED.project === 'string' ? JSON.parse(EMBED.project) : EMBED.project, projectDefaults()); state = d.state; assets = { ...d.assets }; embedded = true; }
+    catch (e) { console.error('ShotRef: could not read the embedded project', e); state = defaultState(); assets = {}; }
+  }
+  if (!restored && !embedded) seedScene();
   wire();
   try { syncScene(); applyEnv(); }
   catch (e) {
     if (!restored) throw e;
     console.error('ShotRef: could not rebuild the autosaved scene', e);
-    restored = false; broken = true; wasDirty = false;
+    restored = false; embedded = false; broken = true; wasDirty = false;
     state = defaultState(); assets = {}; for (const id of [...modelCache.keys()]) dropModel(id); seedScene();
     syncScene(); applyEnv();
   }
   /* move (not copy) the broken autosave aside: a big one would not fit twice */
   if (broken) {
-    try { localStorage.removeItem('shotref.autosave'); localStorage.setItem('shotref.autosave.broken', raw); }
+    try { localStorage.removeItem(AUTOSAVE_KEY); localStorage.setItem(AUTOSAVE_KEY + '.broken', raw); }
     catch (e) { console.error('ShotRef: could not keep a copy of the broken autosave', e); }
   }
   cleanTakes(); migrateAll(); pushHistory(); platform.setDirty(wasDirty); setSimple(simple);
   /* only now: queued menu / file events from the desktop shell must see the restored scene and its unsaved mark */
   platform.onMenu(onDesktopMenu);
   platform.onOpenFile(f => { if (f && typeof f.text === 'string') { launchFile = true; closeModal($('#mStart')); loadProjectText(f.text, f, true); } });
- setView('editor'); setGizmoMode('translate');
+ applyPrefs(); setView('editor'); setGizmoMode('translate');
   requestAnimationFrame(frame);
   let seen = false; try { seen = localStorage.getItem('shotref.seenHelp'); localStorage.setItem('shotref.seenHelp', '1'); } catch (e) { }
   if (autosaveOff) toast(NO_AUTOSAVE, 6000); /* starter sets still open below on a first visit */
   if (broken) toast("Your last session couldn't be restored, so ShotRef started a fresh scene.", 5000);
+  else if (embedded) { if (EMBED.message) toast(EMBED.message, 7000); }
   else if (!restored && !seen) setTimeout(() => { if (!openModals().length && !launchFile) openStarters(true); }, 400);
   /* photos and models come from IndexedDB (async); legacy autosaves carry them inline */
   if (broken) idb.noPrune = true; /* the broken autosave's files may live only in IndexedDB */
   /* while a broken autosave is kept aside, never prune the files it lists (C4) */
-  try { for (const id of brokenAssetIds(localStorage.getItem('shotref.autosave.broken'))) idb.keep.add(id); } catch (e) { }
+  try { for (const id of brokenAssetIds(localStorage.getItem(AUTOSAVE_KEY + '.broken'))) idb.keep.add(id); } catch (e) { }
   const want = restored ? [...usedAssetIds(state)].filter(id => !assets[id]) : [];
   if (restored && !want.length) toast('Restored your last session');
   idbLoad(want).then(got => {
@@ -4994,7 +5386,7 @@ function boot() {
     if (e.key === AUTOSAVE_KEY && !tabWarned) { tabWarned = true; toast('ShotRef is open in another tab. Changes here may overwrite it.', 6000); }
   });
   window.addEventListener('pagehide', flushAutosave);
-  window.__shotref = { promptText, ensureDof, get selection() { return selIds; }, pickAtScreen: (x, y) => { const rc = rayFromEvent({ clientX: x, clientY: y }); const h = rc && pickAt(rc); return h ? h.id : null; }, settleTime: () => { const t0 = performance.now(); solveGround(); return performance.now() - t0; }, groundMigrate: () => groundMigrate.size, liftKnob: () => { if (!liftGrp.visible) return null; const q = liftPick.getWorldPosition(new THREE.Vector3()); return window.__shotref.project(q.x, q.y, q.z); }, attachTo, setMount, writeCam, shownObj: (id, t) => shownObj(getObj(id), t), viewOf: id => { const v = views.get(id); if (!v) return null; v.group.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(v.group), sz = bb.getSize(new THREE.Vector3()); return { p: v.group.position.toArray(), yaw: v.group.rotation.y * R2D, s: v.group.scale.toArray(), size: sz.toArray(), wheels: v.wheels ? v.wheels.list.map(w => ({ spin: w.spin.rotation.x, steer: w.piv.rotation.y, front: w.front })) : null }; }, ringKnob: () => ringGrp.visible ? ringKnob.getWorldPosition(new THREE.Vector3()).toArray() : null, getPref, setPref, showMenu, menuButton, hideMenu, project: (x, y, z) => { const r = canvas.getBoundingClientRect(); let cam = view === 'top' ? topCam : edCam, rr = { x: 0, y: 0, w: r.width, h: r.height }; if (view === 'camera') { cam = renderCam; rr = camRect(r.width, r.height); } const v = new THREE.Vector3(x, y, z).project(cam); return [r.left + rr.x + (v.x * 0.5 + 0.5) * rr.w, r.top + rr.y + (-v.y * 0.5 + 0.5) * rr.h]; }, get view() { return view; }, get selected() { return selected; }, get state() { return state; }, get assets() { return assets; }, setT: t => setTime(t, false), applyMove, addObject, select, setView, evalCam, exportVideo, exportPNG, pickCodec, _exportCanvas: () => exRenderer ? exRenderer.domElement : null, changed, writeObj, evalObj, setKey, get T() { return T; },
+  window.__shotref = { promptText, ensureDof, get selection() { return selIds; }, layout: () => layout, gizmoNdc: (x, y) => { const q = gizmo._getPointer({ clientX: x, clientY: y, button: 0 }); return { x: q.x, y: q.y }; }, arrowsVisible: () => [...arrows.values()].some(a => a.visible), videoBitrate, snapValue: snapWith, rotSnapDeg: () => pref('rotSnap'), controlSpeeds: () => ({ orbit: edControls.rotateSpeed, zoom: edControls.zoomSpeed, cam: camControls.rotateSpeed }), flySpeedNow, walkSpeedNow: () => pathSpeedOf({ type: 'person', opts: { pose: 'stand' } }), buildAddPanel: () => buildAddPanel(), saveRecentNow, selectMany: ids => { selIds = ids.slice(); selected = selIds[selIds.length - 1] || null; updateGizmo(); uiDirty = true; propsDirty = true; requestRender(); }, pickAtScreen: (x, y) => { const rc = rayFromEvent({ clientX: x, clientY: y }); const h = rc && pickAt(rc); return h ? h.id : null; }, settleTime: () => { const t0 = performance.now(); solveGround(); return performance.now() - t0; }, groundMigrate: () => groundMigrate.size, liftKnob: () => { if (!liftGrp.visible) return null; const q = liftPick.getWorldPosition(new THREE.Vector3()); return window.__shotref.project(q.x, q.y, q.z); }, attachTo, setMount, writeCam, shownObj: (id, t) => shownObj(getObj(id), t), viewOf: id => { const v = views.get(id); if (!v) return null; v.group.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(v.group), sz = bb.getSize(new THREE.Vector3()); return { p: v.group.position.toArray(), yaw: v.group.rotation.y * R2D, s: v.group.scale.toArray(), size: sz.toArray(), wheels: v.wheels ? v.wheels.list.map(w => ({ spin: w.spin.rotation.x, steer: w.piv.rotation.y, front: w.front })) : null }; }, ringKnob: () => ringGrp.visible ? ringKnob.getWorldPosition(new THREE.Vector3()).toArray() : null, getPref, setPref, showMenu, menuButton, hideMenu, project: (x, y, z) => { const r = canvas.getBoundingClientRect(), R = viewRects(r.width, r.height); let cam = view === 'top' ? topCam : edCam, rr = R.work || { x: 0, y: 0, w: r.width, h: r.height }; if (camPane() && R.frame) { cam = renderCam; rr = R.frame; } const v = new THREE.Vector3(x, y, z).project(cam); return [r.left + rr.x + (v.x * 0.5 + 0.5) * rr.w, r.top + rr.y + (-v.y * 0.5 + 0.5) * rr.h]; }, get view() { return view; }, get selected() { return selected; }, get state() { return state; }, get assets() { return assets; }, setT: t => setTime(t, false), applyMove, addObject, select, setView, evalCam, exportVideo, exportPNG, pickCodec, _exportCanvas: () => exRenderer ? exRenderer.domElement : null, changed, writeObj, evalObj, setKey, get T() { return T; },
     get rebuilds() { return rebuilds; }, urlCacheIds: () => [...urlCache.keys()],
     /* batch H (takes) hooks for the smoke test */
     switchTake, newTake, snapPoolSize: () => snapLive, snapPruned: () => snapPruned,
@@ -5007,6 +5399,6 @@ function boot() {
     addPerson, sitPerson, standPerson, setLookAt, setPoseAt, nearestSeat, freeSeat, actLayer, poseAt, applyAll: t => applyAll(t),
     rig: id => { const v = views.get(id), P = v && v.person; if (!P) return null; const r = j => [j.rotation.x, j.rotation.y, j.rotation.z]; return { H: P.H, neck: r(P.neck), spine: r(P.spine), head: r(P.head), lSh: r(P.lSh), rSh: r(P.rSh), lEl: r(P.lEl), rEl: r(P.rEl), lHip: r(P.lHip), rHip: r(P.rHip), lKnee: r(P.lKnee), rKnee: r(P.rKnee), shoulderX: P.lSh.position.x, hipX: P.lHip.position.x, headScale: P.head.scale.x, headParts: P.head.children.length, pelvisY: P.pelvis.position.y, group: { p: v.group.position.toArray(), yaw: v.group.rotation.y } }; },
     soles: id => { const v = views.get(id); if (!v || !v.person) return null; v.group.updateMatrixWorld(true); return v.person.soles.map(s => s.getWorldPosition(new THREE.Vector3()).toArray()); },
-    renderStats: () => ({ frame: renderer.info.render.frame, calls: renderer.info.render.calls, draws: drawCount, lastDraw, lastAsync, geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures }) };
+    renderStats: () => ({ shadows: renderer.shadowMap.enabled, pixelRatio: renderer.getPixelRatio(), split: splitOn(), frame: renderer.info.render.frame, calls: renderer.info.render.calls, draws: drawCount, lastDraw, lastAsync, geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures }) };
 }
 boot();

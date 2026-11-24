@@ -205,7 +205,7 @@ button.icon svg,.ib svg{width:17px;height:17px;stroke:currentColor;fill:none;str
 #ctxMenu .sep{height:1px;background:var(--line);margin:4px 2px}
 #ctxMenu button .ck{width:16px;display:inline-block;color:var(--acc2)}
 .drop{position:absolute;inset:0;border:3px dashed var(--acc);background:rgba(255,154,60,.08);display:none;align-items:center;justify-content:center;font-size:18px;color:var(--acc2)}
-#camBar{top:10px;left:10px;display:none;gap:4px;pointer-events:auto}
+#camBar{top:10px;left:10px;display:none;gap:4px;flex-wrap:wrap;pointer-events:auto}
 #camBar button{background:rgba(25,27,31,.88);backdrop-filter:blur(6px);padding:6px 12px;font-weight:600}
 #camBar button.on{background:rgba(90,58,28,.95);border-color:var(--acc);color:var(--acc2)}
 .recbtn{color:#ff8080}
@@ -305,6 +305,30 @@ button.icon{padding:5px 8px;min-width:32px;display:inline-flex;align-items:cente
 @media (max-width:1100px){.brand .name{display:none}.menubtn{padding:5px 6px}#top{gap:5px}.seg button{padding:5px 8px}.stepseg button{padding-right:7px}#projName{flex-basis:130px;width:130px}}
 @media (max-width:900px){#app{grid-template-columns:190px minmax(0,1fr) 250px}.brand small{display:none}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+.recgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-top:12px}
+.rcard{position:relative;display:flex;flex-direction:column;gap:3px;padding:6px;border:1px solid var(--line2);border-radius:9px;background:var(--panel2);cursor:pointer;text-align:left;font:inherit;color:inherit}
+.rcard:hover{border-color:var(--acc)}
+.rcard.cur{border-color:var(--acc)}
+.rcard.bad{opacity:.75}
+.rcard img,.rcard .noimg{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:6px;background:#0f1012;display:block}
+.rcard b{font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rcard small{color:var(--mute);font-size:11px}
+.rcard .del{position:absolute;top:10px;right:10px;padding:0 7px;background:rgba(15,16,19,.8);border-radius:6px;opacity:0;cursor:pointer}
+.rcard:hover .del,.rcard:focus-within .del{opacity:1}
+#setBody{display:grid;grid-template-columns:1fr 1fr;gap:0 14px;margin-top:6px}
+#setBody .setcol .sec{border:1px solid var(--line);border-radius:9px;margin-bottom:10px}
+#setBody > .btns{grid-column:span 2}
+#setBody .row>label:not(.row){width:118px}
+@media (max-width:760px){#setBody{grid-template-columns:1fr}#setBody > .btns{grid-column:auto}}
+.setile{position:relative;display:flex}
+.setile .tile{flex:1;min-width:0}
+.setile .tile{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.setile .setdel{background:transparent;border:0;border-radius:4px;line-height:1.2}
+button.icon.on{background:var(--accd);color:var(--acc2)}
+.setile .setdel{position:absolute;top:2px;right:4px;font-style:normal;color:var(--mute);opacity:0;padding:0 3px;cursor:pointer}
+.setile:hover .setdel,.setile:focus-within .setdel{opacity:1}
+.setile .setdel:hover{color:#ff9c9c}
+#splitLine{top:0;bottom:0;width:2px;background:#2c2f35;display:none;pointer-events:none}
 </style>
 </head>
 <body>
@@ -330,6 +354,7 @@ button.icon{padding:5px 8px;min-width:32px;display:inline-flex;align-items:cente
       <button data-v="top" title="Overhead floor-plan view for blocking (T)">Top</button>
       <button data-v="camera" title="Look through the shot camera (C)">Camera</button>
     </div>
+    <button id="bSplit" class="icon" aria-pressed="false" aria-label="Split view: editor and camera side by side" title="Split view: editor and camera side by side"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M12 5v14"/></svg></button>
     <button id="bMenu" class="icon" aria-haspopup="menu" aria-label="Settings and help" title="Settings, Advanced controls and help"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg></button>
   </header>
 
@@ -359,6 +384,7 @@ button.icon{padding:5px 8px;min-width:32px;display:inline-flex;align-items:cente
       <button id="cbPlate" title="Put a photo of the location behind the scene">Location photo</button>
       <button id="cbCopy" title="Copy this frame to the clipboard (Ctrl+C)">Copy frame</button>
     </div>
+    <div id="splitLine" class="ov"></div>
     <div id="selBar" class="ov" role="toolbar" aria-label="Selection tools"></div>
     <div id="boxSel" class="ov"></div>
     <div id="labels" class="ov"></div>
@@ -471,7 +497,7 @@ button.icon{padding:5px 8px;min-width:32px;display:inline-flex;align-items:cente
     <li><b>Block it.</b> Drag people and props across the floor; drag the orange ring to turn them (let go over a person or the camera and they face it). Shift-click picks several to move together; <span class="kbd">Ctrl G</span> groups them. <b>Top view</b> (<span class="kbd">T</span>) works like a floor plan.</li>
     <li><b>Move people.</b> Select a person, press <b>Draw walk path</b> and click points on the floor, or send them to a floor mark with an arrival time. Drag them onto a chair, sofa or bed to sit them down (drag away to stand). Pick a pose later in the shot to change it mid-shot: it shows as a blue tag on the timeline. The eye button over a person makes them look at the camera.</li>
     <li><b>Right-click</b> anything for what you can do with it: add a person here, walk them to a mark, frame a medium shot, face the camera, duplicate, hide. Right-click the floor to add things or aim the camera there. Right-drag still pans.</li>
-    <li><b>Frame the shot.</b> In <b>Camera view</b> (<span class="kbd">C</span>) drag to orbit, right-drag to pan, scroll to dolly, <span class="kbd">W A S D Q E</span> to fly. Or use a shot size: Wide, Medium, Close-up…</li>
+    <li><b>Frame the shot.</b> In <b>Camera view</b> (<span class="kbd">C</span>) drag to orbit, right-drag to pan, scroll to dolly, <span class="kbd">W A S D Q E</span> to fly. Or use a shot size: Wide, Medium, Close-up… The <b>split view</b> button (top bar) puts the editor on the left and the camera on the right: whichever half the pointer is over is the one you steer.</li>
     <li><b>Make the move.</b> Press <b>Set start</b>, reframe, press <b>Set end</b>. Or pick a one-click move, or <b>● Record</b> and operate the camera live.</li>
     <li><b>Export</b> (step 3, or press <span class="kbd">3</span>): an MP4, the current frame, or start + end frames for image-to-video models.</li>
   </ol>
@@ -512,11 +538,19 @@ button.icon{padding:5px 8px;min-width:32px;display:inline-flex;align-items:cente
   <div class="btns" style="margin-top:12px;justify-content:space-between;align-items:center"><span class="note" style="margin:0">New to ShotRef? The guide shows the basics in six steps.</span><button id="stHelp" style="flex:none">Quick start guide</button></div>
 </div></div>
 
-<div id="mSettings" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mSettingsT"><div class="dlg" style="width:min(460px,94vw)">
+<div id="mSettings" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mSettingsT"><div class="dlg" style="width:min(860px,96vw);max-height:92vh;overflow:auto">
   <button class="x" data-close aria-label="Close">×</button>
   <h2 id="mSettingsT">Settings</h2>
-  <p class="note" style="font-size:13px">Preferences for new scenes, exports and the viewport will live here. There is nothing to set yet. The Advanced controls switch is in the same menu as Settings.</p>
-  <div class="btns" style="margin-top:12px;justify-content:flex-end"><button data-close class="primary">Close</button></div>
+  <p class="note" style="margin-top:2px">Saved in this browser and used for every project.</p>
+  <div id="setBody"></div>
+</div></div>
+
+<div id="mRecent" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mRecentT"><div class="dlg" style="width:min(820px,95vw);max-height:92vh;overflow:auto">
+  <button class="x" data-close aria-label="Close">×</button>
+  <h2 id="mRecentT">Open a project</h2>
+  <div class="btns" style="margin:10px 0 4px;max-width:420px"><button id="recFile">Open a file…</button><button id="recNew">New scene from a starter set…</button></div>
+  <p class="note" id="recNote">Recent projects are saved automatically in this browser.</p>
+  <div class="recgrid" id="recentGrid"></div>
 </div></div>
 
 <div id="mAbout" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mAboutT"><div class="dlg" style="width:min(460px,94vw)">

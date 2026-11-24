@@ -4461,4 +4461,492 @@ check('compare takes: an autosave that is due is written before the scenes are s
   noErrors(p);
 });
 
+/* ======================= batch I: Settings, split view, My sets, Recent projects, embed ======================= */
+const prefsOf = p => p.evaluate(() => { try { return JSON.parse(localStorage.getItem('shotref.prefs') || '{}'); } catch (e) { return null; } });
+const openSettings = async p => { await gearCmd(p, 'settings'); await p.waitForSelector('#mSettings:not(.hidden)'); };
+/* set one Settings control by its data-pref name (select, checkbox, range or text) */
+const setPrefUI = async (p, key, val) => {
+  const sel = '#setBody [data-pref="' + key + '"]';
+  const kind = await p.evaluate(s => { const e = document.querySelector(s); return e ? (e.tagName === 'SELECT' ? 'select' : e.type) : null; }, sel);
+  if (!kind) throw new Error('no Settings control for ' + key);
+  if (kind === 'select') await p.selectOption(sel, String(val));
+  else if (kind === 'checkbox') { if ((await p.isChecked(sel)) !== !!val) await p.click(sel); }
+  else if (kind === 'range') await p.evaluate(([s, v]) => { const e = document.querySelector(s); e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true })); }, [sel, val]);
+  else { await p.fill(sel, String(val)); await p.dispatchEvent(sel, 'change'); }
+};
+const PREF_KEYS = ['newDuration', 'newFps', 'newAspect', 'newSize', 'walkSpeed', 'autoSit', 'ground', 'videoQuality', 'filePrefix', 'dateStamp', 'quality', 'layout', 'liveShadows', 'pipDefault', 'showLabels', 'showArrows', 'showHints', 'showSun', 'selBar', 'camPoints', 'orbitSpeed', 'zoomSpeed', 'flySpeed', 'snapStep', 'rotSnap', 'autosave', 'keepRecent'];
+
+check('settings: every preference has a control, and the old placeholder text is gone', async ({ open }) => {
+  const p = await open(); await openSettings(p);
+  const have = await p.evaluate(() => [...document.querySelectorAll('#setBody [data-pref]')].map(e => e.dataset.pref));
+  const miss = PREF_KEYS.filter(k => !have.includes(k));
+  ok(!miss.length, 'no control for: ' + miss.join(', '));
+  const heads = await p.evaluate(() => [...document.querySelectorAll('#setBody h3')].map(e => e.textContent.trim()));
+  for (const h of ['New scenes', 'Blocking', 'Export', 'Viewport', 'Mouse & keys', 'Saving']) ok(heads.includes(h), 'missing section ' + h + ': ' + heads.join('|'));
+  ok(!/nothing to set yet/i.test(await p.textContent('#mSettings')), 'placeholder text still shown');
+  ok(await p.isVisible('#setBody button:has-text("Reset all settings")') && await p.isVisible('#setBody button:has-text("Clear recent projects")') && await p.isVisible('#setBody button:has-text("Show quick start")'), 'buttons missing');
+  noErrors(p);
+});
+check('settings: "Keep things on the ground" in Settings and in the gear menu always agree', async ({ open }) => {
+  const p = await open(); await openSettings(p);
+  ok(await p.isChecked('#setBody [data-pref="ground"]'), 'should start on');
+  await p.click('#setBody [data-pref="ground"]');
+  ok((await prefsOf(p)).ground === false, 'pref not saved: ' + JSON.stringify(await prefsOf(p)));
+  await p.keyboard.press('Escape');
+  await p.click('#bMenu');
+  ok(await p.getAttribute('#ctxMenu [data-cmd="ground"]', 'aria-checked') === 'false', 'gear menu should now be off');
+  await p.click('#ctxMenu [data-cmd="ground"]');
+  await openSettings(p);
+  ok(await p.isChecked('#setBody [data-pref="ground"]'), 'Settings should be on again after the gear menu switched it on');
+  noErrors(p);
+});
+check('settings: new-scene defaults apply to New and starter sets, never to opened files', async ({ open }) => {
+  const p = await open(); await openSettings(p);
+  await setPrefUI(p, 'newDuration', 8); await setPrefUI(p, 'newFps', 30); await setPrefUI(p, 'newAspect', '9:16'); await setPrefUI(p, 'newSize', 1280);
+  await p.keyboard.press('Escape');
+  await loadEmptyStarter(p);
+  const s = (await stateOf(p)).settings;
+  ok(s.duration === 8 && s.fps === 30 && s.aspect === '9:16' && s.size === 1280, 'new scene settings: ' + JSON.stringify([s.duration, s.fps, s.aspect, s.size]));
+  const file = { app: 'ShotRef', version: 1, state: { camera: { base: JSON.parse(CAM_BASE), keys: [] }, objects: [], settings: {} } };
+  await openFile(p, 'old.shotref', JSON.stringify(file));
+  const o = (await stateOf(p)).settings;
+  ok(o.duration === 5 && o.fps === 24 && o.aspect === '16:9' && o.size === 1920, 'an opened file picked up the new-scene defaults: ' + JSON.stringify([o.duration, o.fps, o.aspect, o.size]));
+  noErrors(p);
+});
+check('settings: viewport options (labels, arrows, hints, shadows, preview quality, corner preview)', async ({ open }) => {
+  const p = await open(); await settle(p, 400);
+  ok(await p.evaluate(() => document.querySelectorAll('#labels .lbl3d').length > 0 && getComputedStyle(document.querySelector('#hint')).display !== 'none'), 'labels and hint should show by default');
+  await openSettings(p);
+  await setPrefUI(p, 'showLabels', false); await setPrefUI(p, 'showHints', false); await setPrefUI(p, 'liveShadows', false); await setPrefUI(p, 'quality', 'low'); await setPrefUI(p, 'showArrows', false); await setPrefUI(p, 'pipDefault', false);
+  await p.keyboard.press('Escape'); await settle(p, 400);
+  ok(await p.evaluate(() => [...document.querySelectorAll('#labels .lbl3d')].every(e => e.offsetParent === null)), 'labels still shown');
+  ok(await p.evaluate(() => getComputedStyle(document.querySelector('#hint')).display === 'none'), 'hint still shown');
+  const st = await stats(p);
+  ok(st.shadows === false && Math.abs(st.pixelRatio - 0.75) < 1e-6, 'shadows/pixel ratio: ' + st.shadows + ' ' + st.pixelRatio);
+  ok(await p.evaluate(() => getComputedStyle(document.querySelector('#pipFrame')).display === 'none'), 'corner preview still shown');
+  ok(await p.evaluate(() => window.__shotref.arrowsVisible() === false), 'facing arrows still shown');
+  await openSettings(p);
+  await setPrefUI(p, 'liveShadows', true); await setPrefUI(p, 'quality', 'high'); await setPrefUI(p, 'showArrows', true);
+  await p.keyboard.press('Escape'); await settle(p, 300);
+  const st2 = await stats(p);
+  ok(st2.shadows === true && st2.pixelRatio >= 1, 'not restored: ' + st2.shadows + ' ' + st2.pixelRatio);
+  noErrors(p);
+});
+check('settings: file name prefix, date stamp and video quality reach the exports', async ({ open, downloads }) => {
+  const p = await open(); await openSettings(p);
+  await setPrefUI(p, 'filePrefix', 'my:film'); await setPrefUI(p, 'dateStamp', false);
+  await setPrefUI(p, 'videoQuality', 'standard');
+  const bStd = await p.evaluate(() => window.__shotref.videoBitrate(1920, 1080, 24));
+  await setPrefUI(p, 'videoQuality', 'max');
+  const bMax = await p.evaluate(() => window.__shotref.videoBitrate(1920, 1080, 24));
+  await setPrefUI(p, 'videoQuality', 'high');
+  const bHigh = await p.evaluate(() => window.__shotref.videoBitrate(1920, 1080, 24));
+  ok(bStd < bHigh && bHigh < bMax, 'bitrates ' + [bStd, bHigh, bMax]);
+  await p.keyboard.press('Escape');
+  await p.keyboard.press('p');
+  const d = await downloads(p).wait('.png');
+  ok(/^myfilm-frame0001-shaded\.png$/.test(d.name), 'file name: ' + d.name);
+  noErrors(p);
+});
+check('settings: snap step, turn snap, orbit, zoom, fly and walking speed are used', async ({ open }) => {
+  const p = await open(); await openSettings(p);
+  await setPrefUI(p, 'snapStep', 0.5); await setPrefUI(p, 'rotSnap', 45); await setPrefUI(p, 'orbitSpeed', 2); await setPrefUI(p, 'zoomSpeed', 1.5); await setPrefUI(p, 'flySpeed', 4); await setPrefUI(p, 'walkSpeed', 2);
+  await p.keyboard.press('Escape');
+  const r = await p.evaluate(() => { const S = window.__shotref; return { snap: S.snapValue(1.3, true), off: S.snapValue(1.3, false), rot: S.rotSnapDeg(), c: S.controlSpeeds(), fly: S.flySpeedNow(false), flyShift: S.flySpeedNow(true), walk: S.walkSpeedNow() }; });
+  ok(r.snap === 1.5 && r.off === 1.3, 'snap: ' + JSON.stringify(r));
+  ok(r.rot === 45, 'turn snap ' + r.rot);
+  ok(r.c.orbit === 2 && r.c.zoom === 1.5 && Math.abs(r.c.cam - 1.2) < 1e-9, 'controls ' + JSON.stringify(r.c));
+  ok(r.fly === 4 && r.flyShift === 12, 'fly ' + r.fly + ' ' + r.flyShift);
+  ok(r.walk === 2, 'walk speed ' + r.walk);
+  noErrors(p);
+});
+check('settings: Reset all settings brings back every default, and a blocked localStorage still applies the change', async ({ open }) => {
+  const p = await open(); await openSettings(p);
+  await setPrefUI(p, 'newDuration', 15); await setPrefUI(p, 'orbitSpeed', 2); await setPrefUI(p, 'showHints', false); await setPrefUI(p, 'filePrefix', 'zzz');
+  ok((await prefsOf(p)).newDuration === 15, 'not saved');
+  await p.click('#setBody button:has-text("Reset all settings")');
+  await settle(p, 200);
+  const pr = await prefsOf(p);
+  ok(!['newDuration', 'orbitSpeed', 'showHints', 'filePrefix'].some(k => k in pr), 'prefs not cleared: ' + JSON.stringify(pr));
+  ok(await p.inputValue('#setBody [data-pref="newDuration"]') === '5' && await p.isChecked('#setBody [data-pref="showHints"]') && await p.inputValue('#setBody [data-pref="filePrefix"]') === 'shotref', 'controls not reset');
+  /* a browser that refuses to store: the change still works for this visit */
+  await p.evaluate(() => { Storage.prototype.setItem = function () { throw new DOMException('no', 'QuotaExceededError'); }; });
+  await setPrefUI(p, 'showHints', false); await settle(p, 300);
+  ok(await p.evaluate(() => getComputedStyle(document.querySelector('#hint')).display === 'none'), 'change not applied when storage is blocked');
+  noPageErrors(p);
+});
+
+/* ---- split view ---- */
+const canvasBox = p => p.evaluate(() => { const r = document.querySelector('#c').getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; });
+const splitOn = async p => { if (!(await p.evaluate(() => window.__shotref.layout() === 'split'))) await p.click('#bSplit'); await settle(p, 300); };
+check('split view: the editor sits left and the shot right, with a divider; Camera goes full screen and back', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.click('#bSplit'); await settle(p, 300);
+  ok(await p.evaluate(() => window.__shotref.layout() === 'split' && document.querySelector('#bSplit').classList.contains('on')), 'not split');
+  const cb = await canvasBox(p);
+  const cf = await p.evaluate(() => { const r = document.querySelector('#camFrame').getBoundingClientRect(); return { x: r.left, w: r.width, shown: getComputedStyle(document.querySelector('#camFrame')).display !== 'none' }; });
+  ok(cf.shown && cf.x >= cb.x + cb.w / 2 - 2 && cf.x + cf.w <= cb.x + cb.w + 1, 'camera frame not in the right half: ' + JSON.stringify(cf) + ' ' + JSON.stringify(cb));
+  ok(await p.evaluate(() => getComputedStyle(document.querySelector('#splitLine')).display !== 'none'), 'no divider');
+  ok(await p.evaluate(() => getComputedStyle(document.querySelector('#pipFrame')).display === 'none'), 'corner preview should be hidden in split view');
+  ok((await prefsOf(p)).layout === 'split', 'layout not remembered');
+  await p.click('#viewSeg [data-v="camera"]'); await settle(p, 300);
+  ok(await p.evaluate(() => { const r = document.querySelector('#camFrame').getBoundingClientRect(); return r.width > document.querySelector('#c').getBoundingClientRect().width * 0.6 && getComputedStyle(document.querySelector('#splitLine')).display === 'none'; }), 'Camera view should be full width');
+  await p.click('#viewSeg [data-v="editor"]'); await settle(p, 300);
+  ok(await p.evaluate(() => window.__shotref.layout() === 'split' && getComputedStyle(document.querySelector('#splitLine')).display !== 'none'), 'split should come back with the editor');
+  await p.click('#bSplit'); await settle(p, 300);
+  ok(await p.evaluate(() => window.__shotref.layout() === 'single' && getComputedStyle(document.querySelector('#pipFrame')).display !== 'none'), 'single view should bring the corner preview back');
+  noErrors(p);
+});
+check('split view: dragging in each half steers only that half, and Settings agrees with the button', async ({ open }) => {
+  const p = await open(); await settle(p, 300); await splitOn(p);
+  const cb = await canvasBox(p);
+  const same = (a, b) => a.every((v, i) => Math.abs(v - b[i]) < 0.02); /* the editor's glide after a drag never quite stops */
+  const snap = () => p.evaluate(() => { const S = window.__shotref; return { ed: S.editCamPos(), cam: JSON.stringify(S.state.camera), f: S.state.camera.base.f }; });
+  const a = await snap();
+  /* right half: orbit the shot camera */
+  await p.mouse.move(cb.x + cb.w * 0.75, cb.y + cb.h * 0.5); await p.mouse.down(); await p.mouse.move(cb.x + cb.w * 0.8, cb.y + cb.h * 0.55, { steps: 6 }); await p.mouse.up(); await settle(p, 300);
+  const b = await snap();
+  ok(b.cam !== a.cam, 'the shot camera did not move when dragging the right half');
+  ok(same(b.ed, a.ed), 'the editor view moved too: ' + JSON.stringify([a.ed, b.ed]));
+  /* left half, empty corner: orbit the editor */
+  await p.mouse.move(cb.x + cb.w * 0.06, cb.y + cb.h * 0.12); await p.mouse.down(); await p.mouse.move(cb.x + cb.w * 0.12, cb.y + cb.h * 0.2, { steps: 6 }); await p.mouse.up(); await settle(p, 2500); /* the orbit glides to a stop */
+  const c = await snap();
+  ok(!same(c.ed, b.ed), 'the editor view did not orbit');
+  ok(c.cam === b.cam, 'the shot camera moved when dragging the left half');
+  /* Alt + wheel in the right half changes the lens; plain wheel in the left half zooms the editor */
+  await p.mouse.move(cb.x + cb.w * 0.75, cb.y + cb.h * 0.5); await p.keyboard.down('Alt'); await p.mouse.wheel(0, -300); await p.keyboard.up('Alt'); await settle(p, 400);
+  const d = await snap();
+  ok(d.f !== c.f && same(d.ed, c.ed), 'lens wheel: ' + c.f + ' -> ' + d.f);
+  await p.mouse.move(cb.x + cb.w * 0.25, cb.y + cb.h * 0.5); await p.mouse.wheel(0, -300); await settle(p, 500);
+  const e = await snap();
+  ok(!same(e.ed, d.ed) && e.f === d.f, 'editor wheel zoom');
+  /* Settings agrees */
+  await openSettings(p);
+  ok(await p.inputValue('#setBody [data-pref="layout"]') === 'split', 'Settings layout should say split');
+  await p.selectOption('#setBody [data-pref="layout"]', 'single'); await p.keyboard.press('Escape'); await settle(p, 200);
+  ok(await p.evaluate(() => !document.querySelector('#bSplit').classList.contains('on') && window.__shotref.layout() === 'single'), 'Settings did not switch to one view');
+  noErrors(p);
+});
+check('split view: fly keys follow the pointer, and picking works in the left half', async ({ open }) => {
+  const p = await open(); await settle(p, 300); await splitOn(p);
+  const cb = await canvasBox(p);
+  const cam = () => p.evaluate(() => JSON.stringify(window.__shotref.state.camera));
+  const c0 = await cam();
+  await p.mouse.move(cb.x + cb.w * 0.25, cb.y + cb.h * 0.5); await p.keyboard.down('d'); await settle(p, 300); await p.keyboard.up('d');
+  ok(await cam() === c0, 'D flew the camera while the pointer was over the left half');
+  await p.mouse.move(cb.x + cb.w * 0.75, cb.y + cb.h * 0.5); await p.keyboard.down('d'); await settle(p, 400); await p.keyboard.up('d'); await settle(p, 300);
+  ok(await cam() !== c0, 'D did not fly the camera over the right half');
+  /* a click on the person in the left half selects it */
+  await p.mouse.move(cb.x + cb.w * 0.25, cb.y + cb.h * 0.5);
+  const pos = await p.evaluate(() => { const S = window.__shotref, o = S.state.objects.find(q => q.type === 'person'); const t = S.evalObj(o, 0).p; const pt = S.project(t[0], t[1] + 0.9, t[2]); return { id: o.id, x: pt[0], y: pt[1] }; });
+  ok(pos.x < cb.x + cb.w / 2, 'person is not in the left half: ' + pos.x + ' / ' + cb.w);
+  ok(await p.evaluate(([x, y]) => window.__shotref.pickAtScreen(x, y), [pos.x, pos.y]) === pos.id, 'pickAtScreen did not find the person in the left half');
+  await p.mouse.click(pos.x, pos.y); await settle(p, 200);
+  ok(await p.evaluate(() => window.__shotref.selected) === pos.id, 'the click did not select the person');
+  noErrors(p);
+});
+check('split view: the arrows gizmo maths uses the left half only', async ({ open }) => {
+  const p = await open(); await settle(p, 300); await splitOn(p);
+  const r = await p.evaluate(() => { const S = window.__shotref; const c = document.querySelector('#c').getBoundingClientRect(); return S.gizmoNdc(c.left + c.width * 0.25, c.top + c.height * 0.5); });
+  ok(Math.abs(r.x) < 0.02 && Math.abs(r.y) < 0.02, 'the middle of the left half should be the middle of its view: ' + JSON.stringify(r));
+  noErrors(p);
+});
+check('split view: draws only when something changes (idle redraws 0), and both halves update', async ({ open }) => {
+  const p = await open(); await settle(p, 300); await splitOn(p); await settle(p, 1500);
+  const a = await stats(p); await settle(p, 1000); const b = await stats(p);
+  ok(b.draws === a.draws, 'redrew ' + (b.draws - a.draws) + ' times while idle in split view');
+  const cb = await canvasBox(p);
+  const half = async side => (await p.screenshot({ clip: { x: cb.x + (side ? cb.w / 2 + 4 : 4), y: cb.y + 4, width: cb.w / 2 - 8, height: cb.h - 8 } })).toString('base64');
+  const L0 = await half(0), R0 = await half(1);
+  await p.evaluate(() => { const S = window.__shotref, o = S.state.objects.find(q => q.type === 'person'); o.base.p = [o.base.p[0] + 0.8, 0, o.base.p[2]]; S.changed(true); });
+  await settle(p, 400);
+  const L1 = await half(0), R1 = await half(1);
+  ok(L1 !== L0, 'left half did not redraw'); ok(R1 !== R0, 'camera half did not redraw');
+  await p.evaluate(() => { const S = window.__shotref; S.writeCam({ p: [S.state.camera.base.p[0] + 1.5, S.state.camera.base.p[1], S.state.camera.base.p[2]] }, true); });
+  await settle(p, 400);
+  ok((await half(1)) !== R1, 'camera half did not follow the camera');
+  await settle(p, 1200);
+  const c = await stats(p); await settle(p, 1000); const d = await stats(p);
+  ok(d.draws === c.draws, 'redrew ' + (d.draws - c.draws) + ' times while idle after edits');
+  noErrors(p);
+});
+check('split view: placing works from the left half and the camera frame stays inside the right half', async ({ open }) => {
+  const p = await open(); await settle(p, 300); await splitOn(p);
+  const cb = await canvasBox(p);
+  await p.click('#addArea .tile:has-text("Man")'); await settle(p, 100);
+  ok(await p.evaluate(() => getComputedStyle(document.querySelector('#modeBar')).display !== 'none'), 'no placing bar');
+  await p.mouse.click(cb.x + cb.w * 0.3, cb.y + cb.h * 0.7); await settle(p, 300);
+  ok(await p.evaluate(() => getComputedStyle(document.querySelector('#modeBar')).display === 'none'), 'placing did not finish after a click in the left half');
+  const fr = await p.evaluate(() => { const r = document.querySelector('#camFrame').getBoundingClientRect(), c = document.querySelector('#c').getBoundingClientRect(); return [r.left - c.left, r.top - c.top, r.right - c.left, r.bottom - c.top, c.width, c.height]; });
+  ok(fr[0] >= fr[4] / 2 && fr[2] <= fr[4] + 1 && fr[1] >= 0 && fr[3] <= fr[5], 'frame outside the right half: ' + fr.join(','));
+  noErrors(p);
+});
+
+/* ---- My sets ---- */
+const libOf = p => p.evaluate(() => { try { return JSON.parse(localStorage.getItem('shotref.library') || '[]'); } catch (e) { return null; } });
+const saveSetFrom = async (p, name) => { await p.fill('.setsave input', name); await p.click('.setsave button'); await settle(p, 250); };
+check('my sets: save the selection, see it in the Add tab, place it as a group, delete it', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => { const S = window.__shotref; S.selectMany(S.state.objects.slice(0, 2).map(o => o.id)); });
+  await settle(p, 200);
+  ok(await p.isVisible('.setsave'), 'no "Save as a reusable set" section for a selection');
+  const before = await p.evaluate(() => JSON.stringify(window.__shotref.state)), hist0 = await p.evaluate(() => window.__shotref.history.length);
+  await saveSetFrom(p, 'Corner');
+  const lib = await libOf(p);
+  ok(lib.length === 1 && lib[0].name === 'Corner' && lib[0].items.length === 2 && lib[0].id, 'library: ' + JSON.stringify(lib));
+  ok(lib[0].items.every(i => i.type && i.base && i.base.p && i.opts), 'items incomplete');
+  ok(await p.evaluate(() => JSON.stringify(window.__shotref.state)) === before && await p.evaluate(() => window.__shotref.history.length) === hist0, 'saving a set changed the scene or the undo list');
+  await p.evaluate(() => window.__shotref.select(null)); await settle(p, 200);
+  await p.click('#leftTabs [data-lt="add"]');
+  ok(await p.isVisible('#addArea .setile:has-text("Corner")'), 'no tile in My sets');
+  const n0 = await nObj(p);
+  await p.click('#addArea .setile:has-text("Corner")'); await settle(p, 150);
+  ok(await p.evaluate(() => getComputedStyle(document.querySelector('#modeBar')).display !== 'none'), 'no placing bar');
+  await p.keyboard.press('Escape'); await settle(p, 200);
+  ok(await nObj(p) === n0 && await p.evaluate(() => window.__shotref.history.length) === hist0, 'Esc should remove the half-placed set without an undo step');
+  ok(!(await stateOf(p)).groups || !Object.keys((await stateOf(p)).groups).length, 'Esc left an empty group behind');
+  await p.click('#addArea .setile:has-text("Corner")');
+  const cb = await canvasBox(p);
+  await p.mouse.click(cb.x + cb.w * 0.3, cb.y + cb.h * 0.75); await settle(p, 400);
+  const s = await stateOf(p);
+  ok(s.objects.length === n0 + 2, 'set not placed: ' + s.objects.length);
+  const added = s.objects.slice(-2);
+  ok(added[0].grp && added[0].grp === added[1].grp && s.groups[added[0].grp] && s.groups[added[0].grp].name === 'Corner', 'not a group named Corner');
+  ok(await p.evaluate(() => window.__shotref.history.length) === hist0 + 1, 'placing should be one undo step');
+  await undoN(p, 1);
+  ok(await nObj(p) === n0, 'undo did not remove the set');
+  await p.hover('#addArea .setile:has-text("Corner")'); await p.click('#addArea .setile:has-text("Corner") .setdel');
+  await p.waitForSelector('#mConfirm:not(.hidden)'); await p.click('#cfOk'); await settle(p, 200);
+  ok((await libOf(p)).length === 0 && !(await p.isVisible('#addArea .setile')), 'set not deleted');
+  ok(await nObj(p) === n0, 'deleting a set changed the scene');
+  noErrors(p);
+});
+check('my sets: one item or the whole scene can be saved, photos and models are left out', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => { const S = window.__shotref; S.assets.m1 = { kind: 'model', name: 'x.glb', b64: 'AAAA', mime: 'model/gltf-binary' }; S.addObject('model', { asset: 'm1' }, false); S.changed(true); S.select(null); });
+  await settle(p, 300);
+  ok(await p.isVisible('.setsave'), 'nothing selected: the panel should offer to save the scene as a set');
+  await saveSetFrom(p, 'Whole');
+  let lib = await libOf(p);
+  ok(lib[0].items.length === 3 && !lib[0].items.some(i => i.type === 'model' || i.type === 'image'), 'whole scene: ' + lib[0].items.map(i => i.type));
+  ok(/left out/.test(await p.textContent('#toast')), 'no note about the left-out model: ' + await p.textContent('#toast'));
+  await p.evaluate(() => { const S = window.__shotref; S.select(S.state.objects[0].id); }); await settle(p, 200);
+  await saveSetFrom(p, 'One');
+  lib = await libOf(p);
+  ok(lib.length === 2 && lib[1].items.length === 1 && lib[1].name === 'One', 'single item set: ' + JSON.stringify(lib.map(s => s.items.length)));
+  noPageErrors(p);
+});
+check('my sets: entries this version cannot read are kept exactly, and a blocked browser keeps sets for this visit', async ({ freshContext }) => {
+  const fc = await freshContext();
+  await fc.ctx.addInitScript(() => { try { if (!localStorage.getItem('shotref.library') && !sessionStorage.getItem('seeded')) { sessionStorage.setItem('seeded', '1'); localStorage.setItem('shotref.library', '[{"id":"zz","name":"Future","items":"strange","extra":{"a":[1,2]}}, 5, {"id":"ok1","name":"Fine","items":[{"type":"box","name":"Box 1","color":"#fff","opts":{},"base":{"p":[0,0,0],"r":[0,0,0],"s":[1,1,1]}}]}]'); } } catch (e) { } });
+  const p = await fc.open(); await settle(p, 300);
+  ok(await p.isVisible('#addArea .setile:has-text("Fine")') && !(await p.isVisible('#addArea .setile:has-text("Future")')), 'only the readable set should show');
+  const raw0 = await p.evaluate(() => localStorage.getItem('shotref.library'));
+  await p.evaluate(() => { const S = window.__shotref; S.select(S.state.objects[0].id); }); await settle(p, 200);
+  await saveSetFrom(p, 'New one');
+  const lib = await libOf(p);
+  ok(lib.length === 4 && JSON.stringify(lib[0]) === '{"id":"zz","name":"Future","items":"strange","extra":{"a":[1,2]}}' && lib[1] === 5 && lib[3].name === 'New one', 'library after saving: ' + JSON.stringify(lib));
+  /* deleting one set leaves the rest as they were */
+  await p.hover('#addArea .setile:has-text("Fine")'); await p.click('#addArea .setile:has-text("Fine") .setdel'); await p.click('#cfOk'); await settle(p, 200);
+  const lib2 = await libOf(p);
+  ok(lib2.length === 3 && JSON.stringify(lib2[0]).includes('"extra"') && lib2[1] === 5 && lib2[2].name === 'New one', 'after delete: ' + JSON.stringify(lib2));
+  /* storage that is not JSON at all is moved aside, not thrown away */
+  await p.evaluate(() => localStorage.setItem('shotref.library', 'not json {'));
+  await p.evaluate(() => window.__shotref.buildAddPanel());
+  await saveSetFrom(p, 'After junk');
+  ok(await p.evaluate(() => localStorage.getItem('shotref.library.broken')) === 'not json {', 'unreadable library not kept aside');
+  ok((await libOf(p)).length === 1, 'new library not started');
+  /* a blocked browser: the set lives for this visit, with a plain note */
+  await p.evaluate(() => { Storage.prototype.setItem = function () { throw new DOMException('no', 'QuotaExceededError'); }; });
+  await saveSetFrom(p, 'Session only');
+  ok(await p.isVisible('#addArea .setile:has-text("Session only")'), 'set missing from this visit');
+  ok(/this visit|closed|not be kept|won't be kept/i.test(await p.textContent('#toast')), 'no plain note: ' + await p.textContent('#toast'));
+  noPageErrors(p);
+});
+
+/* ---- Recent projects ---- */
+const idbRows = p => p.evaluate(() => new Promise(res => {
+  const rq = indexedDB.open('shotref');
+  rq.onerror = () => res(null);
+  rq.onsuccess = () => {
+    const db = rq.result; const out = { version: db.version, stores: [...db.objectStoreNames], rows: [], assets: [] };
+    if (!out.stores.includes('projects')) { db.close(); return res(out); }
+    const tx = db.transaction(['projects', 'assets'].filter(n => out.stores.includes(n)), 'readonly');
+    tx.objectStore('projects').getAll().onsuccess = e => { out.rows = e.target.result; };
+    if (out.stores.includes('assets')) tx.objectStore('assets').getAllKeys().onsuccess = e => { out.assets = e.target.result; };
+    tx.oncomplete = () => { db.close(); res(out); };
+  };
+}));
+const waitRecent = async (p, n = 1, ms = 9000) => { const end = Date.now() + ms; for (;;) { const r = await idbRows(p); if (r && r.rows.length >= n) return r; if (Date.now() > end) throw new Error('no recent project saved: ' + JSON.stringify(r && { v: r.version, s: r.stores, n: r.rows.length })); await settle(p, 250); } };
+const renameProject = async (p, name) => { await p.fill('#projName', name); await p.dispatchEvent('#projName', 'change'); };
+check('recent projects: an old database (version 1, assets only) is upgraded to version 2 and keeps its photos', async ({ freshContext, base }) => {
+  const fc = await freshContext();
+  const raw = await fc.ctx.newPage();
+  /* plant the old database from a page of the same origin that is not the app */
+  await raw.route('**/blank.html', r => r.fulfill({ status: 200, contentType: 'text/html', body: '<html><body>x</body></html>' }));
+  await raw.goto(base + 'blank.html');
+  const id = 'plate1';
+  await raw.evaluate(async id => {
+    await new Promise((res, rej) => { const rq = indexedDB.open('shotref', 1); rq.onupgradeneeded = () => rq.result.createObjectStore('assets'); rq.onsuccess = () => { const tx = rq.result.transaction('assets', 'readwrite'); tx.objectStore('assets').put({ kind: 'image', name: 'a.png', b64: 'iVBORw0KGgo=', mime: 'image/png', aspect: 1 }, id); tx.oncomplete = () => { rq.result.close(); res(); }; tx.onerror = () => rej(tx.error); }; rq.onerror = () => rej(rq.error); });
+    localStorage.setItem('shotref.seenHelp', '1');
+    const st = { v: 2, settings: {}, camera: { base: { p: [3, 1.6, 6], tg: [0, 1, 0], f: 35, roll: 0, fd: 7 }, keys: [] }, objects: [{ id: 'im', type: 'image', name: 'Photo', color: '#fff', opts: { aspect: 1 }, asset: id, base: { p: [0, 0, 0], r: [0, 0, 0], s: [1, 1, 1] }, keys: [], visible: true }] };
+    localStorage.setItem('shotref.autosave', JSON.stringify({ state: st, assets: {}, assetIds: [id], v: 2 }));
+  }, id);
+  await raw.close();
+  const p = await fc.open(); await settle(p, 800);
+  const r = await idbRows(p);
+  ok(r && r.version === 2 && r.stores.includes('assets') && r.stores.includes('projects'), 'database after boot: ' + JSON.stringify(r && { v: r.version, s: r.stores }));
+  ok(r.assets.includes(id), 'the stored photo was lost in the upgrade: ' + JSON.stringify(r.assets));
+  ok(await p.evaluate(id => !!window.__shotref.assets[id], id), 'the photo did not load from the upgraded database');
+  noPageErrors(p);
+});
+check('recent projects: an edit saves a recent entry with a small picture and the project text', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await renameProject(p, 'Alpha scene');
+  await p.evaluate(() => { const S = window.__shotref; S.addObject('box'); S.changed(true); });
+  const r = await waitRecent(p);
+  const row = r.rows.find(x => x.name === 'Alpha scene') || r.rows[0];
+  ok(row && row.id && row.name === 'Alpha scene' && typeof row.updated === 'number', 'row: ' + JSON.stringify(row && Object.keys(row)));
+  ok(/^data:image\/jpeg;base64,/.test(row.thumb), 'thumbnail is not a data: URL: ' + String(row.thumb).slice(0, 30));
+  const f = JSON.parse(row.data);
+  ok(f.app === 'ShotRef' && f.state.objects.length === (await nObj(p)), 'stored project: ' + Object.keys(f));
+  noErrors(p);
+});
+check('recent projects: File > Open shows the recent grid; Open a file and starter sets are there too', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await renameProject(p, 'Grid test');
+  await p.evaluate(() => { const S = window.__shotref; S.addObject('box'); S.changed(true); });
+  await waitRecent(p);
+  await fileCmd(p, 'open');
+  await p.waitForSelector('#mRecent:not(.hidden)');
+  await p.waitForSelector('#recentGrid .rcard');
+  const cards = await p.evaluate(() => [...document.querySelectorAll('#recentGrid .rcard')].map(c => ({ t: c.textContent, cur: c.classList.contains('cur'), img: !!c.querySelector('img[src^="data:image/jpeg"]') })));
+  ok(cards.some(c => /Grid test/.test(c.t) && c.cur && /Open now/.test(c.t) && c.img), 'cards: ' + JSON.stringify(cards));
+  ok(await p.isVisible('#recFile') && await p.isVisible('#recNew'), 'buttons missing');
+  const fcP = p.waitForEvent('filechooser');
+  await p.click('#recFile'); await fcP;
+  ok(await p.evaluate(() => document.querySelector('#mRecent').classList.contains('hidden')), 'dialog should close');
+  await p.keyboard.press('Control+O');
+  await p.waitForSelector('#mRecent:not(.hidden)');
+  await p.click('#recNew');
+  await p.waitForSelector('#mStart:not(.hidden)');
+  noErrors(p);
+});
+check('recent projects: open another recent project exactly as it was saved, delete one, and nothing changes the scene by looking', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await renameProject(p, 'Alpha');
+  await p.evaluate(() => { const S = window.__shotref; S.addObject('box'); S.addObject('box'); S.changed(true); });
+  await waitRecent(p);
+  const alpha = await stateOf(p);
+  await loadEmptyStarter(p);
+  await renameProject(p, 'Beta'); await p.evaluate(() => { const S = window.__shotref; S.addObject('ball'); S.changed(true); });
+  await waitRecent(p, 2);
+  await fileCmd(p, 'open'); await p.waitForSelector('#recentGrid .rcard');
+  const hist = await p.evaluate(() => window.__shotref.history.length), cur = await stateOf(p);
+  await settle(p, 300);
+  ok(canon(await stateOf(p)) === canon(cur) && await p.evaluate(() => window.__shotref.history.length) === hist, 'opening the dialog changed the scene');
+  await p.click('#recentGrid .rcard:has-text("Alpha")');
+  await p.waitForSelector('#mConfirm:not(.hidden)'); await p.click('#cfOk');
+  await p.waitForFunction(() => window.__shotref.state.meta && window.__shotref.state.meta.name === 'Alpha');
+  const now = await stateOf(p);
+  ok(canon(now.objects) === canon(alpha.objects) && now.meta.id === alpha.meta.id, 'the opened project differs from the saved one');
+  await p.keyboard.press('Control+z'); await settle(p, 300);
+  ok((await stateOf(p)).meta.name === 'Beta', 'undo should bring the previous scene back');
+  /* delete one */
+  await fileCmd(p, 'open'); await p.waitForSelector('#recentGrid .rcard');
+  await p.hover('#recentGrid .rcard:has-text("Alpha")'); await p.click('#recentGrid .rcard:has-text("Alpha") .del'); await settle(p, 400);
+  ok(!(await p.isVisible('#recentGrid .rcard:has-text("Alpha")')), 'card still shown');
+  ok(!(await idbRows(p)).rows.some(x => x.name === 'Alpha'), 'row still stored');
+  noErrors(p);
+});
+check('recent projects: older entries are pruned to the number to keep, and an entry this version cannot read is shown, kept and removable', async ({ open }) => {
+  const p = await open(); await settle(p, 300); await openSettings(p); await setPrefUI(p, 'keepRecent', 5); await p.keyboard.press('Escape');
+  /* an unreadable entry and an artifact-made one (version 1 file text), written straight to the store */
+  await p.evaluate(() => new Promise(res => { const rq = indexedDB.open('shotref', 2); rq.onsuccess = () => { const tx = rq.result.transaction('projects', 'readwrite'), st = tx.objectStore('projects');
+    st.put({ id: 'bad1', name: 'Damaged one', updated: Date.now() - 1e7, thumb: '', data: '{"app":"ShotRef", "state": {' });
+    st.put({ id: 'art1', name: 'From the artifact', updated: Date.now() - 5e6, thumb: '', data: JSON.stringify({ app: 'ShotRef', version: 1, state: { v: 1, meta: { id: 'art1', name: 'From the artifact' }, camera: { base: { p: [3, 1.6, 6], tg: [0, 1, 0], f: 35, roll: 0, fd: 7 }, keys: [] }, objects: [{ id: 'q1', type: 'box', name: 'Box 1', base: { p: [1, 0, 0], r: [0, 0, 0], s: [1, 1, 1] } }], settings: {} }, assets: {} }) });
+    tx.oncomplete = () => { rq.result.close(); res(); }; }; }));
+  for (let i = 0; i < 6; i++) { await p.evaluate(async i => { const S = window.__shotref; S.state.meta = { id: 'proj' + i, name: 'Proj ' + i }; S.changed(true); await S.saveRecentNow(); }, i); }
+  const rows = (await idbRows(p)).rows;
+  ok(rows.length === 5, 'kept ' + rows.length + ' entries: ' + rows.map(r => r.name).join(', '));
+  ok(rows.some(r => r.id === 'proj5') && !rows.some(r => r.id === 'bad1' || r.id === 'art1'), 'the oldest should have been pruned: ' + rows.map(r => r.id));
+  /* write them again so the two special entries are inside the limit */
+  await openSettings(p); await setPrefUI(p, 'keepRecent', 50); await p.keyboard.press('Escape');
+  await p.evaluate(() => new Promise(res => { const rq = indexedDB.open('shotref', 2); rq.onsuccess = () => { const tx = rq.result.transaction('projects', 'readwrite'), st = tx.objectStore('projects');
+    st.put({ id: 'bad1', name: 'Damaged one', updated: Date.now() - 1e7, thumb: '', data: '{"app":"ShotRef", "state": {' });
+    st.put({ id: 'art1', name: 'From the artifact', updated: Date.now() - 5e6, thumb: '', data: JSON.stringify({ app: 'ShotRef', version: 1, state: { v: 1, meta: { id: 'art1', name: 'From the artifact' }, camera: { base: { p: [3, 1.6, 6], tg: [0, 1, 0], f: 35, roll: 0, fd: 7 }, keys: [] }, objects: [{ id: 'q1', type: 'box', name: 'Box 1', base: { p: [1, 0, 0], r: [0, 0, 0], s: [1, 1, 1] } }], settings: {} }, assets: {} }) });
+    tx.oncomplete = () => { rq.result.close(); res(); }; }; }));
+  await fileCmd(p, 'open'); await p.waitForSelector('#recentGrid .rcard');
+  const cards = await p.evaluate(() => [...document.querySelectorAll('#recentGrid .rcard')].map(c => c.textContent));
+  ok(cards.some(t => /Damaged one/.test(t) && /can.t be opened/i.test(t)), 'damaged entry card: ' + cards.join(' | '));
+  await p.click('#recentGrid .rcard:has-text("Damaged one")'); await settle(p, 300);
+  ok(/can.t be opened|damaged/i.test(await p.textContent('#toast')), 'no plain message: ' + await p.textContent('#toast'));
+  ok((await idbRows(p)).rows.some(r => r.id === 'bad1'), 'the damaged entry was dropped by clicking it');
+  ok(await p.isVisible('#mRecent:not(.hidden)'), 'dialog should stay open after a failed open');
+  await p.click('#recentGrid .rcard:has-text("From the artifact")'); await p.waitForSelector('#mConfirm:not(.hidden)'); await p.click('#cfOk');
+  await p.waitForFunction(() => window.__shotref.state.objects.length === 1 && window.__shotref.state.objects[0].id === 'q1');
+  await fileCmd(p, 'open'); await p.waitForSelector('#recentGrid .rcard');
+  await p.hover('#recentGrid .rcard:has-text("Damaged one")'); await p.click('#recentGrid .rcard:has-text("Damaged one") .del'); await settle(p, 400);
+  ok(!(await idbRows(p)).rows.some(r => r.id === 'bad1'), 'damaged entry not removable');
+  noErrors(p);
+});
+check('recent projects: autosave off writes nothing; Clear recent projects empties the list', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => { const S = window.__shotref; S.addObject('box'); S.changed(true); });
+  await waitRecent(p);
+  await openSettings(p);
+  await p.click('#setBody button:has-text("Clear recent projects")');
+  await p.waitForSelector('#mConfirm:not(.hidden)'); await p.click('#cfOk'); await settle(p, 400);
+  ok((await idbRows(p)).rows.length === 0, 'not cleared');
+  await openSettings(p); await setPrefUI(p, 'autosave', false); await p.keyboard.press('Escape');
+  await p.evaluate(() => { const S = window.__shotref; S.addObject('box'); S.changed(true); });
+  await settle(p, 3800);
+  ok((await idbRows(p)).rows.length === 0, 'an entry was written with autosave off');
+  noErrors(p);
+});
+check('recent projects: without IndexedDB (claude.ai window) the list says so, and nothing else breaks', async ({ freshContext }) => {
+  const fc = await freshContext();
+  await fc.ctx.addInitScript(() => { try { Object.defineProperty(window, 'indexedDB', { get() { throw new DOMException('denied', 'SecurityError'); } }); } catch (e) { } });
+  const p = await fc.open(); await settle(p, 400);
+  await p.evaluate(() => { const S = window.__shotref; S.addObject('box'); S.changed(true); });
+  await settle(p, 3500);
+  await fileCmd(p, 'open'); await p.waitForSelector('#mRecent:not(.hidden)');
+  ok(/not available|isn.t available|can.t be used/i.test(await p.textContent('#recNote')), 'no plain note: ' + await p.textContent('#recNote'));
+  ok(await p.isVisible('#recFile') && await p.isVisible('#recNew'), 'Open a file and starter sets should still be offered');
+  noPageErrors(p);
+});
+check('recent projects: on the desktop Ctrl+O keeps the native dialog, and File > Recent projects shows the grid', async ({ freshContext }) => {
+  const p = await desktopPage(freshContext); await settle(p, 300);
+  await p.evaluate(() => { window.__dsk.nextOpen = null; });
+  await p.keyboard.press('Control+O'); await settle(p, 400);
+  ok(await p.evaluate(() => document.querySelector('#mRecent').classList.contains('hidden')), 'Ctrl+O should use the native dialog on the desktop');
+  await fileCmd(p, 'recent');
+  await p.waitForSelector('#mRecent:not(.hidden)');
+  noErrors(p);
+});
+
+/* ---- embed hook ---- */
+check('embed hook: a published page can start with its own project and message, with its own autosave', async ({ freshContext }) => {
+  const fc = await freshContext({ firstLaunch: true });
+  const proj = { app: 'ShotRef', version: 1, state: { v: 1, meta: { id: 'emb', name: 'Desert overlook' }, camera: { base: { p: [3, 1.6, 6], tg: [0, 1, 0], f: 35, roll: 0, fd: 7 }, keys: [] }, objects: [{ id: 'c1', type: 'cactus', name: 'Cactus 1', base: { p: [1, 0, 0], r: [0, 0, 0], s: [1, 1, 1] } }, { id: 'c2', type: 'cactus', name: 'Cactus 2', base: { p: [2, 0, 0], r: [0, 0, 0], s: [1, 1, 1] } }], settings: {} }, assets: {} };
+  await fc.ctx.addInitScript(pr => { window.__SHOTREF_EMBED__ = { key: 'demo1', project: pr, message: 'Welcome to the demo' }; }, proj);
+  const p = await fc.open(); await settle(p, 900);
+  ok(await nObj(p) === 2 && (await stateOf(p)).meta.name === 'Desert overlook', 'the embedded project did not load');
+  ok(/Welcome to the demo/.test(await p.textContent('#toast')), 'no message: ' + await p.textContent('#toast'));
+  ok(await p.evaluate(() => document.querySelector('#mStart').classList.contains('hidden')), 'the starter sets opened over the demo');
+  await p.evaluate(() => { const S = window.__shotref; S.addObject('box'); S.changed(true); });
+  await settle(p, 800);
+  ok(await p.evaluate(() => localStorage.getItem('shotref.autosave.demo1') !== null && localStorage.getItem('shotref.autosave') === null), 'autosave should use the key shotref.autosave.demo1');
+  await p.reload(); await p.waitForFunction(() => window.__shotref && window.__shotref.state); await settle(p, 600);
+  ok(await nObj(p) === 3, 'a reload should bring back the visitor\'s own edit, not the demo: ' + await nObj(p));
+  noPageErrors(p);
+});
+check('embed hook: a broken embed is ignored and the app starts normally', async ({ freshContext }) => {
+  const fc = await freshContext({ firstLaunch: true });
+  await fc.ctx.addInitScript(() => { window.__SHOTREF_EMBED__ = { key: '../x y', project: 'nope', message: 5 }; });
+  const p = await fc.open(); await settle(p, 900);
+  ok(await nObj(p) === 3, 'normal start expected: ' + await nObj(p));
+  noPageErrors(p);
+});
+
 main().catch(e => { console.error(e && e.stack || e); process.exit(2); });
