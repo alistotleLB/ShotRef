@@ -5657,4 +5657,29 @@ check('practice: the undo steps of the real scene keep their takes after many pr
   noErrors(p);
 }, { timeout: 90000 });
 
+check('practice: a photo imported just before the tour is stored, so a reload mid-practice still has it', async ({ open, fixtures }) => {
+  const p = await open(); await settle(p, 300);
+  await p.setInputFiles('#fPlate', path.join(fixtures, 'location.jpg'));
+  await p.waitForFunction(() => window.__shotref.state.plate && window.__shotref.state.plate.asset);
+  const id = await p.evaluate(() => window.__shotref.state.plate.asset);
+  ok(await practiceStart(p), 'the practice tour did not start'); /* inside the 400 ms autosave delay */
+  await settle(p, 1200);
+  await p.reload(); await p.waitForFunction(() => window.__shotref && window.__shotref.state);
+  await p.waitForFunction(i => window.__shotref.assets[i], id, { timeout: 8000 }).catch(() => { throw new Error('the photo is gone after a reload mid-practice'); });
+  ok(await p.evaluate(i => window.__shotref.state.plate && window.__shotref.state.plate.asset === i, id), 'the plate is not back');
+  noErrors(p);
+});
+
+check('practice: dropping a photo mid-practice ends the tour and the photo goes into the real scene', async ({ open, fixtures }) => {
+  const p = await open(); await settle(p, 300);
+  ok(await practiceStart(p), 'the practice tour did not start');
+  const b64 = fs.readFileSync(path.join(fixtures, 'location.jpg')).toString('base64');
+  await p.evaluate(b => { const u = Uint8Array.from(atob(b), c => c.charCodeAt(0)); const dt = new DataTransfer(); dt.items.add(new File([u], 'pic.jpg', { type: 'image/jpeg' })); document.querySelector('#vp').dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true })); }, b64);
+  await settle(p, 1200);
+  ok(await noTour(p) && !(await p.evaluate(() => window.__shotref.practicing())), 'the tour or practice is still on');
+  const r = await p.evaluate(() => { const S = window.__shotref; return { n: S.state.objects.length, img: S.state.objects.some(o => o.type === 'image'), plate: !!S.state.plate }; });
+  ok(r.n >= 4 || r.plate, 'the real scene did not get the photo: ' + JSON.stringify(r));
+  noErrors(p);
+});
+
 main().catch(e => { console.error(e && e.stack || e); process.exit(2); });

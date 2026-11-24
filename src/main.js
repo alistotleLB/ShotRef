@@ -547,12 +547,13 @@ function idbLoad(ids) {
    same transaction (another tab may have changed the store), so only missing files are written.
    Queued so writes never overlap. */
 function idbSync(ids) {
+  const src = assets; /* the files as they are now: the queue runs later, maybe while the practice stage has swapped `assets` */
   idb.queue = idb.queue.then(() => idbTx('readwrite', st => {
     const k = st.getAllKeys();
     k.onsuccess = () => {
       try {
         const have = new Set(k.result.map(String));
-        for (const id of ids) if (!have.has(id) && assets[id]) st.put(assets[id], id);
+        for (const id of ids) if (!have.has(id) && src[id]) st.put(src[id], id);
         if (!idb.noPrune) for (const id of have) if (!ids.includes(id) && !idb.keep.has(id)) st.delete(id);
       } catch (e) { idb.lastErr = e; console.error('ShotRef: could not autosave photos and models', e); try { k.transaction.abort(); } catch (e2) { } }
     };
@@ -589,7 +590,7 @@ function writeAutosave() {
 let inlineTooBig = null;
 let saveTimer = null;
 function autosave() {
-  if (practicing) return;
+  if (practicing) { practiceMissed = true; return; } /* never written during practice; leavePractice runs it again */
   clearTimeout(saveTimer);
   if (!pref('autosave')) { saveTimer = null; return; } /* Settings: autosave off */
   saveTimer = setTimeout(() => { saveTimer = null; writeAutosave(); }, 400);
@@ -4631,7 +4632,7 @@ function renderExportDialog() {
    title (platform.hold). leavePractice is the only way back, safe to call twice: Finish, End tour, Esc and every action that would touch the
    real scene (Open, New, Save, a dropped file, an export, closing the desktop window...) end up there through endPracticeFirst. */
 function enterPractice() {
-  if (practicing || exporting || rec || placing || pathMode || openModals().length) return false;
+  if (practicing || saving || exporting || rec || placing || pathMode || openModals().length) return false;
   let stage;
   try { stage = buildState(() => fillStarter('empty')); }
   catch (e) { console.error('ShotRef: could not make the practice stage', e); return false; }
@@ -4677,14 +4678,14 @@ function leavePractice() {
     showState();
   } catch (e) { console.error('ShotRef: could not show the real scene again', e); }
   if (snapLive > snapPruneAt) pruneSnapPool();
-  if (practiceMissed) { practiceMissed = false; autosave(); } /* a write that was asked for before the practice began and could not run */
+  practiceMissed = false; autosave(); /* always: a write asked for before or during practice may not have run or may have missed files */
   requestRender();
   return true;
 }
 /* Runs `go` once the real scene is back. Every action that reads or replaces the scene starts with this. */
 function endPracticeFirst(go) {
   if (practicing) {
-    if (tourHandle) tourHandle.end('external'); /* the tour's own end calls leavePractice */
+    if (tourHandle) { try { tourHandle.end('external'); } catch (e) { console.error('ShotRef: the tour did not end cleanly', e); } } /* its own end calls leavePractice */
     leavePractice();
   }
   return go();
@@ -5198,6 +5199,7 @@ function wire() {
   window.addEventListener('drop', e => { if (hasFiles(e) && !e.defaultPrevented) { e.preventDefault(); toast('Drop files on the 3D view to add them.'); } });
   vpEl.addEventListener('drop', async e => {
     e.preventDefault(); drop.style.display = 'none';
+    if (practicing) endPracticeFirst(() => {}); /* the file goes into the real scene, as it would with no tour */
     for (const f of e.dataTransfer.files) {
       if (/\.(glb|gltf)$/i.test(f.name)) await importModel(f);
       else if (/^image\//.test(f.type)) { if (view === 'camera' || (splitOn() && paneOf(e) === 'cam')) await importPlate(f); else await importImage(f); }
