@@ -86,7 +86,7 @@ const PREF_DEFAULTS = {
   newDuration: 5, newFps: 24, newAspect: '16:9', newSize: 1920, walkSpeed: 1.4, autoSit: true, ground: true,
   videoQuality: 'high', filePrefix: 'shotref', dateStamp: true, quality: 'high', layout: 'single', liveShadows: true, pipDefault: true,
   showLabels: true, showArrows: true, showHints: true, showSun: true, selBar: true, camPoints: true,
-  orbitSpeed: 1, zoomSpeed: 1, flySpeed: 2, snapStep: 0.25, rotSnap: 15, autosave: true, keepRecent: 12,
+  orbitSpeed: 1, zoomSpeed: 1, flySpeed: 2, snapStep: 0.25, rotSnap: 15, autosave: true, recentOn: true, keepRecent: 12,
 };
 const PREF_LISTS = {
   newDuration: [5, 8, 10, 15], newFps: [24, 25, 30, 50, 60], newSize: [1280, 1920, 2560, 3840], videoQuality: ['standard', 'high', 'max'],
@@ -426,7 +426,7 @@ function pushHistory() {
   platform.setDirty(true);
   autosave();
 }
-function changed(commit, props = false) { editRev++; uiDirty = true; if (props) propsDirty = true; if (commit) { groundDirty = true; pushHistory(); scheduleRecent(); } } /* a real edit: things settle once it is over */
+function changed(commit, props = false) { editRev++; uiDirty = true; if (props) propsDirty = true; if (commit) { groundDirty = true; pushHistory(); markRecentDirty(); } } /* a real edit: things settle once it is over */
 function restore(s) {
   state = parseStep(s);
   sanitizeSel();
@@ -434,8 +434,8 @@ function restore(s) {
 }
 /* undo/redo autosave too, so an undone delete puts its photo or model back in the autosave */
 const changeLabel = (word, before, after) => { const d = describeChange(before, after); return d ? word + ': ' + d : word; };
-function undo() { if (exporting) return; if (hi > 0) { hi--; restore(hist[hi]); platform.restoreDoc(histDoc[hi]); platform.setDirty(true); autosave(); scheduleRecent(); toast(changeLabel('Undo', hist[hi], hist[hi + 1])); } }
-function redo() { if (exporting) return; if (hi < hist.length - 1) { hi++; restore(hist[hi]); platform.restoreDoc(histDoc[hi]); platform.setDirty(true); autosave(); scheduleRecent(); toast(changeLabel('Redo', hist[hi - 1], hist[hi])); } }
+function undo() { if (exporting) return; if (hi > 0) { hi--; restore(hist[hi]); platform.restoreDoc(histDoc[hi]); platform.setDirty(true); autosave(); markRecentDirty(); toast(changeLabel('Undo', hist[hi], hist[hi + 1])); } }
+function redo() { if (exporting) return; if (hi < hist.length - 1) { hi++; restore(hist[hi]); platform.restoreDoc(histDoc[hi]); platform.setDirty(true); autosave(); markRecentDirty(); toast(changeLabel('Redo', hist[hi - 1], hist[hi])); } }
 /* ---- autosave ----
    localStorage 'shotref.autosave' = { state, assets: {}, assetIds: [...], v: 2 } (small).
    Photos and models go to IndexedDB (db 'shotref', store 'assets', key = asset id).
@@ -446,7 +446,7 @@ function redo() { if (exporting) return; if (hi < hist.length - 1) { hi++; resto
 const EMBED = (() => {
   try {
     const e = window.__SHOTREF_EMBED__; if (!e || typeof e !== 'object') return null;
-    return { key: typeof e.key === 'string' ? e.key.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40) : '', project: e.project, message: typeof e.message === 'string' ? e.message.slice(0, 300) : '' };
+    return { key: (typeof e.key === 'string' ? e.key.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40) : '') || 'embed', project: e.project, message: typeof e.message === 'string' ? e.message.slice(0, 300) : '' };
   } catch (err) { return null; }
 })();
 const AUTOSAVE_KEY = 'shotref.autosave' + (EMBED && EMBED.key ? '.' + EMBED.key : '');
@@ -495,11 +495,14 @@ function idbOpen() {
       if (db) db.onversionchange = () => { try { db.close(); } catch (e) { } idb.db = null; idb.ok = false; };
       res(db);
     };
-    const timer = setTimeout(() => finish(null), 1500);
+    let timer = setTimeout(() => finish(null), 1500);
+    const longer = () => { clearTimeout(timer); timer = setTimeout(() => finish(null), 20000); }; /* an upgrade or a blocked open gets longer */
     try {
       const rq = indexedDB.open(IDB_NAME, 2);
       /* version 2 adds the recent projects next to the photos and models; a version 1 database keeps everything it has */
-      rq.onupgradeneeded = () => { try { const d = rq.result; if (!d.objectStoreNames.contains('assets')) d.createObjectStore('assets'); if (!d.objectStoreNames.contains('projects')) d.createObjectStore('projects', { keyPath: 'id' }); } catch (e) { } };
+      rq.onupgradeneeded = () => { try { const d = rq.result; if (!d.objectStoreNames.contains('assets')) d.createObjectStore('assets'); const ps = d.objectStoreNames.contains('projects') ? rq.transaction.objectStore('projects') : d.createObjectStore('projects', { keyPath: 'id' }); if (!ps.indexNames.contains('updated')) ps.createIndex('updated', 'updated'); } catch (e) { } };
+      rq.onupgradeneeded = (orig => ev => { longer(); orig(ev); })(rq.onupgradeneeded);
+      rq.onblocked = () => { longer(); toast('Another ShotRef tab is still open. Close it so ShotRef can finish updating its storage. Your work is safe.', 8000); };
       rq.onsuccess = () => {
         const db = rq.result;
         if (!db.objectStoreNames.contains('assets') || !db.objectStoreNames.contains('projects')) { try { db.close(); } catch (e) { } finish(null); return; }
@@ -3586,6 +3589,7 @@ function buildState(fill) {
 /* The one way to swap the whole scene. Keeps undo (pushes a step) and keeps old files in memory so undo can rebuild them.
    On any error the previous scene is put back and the error is rethrown. */
 function replaceProject(newState, newAssets = {}, label) {
+  recentFlush(); /* the project being left, if it has edits the list does not have */
   snapHold = true;
   const prev = { state, assets, selected, selIds: selIds.slice(), T, hist: hist.slice(), histDoc: histDoc.slice(), doc: platform.getDoc(), hi };
   try {
@@ -3704,7 +3708,7 @@ function projectText() {
 async function doSaveProject(saveAs) {
   const data = projectText();
   const r = await platform.saveProject(data, { saveAs: saveAs === true, name: `${projectSlug() || 'shotref'}-${stamp()}.shotref` });
-  if (r.ok) { toast('Saved ' + (r.name || 'project')); autosave(); } /* the autosave records that nothing is unsaved now */
+  if (r.ok) { toast('Saved ' + (r.name || 'project')); autosave(); saveRecentNow(); } /* the autosave records that nothing is unsaved now */
   else if (r.canceled) toast('Save cancelled');
   else toast("Couldn't save the project. Your changes are still here, so try again.", 5000);
   return r;
@@ -4696,14 +4700,15 @@ function buildSettings() {
         prefSelect('rotSnap', 'Turn snap', [[5, '5°'], [15, '15°'], [45, '45°'], [90, '90°']]),
         h('p', { class: 'note' }, 'Snapping applies while the Snap button is on. Shift while flying moves 3× faster.')),
       sec('Saving',
-        prefCheck('autosave', 'Autosave and keep recent projects'),
+        prefCheck('autosave', 'Autosave (restores your last session)'),
+        prefCheck('recentOn', 'Keep recent projects'),
         prefSelect('keepRecent', 'Recent projects to keep', PREF_LISTS.keepRecent.map(v => [v, String(v)])),
         h('div', { class: 'btns', style: 'margin-top:6px' },
           h('button', { onclick: () => { closeModal($('#mSettings')); confirmBox('Clear recent projects?', 'This removes the list of recent projects stored in this browser. Your current scene stays open.', async () => { const r = await clearRecents(); toast(r === null ? 'Recent projects are not available in this browser window.' : 'Recent projects cleared'); }, 'Clear'); } }, 'Clear recent projects'),
           h('button', { onclick: () => { closeModal($('#mSettings')); openModal('mHelp'); } }, 'Show quick start')))),
     h('div', { class: 'btns', style: 'margin-top:4px' }, h('button', { onclick: resetPrefs }, 'Reset all settings')));
 }
-function openSettings() { buildSettings(); openModal('mSettings'); }
+function openSettings() { buildSettings(); openModal('mSettings'); $('#mSettings .dlg').scrollTop = 0; }
 
 /* ============================== My sets ============================== */
 /* localStorage 'shotref.library' = [{ id, name, items: [{ type, name, color, opts, base: { p, r, s } }] }], per browser.
@@ -4810,32 +4815,61 @@ const clearRecents = () => recentTx('readwrite', st => { st.clear(); return true
 /* a small picture of the shot at the playhead (a data: URL: no blob: URLs on claude.ai) */
 function recentThumb() {
   try {
-    const w = 320, hh = Math.max(2, Math.round(w / arOf(state.settings.aspect) / 2) * 2), r = getExportRenderer(w, hh);
+    recentStats.thumbs++;
+    const w = 240, hh = Math.max(2, Math.round(w / arOf(state.settings.aspect) / 2) * 2), r = getExportRenderer(w, hh);
     renderExportFrame(r, T, w, hh);
-    const d = r.domElement.toDataURL('image/jpeg', 0.72);
+    const d = r.domElement.toDataURL('image/jpeg', 0.7);
     applyAll(T);
     return d;
   } catch (e) { console.error('ShotRef: could not make the picture for the recent list', e); return ''; }
 }
-let recentTimer = null;
-function scheduleRecent() {
-  if (!pref('autosave')) return;
-  clearTimeout(recentTimer);
-  recentTimer = setTimeout(() => { recentTimer = null; if (exporting || swapping || cmpBusy) scheduleRecent(); else saveRecentNow(); }, 2500);
+/* The list is never written on the edit path. It is updated on Save, when a project is opened or replaced (the outgoing one),
+   when the page is hidden or closed, and at most once every 3 minutes while there are unsaved edits (never while dragging,
+   playing, recording or exporting). Nothing happens at all where IndexedDB is unavailable. */
+let recentTimer = null, recentDirty = false;
+const recentStats = { writes: 0, thumbs: 0 }; /* for the smoke test */
+const RECENT_EVERY_MS = 180000, RECENT_MAX_TEXT = 40e6;
+const recentOn = () => pref('recentOn') && idb.ok !== false;
+const recentBusy = () => exporting || swapping || cmpBusy || dragActive || playing || !!rec || !!placing || !!pathMode || gizmo.dragging;
+function markRecentDirty() {
+  if (!recentOn()) return;
+  recentDirty = true;
+  if (!recentTimer) recentTimer = setTimeout(recentTick, RECENT_EVERY_MS);
 }
-/* writes this project into the list and drops the oldest beyond the number to keep. Resolves true when it was stored. */
+function recentTick() { recentTimer = null; if (!recentDirty) return; if (recentBusy()) { recentTimer = setTimeout(recentTick, 5000); return; } saveRecentNow(); }
+/* the outgoing / closing project: written only when it has edits the list does not have yet */
+function recentFlush() { if (recentDirty && recentOn() && !recentBusy()) saveRecentNow(); }
+/* writes this project into the list and keeps the newest `keepRecent`. The photo autosave is always written first. Resolves true when stored. */
 async function saveRecentNow() {
-  if (!pref('autosave') || exporting || swapping || cmpBusy) return false;
-  const keep = pref('keepRecent');
-  const row = { id: recentId(), name: (state.meta && state.meta.name) || 'Untitled scene', updated: Date.now(), thumb: recentThumb(), data: projectText() };
-  const ok = await recentTx('readwrite', st => {
-    st.put(row);
-    const rq = st.getAll();
-    rq.onsuccess = () => { for (const r of rq.result.slice().sort((a, b) => (b && b.updated || 0) - (a && a.updated || 0)).slice(keep)) if (r && r.id != null) st.delete(r.id); };
-    return true;
-  });
+  if (!recentOn() || exporting || swapping || cmpBusy) return false;
+  clearTimeout(recentTimer); recentTimer = null; recentDirty = false;
+  flushAutosave(); /* pending autosave first, and wait for its photo writes: recents must never crowd it out */
+  const text = projectText();
+  if (text.length > RECENT_MAX_TEXT) return false; /* too big for a list of copies */
+  const row = { id: recentId(), name: (state.meta && state.meta.name) || 'Untitled scene', updated: Date.now(), thumb: recentThumb(), data: text };
+  await idb.queue;
+  recentStats.writes++;
+  let ok = await recentPut(row);
+  if (!ok && isQuota(idb.lastErr)) { await recentTrim(); ok = await recentPut(row); } /* out of space: drop the oldest copies, once */
   return !!ok;
 }
+/* put the row, then delete everything beyond the newest `keepRecent`, reading only keys (never the projects) */
+const recentPut = row => recentTx('readwrite', st => {
+  st.put(row);
+  if (st.indexNames.contains('updated')) {
+    const keep = pref('keepRecent'); let n = 0;
+    const cur = st.index('updated').openKeyCursor(null, 'prev');
+    cur.onsuccess = () => { const c = cur.result; if (!c) return; if (++n > keep) st.delete(c.primaryKey); c.continue(); };
+  }
+  return true;
+});
+/* quota: remove the older half of the list (at least one) */
+const recentTrim = () => recentTx('readwrite', st => {
+  if (!st.indexNames.contains('updated')) { st.clear(); return true; }
+  const keys = []; const cur = st.index('updated').openKeyCursor(null, 'prev');
+  cur.onsuccess = () => { const c = cur.result; if (c) { keys.push(c.primaryKey); c.continue(); return; } for (const k of keys.slice(Math.floor(keys.length / 2))) st.delete(k); };
+  return true;
+});
 const agoText = t => { const m = Math.round((Date.now() - t) / 6e4); return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : m < 1440 ? Math.round(m / 60) + ' h ago' : new Date(t).toLocaleDateString(); };
 async function openRecent() {
   if (exporting) { toast('Wait for the export to finish.'); return; }
@@ -5385,8 +5419,9 @@ function boot() {
   window.addEventListener('storage', e => {
     if (e.key === AUTOSAVE_KEY && !tabWarned) { tabWarned = true; toast('ShotRef is open in another tab. Changes here may overwrite it.', 6000); }
   });
-  window.addEventListener('pagehide', flushAutosave);
-  window.__shotref = { promptText, ensureDof, get selection() { return selIds; }, layout: () => layout, gizmoNdc: (x, y) => { const q = gizmo._getPointer({ clientX: x, clientY: y, button: 0 }); return { x: q.x, y: q.y }; }, arrowsVisible: () => [...arrows.values()].some(a => a.visible), videoBitrate, snapValue: snapWith, rotSnapDeg: () => pref('rotSnap'), controlSpeeds: () => ({ orbit: edControls.rotateSpeed, zoom: edControls.zoomSpeed, cam: camControls.rotateSpeed }), flySpeedNow, walkSpeedNow: () => pathSpeedOf({ type: 'person', opts: { pose: 'stand' } }), buildAddPanel: () => buildAddPanel(), saveRecentNow, selectMany: ids => { selIds = ids.slice(); selected = selIds[selIds.length - 1] || null; updateGizmo(); uiDirty = true; propsDirty = true; requestRender(); }, pickAtScreen: (x, y) => { const rc = rayFromEvent({ clientX: x, clientY: y }); const h = rc && pickAt(rc); return h ? h.id : null; }, settleTime: () => { const t0 = performance.now(); solveGround(); return performance.now() - t0; }, groundMigrate: () => groundMigrate.size, liftKnob: () => { if (!liftGrp.visible) return null; const q = liftPick.getWorldPosition(new THREE.Vector3()); return window.__shotref.project(q.x, q.y, q.z); }, attachTo, setMount, writeCam, shownObj: (id, t) => shownObj(getObj(id), t), viewOf: id => { const v = views.get(id); if (!v) return null; v.group.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(v.group), sz = bb.getSize(new THREE.Vector3()); return { p: v.group.position.toArray(), yaw: v.group.rotation.y * R2D, s: v.group.scale.toArray(), size: sz.toArray(), wheels: v.wheels ? v.wheels.list.map(w => ({ spin: w.spin.rotation.x, steer: w.piv.rotation.y, front: w.front })) : null }; }, ringKnob: () => ringGrp.visible ? ringKnob.getWorldPosition(new THREE.Vector3()).toArray() : null, getPref, setPref, showMenu, menuButton, hideMenu, project: (x, y, z) => { const r = canvas.getBoundingClientRect(), R = viewRects(r.width, r.height); let cam = view === 'top' ? topCam : edCam, rr = R.work || { x: 0, y: 0, w: r.width, h: r.height }; if (camPane() && R.frame) { cam = renderCam; rr = R.frame; } const v = new THREE.Vector3(x, y, z).project(cam); return [r.left + rr.x + (v.x * 0.5 + 0.5) * rr.w, r.top + rr.y + (-v.y * 0.5 + 0.5) * rr.h]; }, get view() { return view; }, get selected() { return selected; }, get state() { return state; }, get assets() { return assets; }, setT: t => setTime(t, false), applyMove, addObject, select, setView, evalCam, exportVideo, exportPNG, pickCodec, _exportCanvas: () => exRenderer ? exRenderer.domElement : null, changed, writeObj, evalObj, setKey, get T() { return T; },
+  window.addEventListener('pagehide', () => { flushAutosave(); recentFlush(); });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') recentFlush(); });
+  window.__shotref = { promptText, ensureDof, get selection() { return selIds; }, layout: () => layout, gizmoNdc: (x, y) => { const q = gizmo._getPointer({ clientX: x, clientY: y, button: 0 }); return { x: q.x, y: q.y }; }, arrowsVisible: () => [...arrows.values()].some(a => a.visible), videoBitrate, snapValue: snapWith, rotSnapDeg: () => pref('rotSnap'), controlSpeeds: () => ({ orbit: edControls.rotateSpeed, zoom: edControls.zoomSpeed, cam: camControls.rotateSpeed }), flySpeedNow, walkSpeedNow: () => pathSpeedOf({ type: 'person', opts: { pose: 'stand' } }), buildAddPanel: () => buildAddPanel(), saveRecentNow, recentFlush, recentStats, recentBusy, selectMany: ids => { selIds = ids.slice(); selected = selIds[selIds.length - 1] || null; updateGizmo(); uiDirty = true; propsDirty = true; requestRender(); }, pickAtScreen: (x, y) => { const rc = rayFromEvent({ clientX: x, clientY: y }); const h = rc && pickAt(rc); return h ? h.id : null; }, settleTime: () => { const t0 = performance.now(); solveGround(); return performance.now() - t0; }, groundMigrate: () => groundMigrate.size, liftKnob: () => { if (!liftGrp.visible) return null; const q = liftPick.getWorldPosition(new THREE.Vector3()); return window.__shotref.project(q.x, q.y, q.z); }, attachTo, setMount, writeCam, shownObj: (id, t) => shownObj(getObj(id), t), viewOf: id => { const v = views.get(id); if (!v) return null; v.group.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(v.group), sz = bb.getSize(new THREE.Vector3()); return { p: v.group.position.toArray(), yaw: v.group.rotation.y * R2D, s: v.group.scale.toArray(), size: sz.toArray(), wheels: v.wheels ? v.wheels.list.map(w => ({ spin: w.spin.rotation.x, steer: w.piv.rotation.y, front: w.front })) : null }; }, ringKnob: () => ringGrp.visible ? ringKnob.getWorldPosition(new THREE.Vector3()).toArray() : null, getPref, setPref, showMenu, menuButton, hideMenu, project: (x, y, z) => { const r = canvas.getBoundingClientRect(), R = viewRects(r.width, r.height); let cam = view === 'top' ? topCam : edCam, rr = R.work || { x: 0, y: 0, w: r.width, h: r.height }; if (camPane() && R.frame) { cam = renderCam; rr = R.frame; } const v = new THREE.Vector3(x, y, z).project(cam); return [r.left + rr.x + (v.x * 0.5 + 0.5) * rr.w, r.top + rr.y + (-v.y * 0.5 + 0.5) * rr.h]; }, get view() { return view; }, get selected() { return selected; }, get state() { return state; }, get assets() { return assets; }, setT: t => setTime(t, false), applyMove, addObject, select, setView, evalCam, exportVideo, exportPNG, pickCodec, _exportCanvas: () => exRenderer ? exRenderer.domElement : null, changed, writeObj, evalObj, setKey, get T() { return T; },
     get rebuilds() { return rebuilds; }, urlCacheIds: () => [...urlCache.keys()],
     /* batch H (takes) hooks for the smoke test */
     switchTake, newTake, snapPoolSize: () => snapLive, snapPruned: () => snapPruned,

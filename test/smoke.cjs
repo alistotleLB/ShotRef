@@ -4474,7 +4474,7 @@ const setPrefUI = async (p, key, val) => {
   else if (kind === 'range') await p.evaluate(([s, v]) => { const e = document.querySelector(s); e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true })); }, [sel, val]);
   else { await p.fill(sel, String(val)); await p.dispatchEvent(sel, 'change'); }
 };
-const PREF_KEYS = ['newDuration', 'newFps', 'newAspect', 'newSize', 'walkSpeed', 'autoSit', 'ground', 'videoQuality', 'filePrefix', 'dateStamp', 'quality', 'layout', 'liveShadows', 'pipDefault', 'showLabels', 'showArrows', 'showHints', 'showSun', 'selBar', 'camPoints', 'orbitSpeed', 'zoomSpeed', 'flySpeed', 'snapStep', 'rotSnap', 'autosave', 'keepRecent'];
+const PREF_KEYS = ['recentOn', 'newDuration', 'newFps', 'newAspect', 'newSize', 'walkSpeed', 'autoSit', 'ground', 'videoQuality', 'filePrefix', 'dateStamp', 'quality', 'layout', 'liveShadows', 'pipDefault', 'showLabels', 'showArrows', 'showHints', 'showSun', 'selBar', 'camPoints', 'orbitSpeed', 'zoomSpeed', 'flySpeed', 'snapStep', 'rotSnap', 'autosave', 'keepRecent'];
 
 check('settings: every preference has a control, and the old placeholder text is gone', async ({ open }) => {
   const p = await open(); await openSettings(p);
@@ -4777,7 +4777,8 @@ const idbRows = p => p.evaluate(() => new Promise(res => {
     tx.oncomplete = () => { db.close(); res(out); };
   };
 }));
-const waitRecent = async (p, n = 1, ms = 9000) => { const end = Date.now() + ms; for (;;) { const r = await idbRows(p); if (r && r.rows.length >= n) return r; if (Date.now() > end) throw new Error('no recent project saved: ' + JSON.stringify(r && { v: r.version, s: r.stores, n: r.rows.length })); await settle(p, 250); } };
+const recentNow = p => p.evaluate(() => window.__shotref.saveRecentNow());
+const waitRecent = async (p, n = 1, ms = 9000) => { if (n >= 1) await recentNow(p); const end = Date.now() + ms; for (;;) { const r = await idbRows(p); if (r && r.rows.length >= n) return r; if (Date.now() > end) throw new Error('no recent project saved: ' + JSON.stringify(r && { v: r.version, s: r.stores, n: r.rows.length })); await settle(p, 250); } };
 const renameProject = async (p, name) => { await p.fill('#projName', name); await p.dispatchEvent('#projName', 'change'); };
 check('recent projects: an old database (version 1, assets only) is upgraded to version 2 and keeps its photos', async ({ freshContext, base }) => {
   const fc = await freshContext();
@@ -4900,8 +4901,13 @@ check('recent projects: autosave off writes nothing; Clear recent projects empti
   ok((await idbRows(p)).rows.length === 0, 'not cleared');
   await openSettings(p); await setPrefUI(p, 'autosave', false); await p.keyboard.press('Escape');
   await p.evaluate(() => { const S = window.__shotref; S.addObject('box'); S.changed(true); });
-  await settle(p, 3800);
-  ok((await idbRows(p)).rows.length === 0, 'an entry was written with autosave off');
+  await settle(p, 300);
+  ok((await idbRows(p)).rows.length === 0 && await recentNow(p) === true, 'recents should be written while only Autosave is off');
+  await openSettings(p); await setPrefUI(p, 'recentOn', false); await p.keyboard.press('Escape');
+  await p.evaluate(async () => { await window.__shotref.saveRecentNow(); });
+  await p.evaluate(() => new Promise(res => { const rq = indexedDB.open('shotref'); rq.onsuccess = () => { const tx = rq.result.transaction('projects', 'readwrite'); tx.objectStore('projects').clear(); tx.oncomplete = () => { rq.result.close(); res(); }; }; }));
+  await p.evaluate(async () => { await window.__shotref.saveRecentNow(); });
+  ok((await idbRows(p)).rows.length === 0, 'an entry was written with Keep recent projects off');
   noErrors(p);
 });
 check('recent projects: without IndexedDB (claude.ai window) the list says so, and nothing else breaks', async ({ freshContext }) => {
@@ -4947,6 +4953,60 @@ check('embed hook: a broken embed is ignored and the app starts normally', async
   const p = await fc.open(); await settle(p, 900);
   ok(await nObj(p) === 3, 'normal start expected: ' + await nObj(p));
   noPageErrors(p);
+});
+
+/* ---- fix round 1: recents never run on the edit path ---- */
+check('recent projects: rapid edits cause no recent write and no thumbnail; Save causes exactly one of each', async ({ open }) => {
+  const p = await open(); await settle(p, 400);
+  await p.evaluate(() => { const S = window.__shotref; for (let i = 0; i < 25; i++) { S.addObject('box'); S.changed(true); } });
+  await settle(p, 3500);
+  let st = await p.evaluate(() => window.__shotref.recentStats);
+  ok(st.writes === 0 && st.thumbs === 0, 'edits triggered recents: ' + JSON.stringify(st));
+  ok((await idbRows(p)).rows.length === 0, 'a row was written by edits');
+  await p.evaluate(() => { window.__getAll = 0; const o = IDBObjectStore.prototype.getAll; IDBObjectStore.prototype.getAll = function () { if (this.name === 'projects') window.__getAll++; return o.apply(this, arguments); }; });
+  await p.keyboard.press('Control+s');
+  await p.waitForFunction(() => window.__shotref.recentStats.writes >= 1, null, { timeout: 10000 }); await settle(p, 800);
+  st = await p.evaluate(() => window.__shotref.recentStats);
+  ok(st.writes >= 1 && st.thumbs >= 1, 'Save did not write: ' + JSON.stringify(st));
+  const w = st.writes;
+  ok(await p.evaluate(() => window.__getAll) === 0, 'pruning read whole projects');
+  await settle(p, 500);
+  ok((await p.evaluate(() => window.__shotref.recentStats.writes)) === w, 'more than one write for one Save');
+  noErrors(p);
+});
+check('recent projects: leaving a project with unsaved edits writes it once; an untouched one writes nothing', async ({ open }) => {
+  const p = await open(); await settle(p, 400);
+  await loadEmptyStarter(p); await settle(p, 300);
+  ok((await p.evaluate(() => window.__shotref.recentStats.writes)) === 0, 'an untouched project wrote a recent');
+  await p.evaluate(() => { const S = window.__shotref; S.addObject('box'); S.changed(true); });
+  await loadEmptyStarter(p); await settle(p, 800);
+  ok((await p.evaluate(() => window.__shotref.recentStats.writes)) === 1 && (await idbRows(p)).rows.length === 1, 'the outgoing project was not written once');
+  noErrors(p);
+});
+check('recent projects: out of space drops the oldest copies and retries once, and the photo autosave still succeeds', async ({ open, fixtures }) => {
+  const p = await open(); await settle(p, 300);
+  await p.setInputFiles('#fPlate', path.join(fixtures, 'location.jpg'));
+  await p.waitForFunction(() => window.__shotref.state.plate && window.__shotref.state.plate.asset);
+  const P = await p.evaluate(() => window.__shotref.state.plate.asset);
+  await p.evaluate(() => new Promise(res => { const rq = indexedDB.open('shotref'); rq.onsuccess = () => { const tx = rq.result.transaction('projects', 'readwrite'), st = tx.objectStore('projects'); for (let i = 0; i < 6; i++) st.put({ id: 'old' + i, name: 'Old ' + i, updated: 1000 + i, thumb: '', data: '{}' }); tx.oncomplete = () => { rq.result.close(); res(); }; }; }));
+  await p.evaluate(() => { window.__full = 1; const o = IDBObjectStore.prototype.put; IDBObjectStore.prototype.put = function () { if (this.name === 'projects' && window.__full) { window.__full = 0; throw new DOMException('full', 'QuotaExceededError'); } return o.apply(this, arguments); }; });
+  const ok1 = await p.evaluate(() => window.__shotref.saveRecentNow());
+  ok(ok1 === true, 'the retry after freeing space did not store');
+  const r = await idbRows(p);
+  ok(r.rows.length < 7 && r.rows.some(x => x.id !== 'old0' && x.name !== 'Old 5') && !r.rows.some(x => x.id === 'old0'), 'oldest not dropped: ' + r.rows.map(x => x.id));
+  ok(r.assets.includes(P), 'the photo is missing from the autosave store');
+  ok(await p.evaluate(() => !!localStorage.getItem('shotref.autosave')), 'no autosave');
+  noPageErrors(p);
+});
+check('settings: the title is visible at 1440 x 900, and the embed hook falls back to a fixed key', async ({ open, freshContext }) => {
+  const p = await open(); await openSettings(p);
+  const t = await p.evaluate(() => { const r = document.querySelector('#mSettingsT').getBoundingClientRect(); return [r.top, r.bottom, innerHeight]; });
+  ok(t[0] >= 0 && t[1] <= t[2], 'title off screen: ' + t);
+  const fc = await freshContext({ firstLaunch: true });
+  await fc.ctx.addInitScript(() => { window.__SHOTREF_EMBED__ = { key: '!!!', project: { app: 'ShotRef', version: 1, state: { camera: { base: { p: [3, 1.6, 6], tg: [0, 1, 0], f: 35, roll: 0, fd: 7 }, keys: [] }, objects: [], settings: {} } } }; });
+  const q = await fc.open(); await q.evaluate(() => { const S = window.__shotref; S.addObject('box'); S.changed(true); }); await settle(q, 800);
+  ok(await q.evaluate(() => localStorage.getItem('shotref.autosave') === null && localStorage.getItem('shotref.autosave.embed') !== null), 'fallback key not used');
+  noPageErrors(q);
 });
 
 main().catch(e => { console.error(e && e.stack || e); process.exit(2); });
