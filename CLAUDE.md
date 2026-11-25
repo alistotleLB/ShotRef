@@ -44,11 +44,13 @@ ShotRef is a "very dumbed-down Blender" for **blocking and camera moves only**. 
 - `src/platform.js`: where the app runs (`web`, `claude` or `desktop`) and the file and unsaved state behind Save and Save as: `platform.kind`, `setCurrent`, `setDirty`, `saveBlob`, `pickFile`.
 - `src/tour.js`: the tour engine (dimmed screen, corners, bubble). `runTour({stops, ui, interactive, onEnd, canKey, paused})` returns a handle (`end(reason)`, `next`, `back`), `tourActive()`, and `tourTick()` runs from `frame()`. Stop fields: `id`, `target`, `title`, `text`, `before`, `keep`, `corner`, `waitFor(snap)`, `snap`, `done`, `interactive`. `paused()` (main.js passes "a dialog is open"): the tour hides, ignores every key and does not measure or advance, then shows again on the same stop; opening a dialog never ends a tour.
 - `src/tour-copy.js`: `TOUR_COPY`, every tour word, keyed by stop id (`basic`, `hands`, plus `ui`, `welcome`, `menu`, `helpPage`). Change wording here only.
+- `src/sky.js`: import-free. Cloud constants (`COVER`, `LOOKS`, `DRIFTS`, `CLOUDS_NEW`), `cleanClouds`, `nearestCover`, `cloudLight` (the light layer clouds put over the saved light, never written back), `skyWording` and `skyPhrase` (panel line and prompt), and `makeSkyDome(THREE subset)`, the one-shader sky dome.
 - `src/keys.js`: pure keyframe maths (`sampleField`, `tangent`, `setKey`, `keyIndexAt`, `neighborKey`). The frame rate is passed in; `main.js` has small wrappers.
 
 `state` is the single source of truth: plain JSON, saved as `.shotref`, and snapshotted for undo. Three.js objects are rebuilt from it.
 
 - **`state.settings`**: duration, fps, aspect, export size, environment and lighting, render `style`, guides, depth range; also `tod` (time of day, 5 to 20 h, drives the sun), `shadows` and `shadowSoft`.
+  - `clouds {cover, look, drift, dir, soft, seed}` (`cover` 0 to 1, chips Clear/Few/Scattered/Mostly/Overcast via `nearestCover`). A file without `clouds` opens clear (cover 0); new scenes start Few. Presets set cover and look only. `cloudLight()` weakens the sun and softens shadows from the cover on the way to the renderer (`applyEnv`), so a clear sky gives back the stored light.
 - **`state.camera`**:
   - `base` pose `{p, tg, f, roll, fd}` (position, aim target, focal length in mm, dutch roll, focus distance).
   - `keys[]` with the same fields plus `t`.
@@ -82,6 +84,7 @@ Main sections of `main.js`, in file order:
 - **Keyframes:** `evalObj()` and `evalCam()` sample keys with `sampleField()` from `keys.js` (Hermite interpolation). Camera time passes through `camTime()` for the motion feel.
 - **Rendering:**
   - Three views: `editor` (perspective orbit), `top` (orthographic plan view) and `camera` (the shot).
+  - The sky is a world-anchored dome (`skyDome`, drawn at the far plane, rotation only), shown in the editor and in shaded shot renders. `withShotStyle()` and `draw` hide it in the top view, in clay, depth and normal styles and under the location photo (those keep the flat `skyTex` gradient, which is also the fog colour). Drift follows shot time (`applyAll` calls `skyDome.setTime`), so a frame always shows the same clouds. The depth of field pass tone-maps the dome like the old gradient. Studio has no sun glow (`glow` 0).
   - Shot renders always go through `withShotStyle()`. It hides helpers and marks, and applies the clay, depth or normal override, the location photo and the ground mode. `shotPass()` adds the depth-of-field post pass.
 - **People:**
   - `buildPerson()` makes a primitive mannequin.

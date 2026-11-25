@@ -54,6 +54,8 @@ The small **split view** button next to them shows the editor on the left and th
 
 **Light.** The **Scene** panel has presets (Studio, Day, Overcast, Sunset, Night) and a **Time of day** slider. Drag the yellow sun in the editor to turn the light and the shadows.
 
+**Sky and clouds.** The **Sky** section has cloud buttons from Clear to Overcast. Pick a **Look** (fluffy, wispy or a flat layer) and how fast the clouds **Drift** during the shot (or Still to freeze them). **Shuffle clouds** tries a different arrangement. Clouds also soften the sun, so more cloud means softer shadows, and the sky is named in the prompt. Advanced mode adds exact amount, edge softness and wind direction.
+
 **Location photo.** In **Frame**, open the **Photo** tab to put a photo behind your scene as a location. Useful when you want the AI to match a real place.
 
 ## 2. Frame the shot and move the camera
