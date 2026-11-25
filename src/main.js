@@ -2332,19 +2332,22 @@ function skySection(adv) {
   const s = state.settings, cl = () => cleanClouds(s.clouds), cover = nearestCover(cl().cover) !== 'clear'; /* 3% reads Clear everywhere: chip, wording, rows, prompt */
   const setC = (patch, c = true) => { s.clouds = cleanClouds({ ...cl(), ...patch }); applyEnv(); changed(c, c); if (c) { propsDirty = false; renderProps(); } }; /* rows come and go, so the panel is rebuilt now, not a frame later */
   const set = (k, v, c = true) => { s[k] = v; applyEnv(); changed(c); };
-  const chips = (list, cur, pick, swatch) => h('div', { class: 'chips grow' + (swatch ? ' cover' : '') }, list.map(([k, l]) =>
-    h('button', { class: (cur === k ? 'on' : '') + (swatch ? ' cc' : ''), onclick: () => pick(k) }, swatch ? h('i', { class: 'csw ' + k }) : null, l)));
-  const row = (label, kid) => h('div', { class: 'row chiprow' }, h('label', null, label), kid);
+  const seg = (label, list, cur, pick) => h('div', { class: 'segrow' }, h('label', null, label),
+    h('div', { class: 'seg' }, list.map(([k, l]) => h('button', { class: cur === k ? 'on' : '', onclick: () => pick(k) }, l))));
   const note = h('span', { class: 'note', style: 'margin:0' }), wording = () => putText(note, skyWording(cl(), s)); wording(); live.push(wording);
   const nearest = nearestCover(cl().cover);
+  const shuffleIcon = () => { const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none'); svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2'); svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round'); svg.setAttribute('aria-hidden', 'true');
+    for (const d of ['M3 7h3.5c2 0 3.2 1 4.5 3l2 4c1.3 2 2.5 3 4.5 3H21', 'M3 17h3.5c1.6 0 2.7-.6 3.7-1.8', 'M14 8.8c1-1.2 2.1-1.8 3.7-1.8H21', 'M18 4l3 3-3 3', 'M18 14l3 3-3 3']) { const path = document.createElementNS('http://www.w3.org/2000/svg', 'path'); path.setAttribute('d', d); svg.append(path); }
+    return svg; };
   return sec('Sky',
-    h('div', { class: 'lbl', style: 'width:auto;margin:2px 0 4px' }, 'Clouds'),
-    chips(COVER.map(e => [e[0], e[2]]), nearest, k => setC({ cover: COVER.find(e => e[0] === k)[1] }), true),
-    cover ? row('Look', chips(LOOKS, cl().look, k => setC({ look: k }))) : null,
-    cover ? row('Drift', chips(DRIFTS, cl().drift, k => setC({ drift: k }))) : null,
-    cover ? h('button', { class: 'wide', style: 'width:100%;margin-top:4px', title: 'Try a different arrangement of clouds', onclick: () => {
+    h('div', { class: 'lbl', style: 'width:auto;margin:2px 0 6px' }, 'Clouds'),
+    h('div', { class: 'skytiles' }, COVER.map(e => h('button', { class: nearest === e[0] ? 'on' : '', title: e[2], onclick: () => setC({ cover: e[1] }) }, h('i', { class: 'csw ' + e[0] }), h('span', null, e[2])))),
+    cover ? h('hr', { class: 'div', style: 'margin:0 0 8px' }) : null,
+    cover ? seg('Look', LOOKS, cl().look, k => setC({ look: k })) : null,
+    cover ? seg('Drift', DRIFTS, cl().drift, k => setC({ drift: k })) : null,
+    cover ? h('button', { class: 'shuffle', title: 'Try a different arrangement of clouds', onclick: () => {
       let n; do n = 1 + Math.floor(Math.random() * 9999); while (n === cl().seed); setC({ seed: n });
-    } }, 'Shuffle clouds') : null,
+    } }, shuffleIcon(), 'Shuffle clouds') : null,
     h('div', { class: 'row' }, note),
     adv ? slider('Amount', () => cl().cover, (v, c) => setC({ cover: v }, c), { min: 0, max: 1, step: 0.01, fmt: v => Math.round(v * 100) + '%' }) : null,
     adv && cover ? slider('Edges', () => cl().soft, (v, c) => setC({ soft: v }, c), { min: 0, max: 1, step: 0.01, fmt: v => v < 0.25 ? 'crisp' : v < 0.65 ? 'medium' : 'soft' }) : null,
