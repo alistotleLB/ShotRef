@@ -6223,8 +6223,8 @@ check('sky: hidden behind the location photo', async ({ open, fixtures }) => {
   await p.setInputFiles('#fPlate', path.join(fixtures, 'location.jpg'));
   await p.waitForFunction(() => window.__shotref.state.plate && window.__shotref.state.plate.asset);
   await p.waitForFunction(() => { const i = document.querySelector('.plateImg'); return i && i.getAttribute('src'); });
-  /* the top fifth (the end of the buffer, which reads from the bottom up) is pure photo; lower down, lit surfaces change with the light coupling */
-  const same = await p.evaluate(() => { const top = d => Array.from(d.slice(Math.floor(d.length * 0.8 / 4) * 4)); __shotref.setClouds({ cover: 0 }); const a = top(__shotref.shotPixels(1)); __shotref.setClouds({ cover: 1 }); const b = top(__shotref.shotPixels(1)); return a.every((v, i) => v === b[i]); });
+  /* same cover, so the same light: only the cloud look (and seed) differ, and the frame must not notice */
+  const same = await p.evaluate(() => { __shotref.setClouds({ cover: 1, look: 'fluffy', seed: 1 }); const a = Array.from(__shotref.shotPixels(1)); __shotref.setClouds({ look: 'wispy', seed: 2 }); const b = Array.from(__shotref.shotPixels(1)); return a.every((v, i) => v === b[i]); });
   if (!same) throw new Error('clouds showed over the location photo');
 });
 check('sky: clear gives back the stored light', async ({ open }) => {
