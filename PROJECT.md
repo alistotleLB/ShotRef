@@ -17,7 +17,9 @@ Known:   walking feet slide slightly at heel strike. claude.ai artifact 6uRy4QMB
 Built:   1.5.0 RELEASED 2026-11-24 (https://github.com/alistotleLB/ShotRef/releases/tag/v1.5.0): What's new box after an update (every version since the one you had) and ShotRef-styled
          desktop message boxes with no Windows alert sound (electron/popup.cjs). npm test 318/318, test:desktop 27/27.
 Built:   drag and drop from the Add panel (2026-11-25, NOT committed): press a tile, drag it onto the view, it lands under the pointer. npm test 322/322, test:desktop 28/28.
-Next:    Ali runs checklist C5 (update the installed app to 1.5.0). Also C4 (quick tour). Then: improve the hands-on tour (what Ali disliked: to ask), installable web app + website.
+UI:      refresh on branch ui/refresh (2026-11-25): darker surfaces + section cards, calm buttons, orange only for main action/camera/keys,
+         decluttered Sun/Export/Person panels, shorter labels. npm test 362/362, test:desktop 28/28. Not merged. Ali: checklist C6.
+Next:    Ali runs C6 (UI refresh), then decides phase 4. Also C5 (update the installed app to 1.5.0). Also C4 (quick tour). Then: improve the hands-on tour (what Ali disliked: to ask), installable web app + website.
 Not yet tried by Ali: the quick tour; everything since 2026-11-22.
 
 ## Ali's goals              (his exact words, dated; never reworded)
@@ -86,6 +88,7 @@ Storage: build output in `dist/` (git-ignored).
 - C2: Windows app 1.1.0. Superseded by C3 (never run).
 - C3: ShotRef 1.2.0 web + Windows. Steps in the Handoff section. Result: (waiting)
 - C5: What's new + ShotRef message boxes, 1.5.0 (after release). Steps in the Handoff section. Result: (waiting)
+- C6: UI refresh, branch ui/refresh (npm run build, open dist/ShotRef.html). Steps in the Handoff section. Result: (waiting)
 - C4: quick tour, ShotRef 1.4.0 (released). Steps in the Handoff section. Result: (waiting). Hands-on items dropped (tour switched off, N-012).
 
 ## Ali's notes               (every request/feedback, word for word)
@@ -108,6 +111,8 @@ Storage: build output in `dist/` (git-ignored).
 | N-014 | 2026-11-24 | "Yes, republish" (the claude.ai version, from 1.4.0) | done 2026-11-24 (same link, version 10) |
 | N-015 | 2026-11-24 | "1 - Add a what's new dialogue box when updating the app. 2 - Fix app popups so they follow the branding. And remove the sound that happens when they open. Use all the relevant skills that could improve the efficiency and qualty of the output. Use Project keeper if needed." | done 2026-11-24, released as 1.5.0 (guessed: "popups" = the desktop app's native Windows message boxes, which played the alert sound; the in-page dialogs were already branded. What's new is desktop-only. Settings from 1.4.0 or older can't tell which version they had, so they see every listed version from 1.3.0) |
 | N-016 | 2026-11-24 | "Make sure that the \"What's New\" includes all the cumulative changes since the user's current version." | done 2026-11-24 (lists every version after the one you had, newest first, scrolls when long; tested from 1.3.0) |
+| N-018 | 2026-11-25 | "Yes, phases 1–3" | done 2026-11-25 on branch ui/refresh (not merged, not released) |
+| N-017 | 2026-11-25 | "In this conversation we'll work on improving the UI and the menu panels. Use all relevant skills, as well as project keeper. Split tasks and orchestrate when needed. Use Sonnet 5.5 and Opus 5.5..." then "commit them, and start executin. The main painpoint is that the interface looks cluttered and intimidating. It's hard to find what I am looking for. There is too much wordiness and unnecesary clitter on some panels. And the colors/shades all seem too monotonous, so it's challenging to see where one section ends and the other begins." | phases 1-3 done 2026-11-25 (branch ui/refresh); phase 4 (structure) waits on Ali's choices |
 | N-007 | 2026-11-23 | "dont forget to orchestrate the tasks across Opus and Sonnet for maximum efficiency" | done (Sonnet built, Opus reviewed, medium effort) |
 
 ### Approved and locked     (changing these needs Ali's yes)
@@ -137,25 +142,20 @@ Not verified: the real claude.ai frame (downloads, clipboard), a normal non-head
 Proposed order: Step 0 backup + smoke test (needs OK) -> quick wins -> A1, then A2+S2 -> design/measure items -> optional tidy-ups.
 
 ## Handoff                   (replaced each session)
-STATE     1.5.0 released on GitHub (commit 044f9ce); latest.yml serves 1.5.0, so installed 1.3.0+ copies will offer it.
-CHANGED   electron/popup.cjs + popup.html + popup-page.js + popup-preload.cjs: ShotRef's own message box (small frameless window, logo mark,
-          orange viewfinder corners, orange main button on the right, Esc = cancel, boxes queue). Replaces every dialog.showMessageBox
-          (update flow, About, file-open errors), so no Windows alert sound. Native Save/Open file pickers unchanged.
-          electron/whats-new.json (notes for 1.3.0, 1.3.1, 1.4.0, 1.5.0) + main.cjs: settings.lastVersion; after a version goes up, one box lists
-          every version since the old one. Help menu: new "What's new" item. About now shows version + slogan. Version 1.5.0. CLAUDE.md, GUIDE updated.
-TESTS     npm test 318/318 (631 s); test:desktop 27/27 (4 new: branded About box not native; boxes queue and return the right button;
-          What's new from 1.3.0 lists 1.5.0/1.4.0/1.3.1 once and not again; old settings show all, fresh install none, Help shows this version).
-          Screenshots of What's new, update offer, warning and About boxes checked by Claude.
-OPEN      Not tested: a real update from installed 1.4.0 to 1.5.0 (C5). Packaged exe started with 1.4.0 settings wrote lastVersion 1.5.0 (What's new step ran); the box itself was not seen in the packaged exe (Playwright can't attach), only from source in tests.
-          claude.ai artifact still at 1.4.0 (web page unchanged in 1.5.0, so no need to republish). The web/claude.ai versions have no What's new (no update step there).
-FINDINGS  The only off-brand popups were the Windows native message boxes; in-page dialogs already used the ShotRef style (screenshot).
-          Playwright reports "page closed" when a key press closes the box: expected, the test tolerates it.
-NEXT      Ali runs C5 on the installed Windows app (updated from 1.4.0):
-          1. Start ShotRef after the update -> a dark ShotRef box "ShotRef is updated to 1.5.0." lists 1.5.0 and anything since your version. No ding.
-          2. Click Start working, close and reopen ShotRef -> the box does not come back.
-          3. Help -> What's new -> shows the 1.5.0 notes again.
-          4. Help -> About ShotRef -> ShotRef box with the version and slogan, no ding; Esc closes it.
-          5. Help -> Check for updates... -> "ShotRef is up to date" in the same style, no ding.
+STATE     UI refresh phases 1-3 done on branch ui/refresh (3 commits on top of c3a52ce). main still = 1.5.0 + sky work. Not merged, not released.
+CHANGED   See Log 2026-11-25. Audit material: scratchpad ui-audit/ (review-visual.md, review-ia.md, review-copy.md, shoot.cjs re-captures 78 screenshots).
+TESTS     npm test 362/362 (678 s), test:desktop 28/28, 0 Electron left. Final screenshots checked by Claude (camera shot tab, person panel).
+OPEN      Phase 4 needs Ali: camera tabs 5->3 (Frame, Move, Lens), one-click moves as 7 paired rows, one navigation system (steps vs Editor/Top/Camera),
+          motion feel off the timeline, outliner grouping, Take menu placement. Copy rows skipped: prompt labels, Help/About long text; cloud chip "Overcast" clashes with the Overcast scene preset.
+          Output tab still repeats Export's aspect/size/style (phase 4, I2). Scene preset chips wrap ("Night" alone on line 2).
+FINDINGS  Surfaces were 1.07-1.09:1 apart; headings were 11px muted under 13px content; 14 orange states on one screen. Tour dim colour follows --bg (test updated).
+NEXT      Ali runs C6 on the web page (npm run build, open dist/ShotRef.html in Chrome/Edge):
+          1. Look at the right panel -> each section is its own card with a clear white heading.
+          2. Select a person -> Pose, Move & face, Eyeline, Appearance, Placement; Attach folded; "Frame with camera..." button picks the camera framing that person.
+          3. Click the sun -> only sun controls (3 in normal mode); "Sky and clouds: Scene panel" goes back to the scene.
+          4. Step 3 Export -> a summary line (size, aspect, style) with Change, then Export video, Frame pack, Prompt.
+          5. Right-click a person -> Aim camera at this, Mount camera on this, Face camera all work.
+          6. Overall: does it still feel cluttered or intimidating anywhere? Name the panel.
           Reply with the numbers that didn't work, and what you saw.
 
 ## Log                       (append only, dated, real numbers; always last)
@@ -176,4 +176,6 @@ NEXT      Ali runs C5 on the installed Windows app (updated from 1.4.0):
 - 2026-11-24 1.5.0 built (N-015, N-016): ShotRef message boxes replace native ones (no alert sound), What's new lists every version since the user's. npm test 318/318 (631 s), test:desktop 27/27 (+4), 0 Electron left. Not committed, not released.
 - 2026-11-24 1.5.0 committed (044f9ce), pushed, installers built (setup 122 MB, portable 111 MB), released v1.5.0 (Ali: "Commit and release"). latest.yml on GitHub serves 1.5.0.
 - 2026-11-25 drag and drop from the Add panel (side session, not committed): people, floor mark, props, shapes and My sets drag onto the editor, top, camera view and both split halves; the tile's own click-to-place runs when the pointer reaches the floor, so the real item is the preview and the drop is the same one undo step. Esc or letting go off the view leaves nothing. A chip with the tile follows the pointer off the view. Clicks still place as before. 3 new smoke checks; npm test 322/322 (640 s), test:desktop 28/28, 0 Electron left. Reviewed by a Sonnet helper; fixed Esc reaching the tour, the swallowed-click timing, drops over labels drawn on the view. Design: side-session notes drag-drop-design.md.
+- 2026-11-25 UI audit (N-017): committed pending sky-panel work (c3a52ce); 78 screenshots (Sonnet); 3 reviews: visual (Opus, scratchpad ui-audit/review-visual.md), IA/clutter (Opus, review-ia.md), copy (Sonnet, review-copy.md, 89 rewrites). Key numbers: neighbouring surfaces 1.07-1.09:1 contrast; section headings 11px dimmer than their content; 14 orange states on one screen; ~15 settings duplicated in 2-3 places; person panel 12 sections. Colour preview (tokens, section cards, 13px headings, orange checkboxes) on branch ui/refresh, not committed. Proposal sent to Ali, awaiting approval.
 - 2026-11-25 sky and clouds built on branch feature/sky-clouds (cloud cover chips, looks, drift, shuffle, a world-anchored sky dome, clouds soften the sun, sky named in the prompt); fix wave applied after visual QA. Not merged, not released.
+- 2026-11-25 UI refresh phases 1-3 (N-018) on branch ui/refresh: 36da0ca (surfaces, cards, headings), a300f5a (button tiers, neutral .on, type scale 11.5/13/15, Add-panel cards, timeline clusters; Sun panel sun-only, simple sun = 3 controls, Getting started/Start from a set only on empty scene, Frame with camera… button replaces grid, Camera section removed, rare sections folded unless in use, Export format summary line, Items/Appearance renames, hint bar first 5 sessions, ground toggle only in Settings), abd3835 (~85 label rewrites, one name per thing, Opus review fixes x10, docs). Sonnet built, Opus reviewed. npm test 362/362 (678 s), test:desktop 28/28, 0 Electron left. Electron window/popup colours follow the new tokens. Not merged, not released.
