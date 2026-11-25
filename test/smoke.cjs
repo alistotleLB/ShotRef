@@ -80,7 +80,7 @@ async function main() {
       await ctx.addInitScript(DL_SCRIPT);
       if (!firstLaunch) await ctx.addInitScript(() => { try { localStorage.setItem('shotref.seenHelp', '1'); } catch (e) { } });
       /* the rare panel sections start folded; most checks work inside them, so they start open here unless a check asks for the real default */
-      if (!keepFolds) await ctx.addInitScript(() => { try { const p = JSON.parse(localStorage.getItem('shotref.prefs') || '{}'), c = p.closedSecs || {}; for (const k of ['Animation', 'Attach', 'Save as a reusable set', 'Mount']) if (!(k in c)) c[k] = false; p.closedSecs = c; localStorage.setItem('shotref.prefs', JSON.stringify(p)); } catch (e) { } });
+      if (!keepFolds) await ctx.addInitScript(() => { try { const p = JSON.parse(localStorage.getItem('shotref.prefs') || '{}'), c = p.closedSecs || {}; for (const k of ['Animation', 'Attach', 'Save as set', 'Mount']) if (!(k in c)) c[k] = false; p.closedSecs = c; localStorage.setItem('shotref.prefs', JSON.stringify(p)); } catch (e) { } });
       contexts.push(ctx);
       return ctx;
     };
@@ -993,7 +993,7 @@ check('first launch shows starter sets', async ({ freshContext }) => {
   ok(!(await isOpen(p, 'mConfirm')), 'asked to replace the scene on first launch');
   await p.waitForFunction(() => window.__shotref.state.objects.length > 3, null, { timeout: 3000 }).catch(() => { throw new Error('starter set did not load'); });
   await fileCmd(p, 'new');
-  await p.locator('#mStart button', { hasText: 'Quick start guide' }).click();
+  await p.locator('#mStart button', { hasText: 'Quick start' }).click();
   ok(await isOpen(p, 'mHelp'), 'Quick start guide button did not open the guide');
   ok(!(await isOpen(p, 'mStart')), 'starter sets still open behind the guide');
   await p.reload();
@@ -1826,7 +1826,7 @@ check('right-click on a person opens the page menu; Duplicate works; Esc closes'
   ok(await p.evaluate(() => window.__prevented) === true, 'the page must preventDefault the contextmenu event (so Electron shows no native menu)');
   const labels = await menuLabels(p);
   ok(labels, 'no menu opened');
-  for (const l of ['Draw walk path', 'Frame: Medium shot', 'Frame: Close-up', 'Face the camera', 'Keep camera on this', 'Focus the lens here', 'Duplicate', 'Hide', 'Delete'])
+  for (const l of ['Draw walk path', 'Frame: Medium shot', 'Frame: Close-up', 'Face camera', 'Aim camera at this', 'Pull focus here', 'Duplicate', 'Hide', 'Delete'])
     ok(labels.some(x => x.startsWith(l)), 'missing "' + l + '" in ' + JSON.stringify(labels));
   ok(await p.evaluate(() => window.__shotref.selected) === o.id, 'right-click should select the item');
   await p.keyboard.press('Escape');
@@ -1909,8 +1909,8 @@ check('camera menu: look through, set start, make static', async ({ open }) => {
   /* the tracks opened, so the view is shorter: find the camera again */
   const xy2 = await p.evaluate(q => window.__shotref.project(q[0], q[1], q[2]), cp);
   await rightClick(p, xy2[0], xy2[1]); await p.waitForTimeout(150);
-  await clickItem(p, 'Make static'); await p.waitForTimeout(400);
-  ok(await p.evaluate(() => window.__shotref.state.camera.keys.length) === 0, 'Make static should clear the keys');
+  await clickItem(p, 'Clear move'); await p.waitForTimeout(400);
+  ok(await p.evaluate(() => window.__shotref.state.camera.keys.length) === 0, 'Clear move should clear the keys');
   const xy3 = await p.evaluate(q => window.__shotref.project(q[0], q[1], q[2]), cp);
   await rightClick(p, xy3[0], xy3[1]); await p.waitForTimeout(150);
   await clickItem(p, 'Look through camera'); await p.waitForTimeout(200);
@@ -1970,13 +1970,13 @@ check('floor menu "Walk X here" makes the walk at once: keys, no path mode, no v
   noErrors(p);
 });
 
-check('menu "Focus the lens here" aims at the body like double-click does', async ({ open }) => {
+check('menu "Pull focus here" aims at the body like double-click does', async ({ open }) => {
   const p = await open();
   await p.waitForTimeout(500);
   await p.evaluate(() => window.__shotref.setView('camera')); await p.waitForTimeout(300);
   const o = await personXY(p);
   await rightClick(p, o.xy[0], o.xy[1]); await p.waitForTimeout(150);
-  await clickItem(p, 'Focus the lens here'); await p.waitForTimeout(250);
+  await clickItem(p, 'Pull focus here'); await p.waitForTimeout(250);
   const fdMenu = await p.evaluate(() => window.__shotref.state.camera.base.fd);
   const body = await p.evaluate(id => { const S = window.__shotref, a = S.state.objects.find(x => x.id === id), c = S.state.camera.base.p; return Math.hypot(a.base.p[0] - c[0], a.base.p[1] + 1 - c[1], a.base.p[2] - c[2]); }, o.id);
   const feet = await p.evaluate(id => { const S = window.__shotref, a = S.state.objects.find(x => x.id === id), c = S.state.camera.base.p; return Math.hypot(a.base.p[0] - c[0], a.base.p[1] - c[1], a.base.p[2] - c[2]); }, o.id);
@@ -2516,7 +2516,7 @@ check('a plain click on an item inside a multi-selection selects only it; draggi
   /* locked members and face-camera / drop-to-floor skip locked items */
   await p.evaluate(i => { const S = window.__shotref; S.state.objects.find(o => o.id === i).locked = true; S.changed(true, true); }, person);
   await p.waitForTimeout(250);
-  ok(await p.locator('#props button:has-text("People face camera")').count() === 0, 'People face camera is not offered when every person is locked');
+  ok(await p.locator('#props button:has-text("Face camera")').count() === 0, 'Face camera is not offered when every person is locked');
   noErrors(p);
 });
 
@@ -2624,7 +2624,7 @@ check('people: Eyeline panel, selection toolbar and right-click menu set where t
   const id = await idOfType(p, 'person'), xy = await starterXY(p);
   await p.mouse.click(...xy.person); await p.waitForTimeout(250);
   const opts = await p.evaluate(() => { const s = [...document.querySelectorAll('#props .sec')].find(x => x.querySelector('h3').textContent.replace(/\?$/, '') === 'Eyeline'); return s ? [...s.querySelectorAll('option')].map(o => o.textContent) : null; });
-  ok(opts && opts[0].startsWith('Ahead') && opts[1] === 'The camera' && opts.length >= 3, 'Eyeline options: ' + JSON.stringify(opts));
+  ok(opts && opts[0].startsWith('Ahead') && opts[1] === 'Camera' && opts.length >= 3, 'Eyeline options: ' + JSON.stringify(opts));
   await p.selectOption('#props .sec:has(h3:text-matches("^Eyeline[?]?$")) select', 'camera');
   ok((await objOf(p, id)).opts.lookAt === 'camera', 'the panel sets look-at the camera');
   await p.waitForTimeout(200);
@@ -2776,7 +2776,7 @@ check('people: Face the camera turns them and stops the path steering them (menu
   await p.waitForTimeout(300);
   const xy = await starterXY(p);
   await p.mouse.click(...xy.person, { button: 'right' }); await p.waitForTimeout(200);
-  await clickItem(p, 'Face the camera'); await p.waitForTimeout(200);
+  await clickItem(p, 'Face camera'); await p.waitForTimeout(200);
   const o = await objOf(p, id);
   ok(Math.abs(o.base.r[1] - 90) < 1 && o.opts.faceTravel === false, 'faces +x, travel-steering off: ' + JSON.stringify([o.base.r, o.opts.faceTravel]));
   const r = await rigOf(p, id);
@@ -3063,8 +3063,8 @@ check('mount: the Camera panel has Mount on; the object menu can mount the camer
   const xy = await proj3(p, 0, 0.9, 0);
   await rightClick(p, ...xy); await settle(p, 200);
   const labels = await menuLabels(p);
-  ok(labels && labels.some(l => /^Mount the camera on this/.test(l)), 'menu: ' + JSON.stringify(labels));
-  await clickItem(p, 'Mount the camera on this'); await settle(p, 200);
+  ok(labels && labels.some(l => /^Mount camera on this/.test(l)), 'menu: ' + JSON.stringify(labels));
+  await clickItem(p, 'Mount camera on this'); await settle(p, 200);
   ok((await stateOf(p)).camera.mount === car, 'mounted from the menu');
   noErrors(p);
 });
@@ -3392,7 +3392,7 @@ check('camera panel: tabs Shot, Move, Lens, Photo, Output; the choice is remembe
   noErrors(p);
 });
 
-check('move card: names the move, shows Start and End thumbnails as data: URLs, jump to each frame, Set start / Set end, Play, Make static', async ({ open }) => {
+check('move card: names the move, shows Start and End thumbnails as data: URLs, jump to each frame, Set start / Set end, Play, Clear move', async ({ open }) => {
   const p = await open(); await settle(p, 300);
   await personShot(p, { keys: [KEY(0, [0, 1.4, 6], [0, 1.2, 0], 50), KEY(5, [0, 1.4, 3], [0, 1.2, 0], 50)] });
   await p.evaluate(() => { const S = window.__shotref; S.setView('editor'); S.select('camera'); }); await settle(p, 500);
@@ -3410,11 +3410,11 @@ check('move card: names the move, shows Start and End thumbnails as data: URLs, 
   await p.evaluate(() => { const S = window.__shotref; S.state.camera.keys[0].p = [3, 2.5, 7]; S.changed(true, true); }); await settle(p, 500);
   ok(await p.evaluate(() => document.querySelector('#props .mthumb img').src) !== before, 'the Start thumbnail follows an edit to the first key');
   await shot(p, 'f-move-card.png');
-  await p.click('#props .movecard button:has-text("Play the move")'); await settle(p, 300);
-  ok(await p.evaluate(() => document.querySelector('#bPlay').classList.contains('on')), 'Play the move plays');
+  await p.click('#props .movecard button:has-text("Play")'); await settle(p, 300);
+  ok(await p.evaluate(() => document.querySelector('#bPlay').classList.contains('on')), 'Play plays');
   await p.keyboard.press('Space'); await settle(p, 200);
-  await p.click('#props .movecard button:has-text("Make static")'); await settle(p, 300);
-  ok(await p.evaluate(() => window.__shotref.state.camera.keys.length) === 0, 'Make static clears the keys');
+  await p.click('#props .movecard button:has-text("Clear move")'); await settle(p, 300);
+  ok(await p.evaluate(() => window.__shotref.state.camera.keys.length) === 0, 'Clear move clears the keys');
   ok(await p.textContent('#props .mc-title') === 'Static camera', 'and the card says Static camera');
   noErrors(p);
 });
@@ -3968,9 +3968,9 @@ check('Export step opens the Export panel (not a window) with output, this shot,
   ok(await p.evaluate(() => window.__shotref.view) === 'camera', 'the Export step shows the camera view');
   ok(await p.evaluate(() => document.querySelector('#stepSeg .on').dataset.step) === 'export', 'step pill');
   const heads = await p.evaluate(() => [...document.querySelectorAll('#props .sec > h3')].map(x => x.textContent.replace(/\?$/, '')));
-  for (const w of ['Export', 'Render video', 'Frame pack', 'Prompt for the AI model']) ok(heads.includes(w), 'no "' + w + '" section: ' + heads.join());
+  for (const w of ['Export', 'Export video', 'Frame pack', 'Prompt for the AI model']) ok(heads.includes(w), 'no "' + w + '" section: ' + heads.join());
   const btns = await p.evaluate(() => [...document.querySelectorAll('#props button')].map(b => b.textContent.trim()));
-  for (const w of ['Render video (MP4)', 'Frame pack (zip)', 'Current frame (PNG)', 'Copy frame', 'Video options…', 'Copy prompt', 'Rewrite from scene']) ok(btns.includes(w), 'no "' + w + '" button: ' + btns.join(' | '));
+  for (const w of ['Export video (MP4)', 'Frame pack (zip)', 'Current frame (PNG)', 'Copy frame', 'Video options…', 'Copy prompt', 'Rewrite from scene']) ok(btns.includes(w), 'no "' + w + '" button: ' + btns.join(' | '));
   ok(!btns.some(b => /^Every shot/.test(b)) && !heads.includes('All shots'), 'Every shot offered with one shot');
   await p.click('#xoChange'); await settle(p, 100); /* the format settings are folded behind the summary line */
   ok((await p.evaluate(() => document.querySelectorAll('#props .stylechips button').length)) === 4, 'four render style chips');
@@ -4205,7 +4205,7 @@ check('takes: a Take button sits between the project name and File, and says Tak
   ok(await takeBtnText(p) === 'Take 1', 'label: ' + await takeBtnText(p));
   await p.click('#bTake');
   const items = await p.evaluate(() => [...document.querySelectorAll('#ctxMenu button')].map(b => ({ c: b.dataset.cmd || '', t: b.textContent.trim(), d: b.disabled })));
-  ok(items.some(i => /^New take/.test(i.t)) && items.some(i => /^Rename this take/.test(i.t)) && items.some(i => /^Compare takes/.test(i.t) && i.d) && items.some(i => /^Delete this take/.test(i.t) && i.d) && items.some(i => /^Duplicate this take/.test(i.t)), JSON.stringify(items));
+  ok(items.some(i => /^New take/.test(i.t)) && items.some(i => /^Rename take/.test(i.t)) && items.some(i => /^Compare takes/.test(i.t) && i.d) && items.some(i => /^Delete take/.test(i.t) && i.d) && items.some(i => /^Duplicate take/.test(i.t)), JSON.stringify(items));
   ok(await p.evaluate(() => !window.__shotref.state.takes), 'just opening the menu changed the project');
   noErrors(p);
 });
@@ -4497,7 +4497,7 @@ check('settings: every preference has a control, and the old placeholder text is
   const heads = await p.evaluate(() => [...document.querySelectorAll('#setBody h3')].map(e => e.textContent.trim()));
   for (const h of ['New scenes', 'Blocking', 'Export', 'Viewport', 'Mouse & keys', 'Saving']) ok(heads.includes(h), 'missing section ' + h + ': ' + heads.join('|'));
   ok(!/nothing to set yet/i.test(await p.textContent('#mSettings')), 'placeholder text still shown');
-  ok(await p.isVisible('#setBody button:has-text("Reset all settings")') && await p.isVisible('#setBody button:has-text("Clear recent projects")') && await p.isVisible('#setBody button:has-text("Show quick start")'), 'buttons missing');
+  ok(await p.isVisible('#setBody button:has-text("Reset all settings")') && await p.isVisible('#setBody button:has-text("Clear recent projects")') && await p.isVisible('#setBody button:has-text("Open quick start")'), 'buttons missing');
   noErrors(p);
 });
 check('settings: "Keep things on the ground" lives in Settings only, not in the gear menu', async ({ open }) => {
@@ -4703,7 +4703,7 @@ check('my sets: save the selection, see it in the Add tab, place it as a group, 
   await p.evaluate(() => { const S = window.__shotref; S.selectMany(S.state.objects.slice(0, 2).map(o => o.id)); });
   await settle(p, 200);
   await p.evaluate(() => window.__shotref.setSimple(false)); await settle(p, 200);
-  ok(await p.isVisible('.setsave'), 'no "Save as a reusable set" section for a selection');
+  ok(await p.isVisible('.setsave'), 'no "Save as set" section for a selection');
   const before = await p.evaluate(() => JSON.stringify(window.__shotref.state)), hist0 = await p.evaluate(() => window.__shotref.history.length);
   await saveSetFrom(p, 'Corner');
   const lib = await libOf(p);
@@ -6448,13 +6448,13 @@ check('declutter: Frame with camera selects the camera with that person picked',
   const ids = await p.evaluate(() => { const S = __shotref; while (S.state.objects.filter(o => o.type === 'person').length < 2) S.addObject('person'); return S.state.objects.filter(o => o.type === 'person').map(o => o.id); });
   ok(ids.length === 2, 'need two people');
   await p.evaluate(id => { __shotref.select(id); }, ids[0]); await settle(p, 300);
-  ok(!(await p.innerText('#props')).includes('Keep camera on this'), 'the Camera section is back');
+  ok(!(await p.innerText('#props')).includes('Aim camera at this'), 'the Camera section is back');
   await p.evaluate(id => { __shotref.select(id); }, ids[1]); await settle(p, 300);
   await p.click('#props [data-role="frame-cam"]'); await settle(p, 300);
   ok(await p.evaluate(() => __shotref.selected) === 'camera', 'camera not selected');
   const v = await p.evaluate(() => { const s = [...document.querySelectorAll('#props select')].find(x => [...x.options].some(o => o.text.includes('Person'))); return s && s.value; });
   ok(v === ids[1], 'the person was not picked: ' + v);
-  ok((await p.innerText('#props')).includes('Frame a person'), 'Shot tab not open');
+  ok((await p.innerText('#props')).includes('Shot size'), 'Shot tab not open');
 });
 check('declutter: the Export panel folds the format behind a summary line and hides All shots with one shot', async ({ open }) => {
   const p = await open();
@@ -6464,7 +6464,7 @@ check('declutter: the Export panel folds the format behind a summary line and hi
   ok(!(await p.isVisible('#xoFormat')), 'format settings not folded');
   ok(!(await p.innerText('#props')).includes('All shots'), 'All shots shown with one shot');
   const order = await p.evaluate(() => [...document.querySelectorAll('#props .sec h3')].map(h => h.textContent.replace('?', '').trim()));
-  ok(order.indexOf('Render video') < order.indexOf('Frame pack') && order.indexOf('Frame pack') < order.findIndex(x => x.startsWith('Prompt')), 'order: ' + order);
+  ok(order.indexOf('Export video') < order.indexOf('Frame pack') && order.indexOf('Frame pack') < order.findIndex(x => x.startsWith('Prompt')), 'order: ' + order);
   await p.click('#xoChange'); await settle(p, 150);
   ok(await p.isVisible('#xoFormat'), 'Change did not open the format settings');
 });
@@ -6490,4 +6490,34 @@ check('declutter: Animation starts folded, opening it is remembered', async ({ f
   ok(!(await closed()), 'did not open');
   await p.evaluate(() => { __shotref.select(null); __shotref.select(__shotref.state.objects[0].id); }); await settle(p, 300);
   ok(!(await closed()), 'the choice to open it was not remembered');
+});
+check('declutter: Mount and Attach start folded, but stay open when in use; Save as a set is there in Simple', async ({ freshContext }) => {
+  const fc = await freshContext({ keepFolds: true });
+  const p = await fc.open(); await settle(p, 300);
+  await p.evaluate(() => __shotref.setSimple(true));
+  const folded = (name) => p.evaluate(n => { const s = [...document.querySelectorAll('#props .sec')].find(x => x.querySelector('h3').textContent.replace('?', '').trim() === n); return s ? s.classList.contains('closed') : null; }, name);
+  const objs = await p.evaluate(() => { const S = __shotref; const a = S.addObject('box'), b = S.addObject('ball'); return S.state.objects.slice(-2).map(o => o.id); });
+  await p.evaluate(i => __shotref.select(i), objs[0]); await settle(p, 300);
+  ok(await folded('Attach') === true, 'Attach not folded by default (and present in Simple)');
+  ok(await folded('Save as set') === true, 'Save as set missing or open in Simple');
+  await p.evaluate(([a, b]) => { const S = __shotref; S.attachTo(S.state.objects.find(o => o.id === a), b); }, objs).catch(() => { });
+  await p.evaluate(i => { const S = __shotref; S.state.objects.find(o => o.id === i).parent = S.state.objects[0].id; S.select(null); S.select(i); }, objs[0]); await settle(p, 300);
+  ok(await folded('Attach') === false, 'Attach folded although it is in use');
+  await p.evaluate(() => { __shotref.setPref('camTab', 'shot'); __shotref.select('camera'); }); await settle(p, 300);
+  ok(await folded('Mount') === true, 'Mount not folded by default');
+  await p.evaluate(i => { __shotref.state.camera.mount = i; __shotref.select(null); __shotref.select('camera'); }, objs[1]); await settle(p, 300);
+  ok(await folded('Mount') === false, 'Mount folded although the camera is mounted');
+});
+check('declutter: a stale folded Export section reopens (the first heading never folds)', async ({ freshContext }) => {
+  const fc = await freshContext();
+  await fc.ctx.addInitScript(() => { try { localStorage.setItem('shotref.prefs', JSON.stringify({ closedSecs: { Export: true } })); } catch (e) { } });
+  const p = await fc.open(); await settle(p, 300);
+  await p.evaluate(() => __shotref.select('export')); await settle(p, 300);
+  ok(await p.isVisible('#xoChange'), 'Change toggle hidden by a stale fold');
+});
+check('declutter: the Sun panel link to the Scene panel works from the Camera view', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => { __shotref.select('sun'); __shotref.setView('camera'); }); await settle(p, 300);
+  await p.click('#props [data-role="to-scene"]'); await settle(p, 300);
+  ok(await p.evaluate(() => __shotref.view) !== 'camera' && (await p.innerText('#props')).includes('Sky'), 'did not reach the Scene panel');
 });

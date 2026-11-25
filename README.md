@@ -61,7 +61,7 @@ It was made by a TV producer and videographer, for people who think in shots, no
     <td width="50%"><img src="docs/img/02-build-the-scene.png" alt="Build step: a living room with two people, with the camera view in the corner"><br><sub><b>1 · Build.</b> Drag people and props around. The camera view stays in the corner.</sub></td>
   </tr>
   <tr>
-    <td width="50%"><img src="docs/img/03-frame-the-camera-move.png" alt="Frame step: one-click camera moves and keyframes on the timeline"><br><sub><b>2 · Frame.</b> Set a start and an end, or pick a one-click move.</sub></td>
+    <td width="50%"><img src="docs/img/03-frame-the-camera-move.png" alt="Frame step: one-click camera moves and keys on the timeline"><br><sub><b>2 · Frame.</b> Set a start and an end, or pick a one-click move.</sub></td>
     <td width="50%"><img src="docs/img/04-export-and-prompt.png" alt="Export step with an auto-written prompt"><br><sub><b>3 · Export.</b> MP4, frames, and a prompt written from your scene.</sub></td>
   </tr>
   <tr>
@@ -91,14 +91,14 @@ ShotRef never connects to the internet. Your scenes, photos and models stay on y
 3. **Move people.** Select a person, press **Draw walk path** and click points on the floor. Drag them onto a chair to sit them down.
 4. **Frame the shot.** Press `C` for camera view. Drag to orbit, scroll to dolly, `W A S D Q E` to fly.
 5. **Make the move.** Press **Set start**, reframe, then **Set end**. Or pick a one-click move such as **Orbit right** or **Dolly in**.
-6. **Export.** Press `3`. Render the MP4, grab the frame pack, and copy the prompt.
+6. **Export.** Press `3`. Export the video (MP4), grab the frame pack, and copy the prompt.
 
 The full walkthrough, shortcuts and tips are in the **[user guide](docs/GUIDE.md)**.
 
 ## Using it with AI video tools
 
 - **Image-to-video** (Kling, Runway, Veo, Higgsfield and similar): export the **frame pack**. Use the start frame as the first frame, and paste the prompt ShotRef wrote.
-- **Video-to-video and motion references:** render the **MP4** and upload it as the reference clip.
+- **Video-to-video and motion references:** export the **MP4** and upload it as the reference clip.
 - **Depth-guided workflows:** switch the render style to **Depth** or **Normals** before exporting.
 - Every tool has its own limits on length, size and features. Check yours, then match the **Aspect** and **Length** in ShotRef's Export step.
 

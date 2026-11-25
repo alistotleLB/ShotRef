@@ -1,6 +1,6 @@
 # ShotRef: notes for Claude Code
 
-ShotRef is a "very dumbed-down Blender" for **blocking and camera moves only**. It makes reference animations for AI video generation (Kling, Runway, Veo, Higgsfield…). The owner is a TV producer and videographer, not a 3D artist. Keep the UI simple, plain-spoken and visual. When a feature sits between "powerful" and "easy", choose easy. Put power-user detail behind the **Advanced** mode switch (`simple` flag, in the gear menu as "Advanced controls").
+ShotRef is a "very dumbed-down Blender" for **blocking and camera moves only**. It makes reference animations for AI video generation (Kling, Runway, Veo, Higgsfield…). The owner is a TV producer and videographer, not a 3D artist. Keep the UI simple, plain-spoken and visual. When a feature sits between "powerful" and "easy", choose easy. Put power-user detail behind the **Advanced** mode switch (`simple` flag, in the gear menu as "Advanced mode").
 
 ## Build and run
 

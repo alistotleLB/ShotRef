@@ -125,6 +125,7 @@ button.icon svg,.ib svg{width:17px;height:17px;stroke:currentColor;fill:none;str
 .nf-l.x{color:#ff7b7b}.nf-l.y{color:#7ddc7d}.nf-l.z{color:#76a8ff}
 .nf input{border:0;background:transparent;width:100%;padding:3px 4px;text-align:right;font-variant-numeric:tabular-nums}
 .nf input:focus{outline:none;background:var(--field)}
+.nf:focus-within{border-color:var(--acc)}
 .chips{display:flex;flex-wrap:wrap;gap:2px;background:var(--field);border-radius:8px;padding:2px}
 .chips button{padding:4px 7px;font-size:13px;background:transparent;color:var(--ink2)}
 .chips button:hover{background:var(--ctlh);color:var(--ink)}
@@ -152,6 +153,7 @@ hr.div{border:0;border-top:1px solid var(--line);margin:8px 0 4px}
 .posegrid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
 .posegrid button{padding:6px 2px;font-size:13px}
 .posegrid button i{display:block;font-style:normal;font-size:11.5px;color:var(--mute)}
+.posegrid button.on i{color:var(--acc2)}
 .movegrid{display:grid;grid-template-columns:1fr 1fr;gap:4px}
 .movegrid button{text-align:left;padding:5px 7px;font-size:13px;display:flex;gap:6px;align-items:center}
 .movegrid button b{color:var(--acc2);font-weight:600;width:14px;text-align:center}
@@ -448,7 +450,7 @@ button.icon.on{background:var(--sel);color:var(--ink)}
       <button data-step="frame" title="Frame the shot and set the camera move (2)"><b>2</b>Frame</button>
       <button id="bExport" data-step="export" title="Video, frames and images to export (3)"><b>3</b>Export</button>
     </div>
-    <div class="topR"><button id="bMenu" class="icon" aria-haspopup="menu" aria-label="Settings and help" title="Settings, Advanced controls and help"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg></button></div>
+    <div class="topR"><button id="bMenu" class="icon" aria-haspopup="menu" aria-label="Settings and help" title="Settings, Advanced mode and help"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg></button></div>
   </header>
 
   <aside id="left">
@@ -510,15 +512,15 @@ button.icon.on{background:var(--sel);color:var(--ink)}
       <div class="tlc">
       <div class="tp">
         <button id="bStart" title="Go to start (Home)">⏮</button>
-        <button id="bPrevKey" title="Previous keyframe">◆◀</button>
+        <button id="bPrevKey" title="Previous key">◆◀</button>
         <button id="bPlay" title="Play / pause (Space)">▶</button>
-        <button id="bNextKey" title="Next keyframe">▶◆</button>
+        <button id="bNextKey" title="Next key">▶◆</button>
         <button id="bEnd" title="Go to end (End)">⏭</button>
       </div>
       <div id="tcode">00:00.00</div>
       <div id="tframe" class="adv">frame 1</div>
-      <button id="bKey" title="Add a keyframe for the selected item at the playhead (K)">◆ Key</button>
-      <button id="bUnkey" class="adv quiet" title="Remove the selected item's keyframe at the playhead">◇ Remove key</button>
+      <button id="bKey" title="Add a key for the selected item at the playhead (K)">◆ Key</button>
+      <button id="bUnkey" class="adv quiet" title="Remove the selected item's key at the playhead">◇ Remove key</button>
       </div>
       <div class="spacer"></div>
       <div class="tlc">
@@ -558,9 +560,9 @@ button.icon.on{background:var(--sel);color:var(--ink)}
   <div class="lbl" style="margin-top:10px;width:auto">Render style</div>
   <div class="styles" id="exStyles"></div>
   <div class="row" id="exDepthRow"></div>
-  <label class="row" style="gap:8px"><input type="checkbox" id="exGrid"> Show the grid on the floor in the export</label>
+  <label class="row" style="gap:8px"><input type="checkbox" id="exGrid"> Grid in export</label>
   <div class="exacts">
-    <button id="exVideo" class="primary">Render video (MP4)</button>
+    <button id="exVideo" class="primary">Export video (MP4)</button>
     <button id="exFrame">Current frame (PNG)</button>
     <button id="exEnds" title="Start, middle and end frames plus the prompt, in one zip">Frame pack (zip)</button>
     <button id="exCopy" style="grid-column:span 2">Copy current frame to clipboard</button>
@@ -588,7 +590,7 @@ button.icon.on{background:var(--sel);color:var(--ink)}
     <div class="cmpgrid"><figure><img id="cmpImgA" alt="Left take"><figcaption id="cmpLA"></figcaption></figure><figure><img id="cmpImgB" alt="Right take"><figcaption id="cmpLB"></figcaption></figure></div>
     <div class="row" style="gap:8px;margin-top:8px"><button id="cmpPlay" aria-label="Play or pause">❚❚</button><input id="cmpScrub" type="range" min="0" max="1" step="0.001" class="grow" aria-label="Position in the shot"><button id="cmpUseB" title="Switch the scene to the right-hand take">Use right take</button></div>
   </div>
-  <p class="note">Each take plays its current shot from the same camera timing, side by side, so you can pick the better version.</p>
+  <p class="note">Plays each take side by side.</p>
 </div></div>
 
 <div id="mSheet" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mSheetT"><div class="dlg" style="width:min(900px,96vw)">
@@ -637,7 +639,7 @@ button.icon.on{background:var(--sel);color:var(--ink)}
     <div><span class="kbd">P</span> · <span class="kbd">Ctrl C</span></div><div>Save current frame as PNG · copy it to the clipboard</div>
     <div>Timeline</div><div>Click or drag to scrub · drag a ◆ (or a blue pose tag) to retime it · right-click it to delete it</div>
   </div>
-  <p class="note">Your work is autosaved in this browser. Use <b>Save</b> to keep a project file you can reopen anywhere.</p>
+  <p class="note">Autosaved in this browser. Use <b>Save</b> for a file you can reopen anywhere.</p>
   </div>
 </div></div>
 
@@ -652,15 +654,15 @@ button.icon.on{background:var(--sel);color:var(--ink)}
   <button class="x" data-close aria-label="Close">×</button>
   <div class="starthead" id="startHead" style="display:none"><svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M5 12V5h7M20 27h7v-7" fill="none" stroke="#E7E9EC" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 23C13 15 19 22 24 9" fill="none" stroke="#FF9A3C" stroke-width="2.4" stroke-linecap="round"/><circle cx="8" cy="23" r="2.4" fill="#FF9A3C"/><circle cx="24" cy="9" r="2.4" fill="#FF9A3C"/></svg><div><b>Shot<span>Ref</span></b><small>Block the shot. Move the camera. Guide the AI.</small></div></div>
   <h2 id="mStartT">Starter sets</h2>
-  <p class="note" style="font-size:13px" id="mStartP">Pick a ready-made layout. Everything in it can be moved, changed or deleted.</p>
+  <p class="note" style="font-size:13px" id="mStartP">Pick a ready-made layout.</p>
   <div class="startgrid" id="startGrid"></div>
-  <div class="btns" style="margin-top:12px;justify-content:space-between;align-items:center"><span class="note" style="margin:0">New to ShotRef? The guide shows the basics in six steps.</span><button id="stHelp" style="flex:none">Quick start guide</button></div>
+  <div class="btns" style="margin-top:12px;justify-content:space-between;align-items:center"><span class="note" style="margin:0">New here?</span><button id="stHelp" style="flex:none">Quick start</button></div>
 </div></div>
 
 <div id="mSettings" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mSettingsT"><div class="dlg" style="width:min(860px,96vw);max-height:92vh;overflow:auto">
   <button class="x" data-close aria-label="Close">×</button>
   <h2 id="mSettingsT">Settings</h2>
-  <p class="note" style="margin-top:2px">Saved in this browser and used for every project.</p>
+  <p class="note" style="margin-top:2px">Saved in this browser.</p>
   <div id="setBody"></div>
 </div></div>
 

@@ -133,7 +133,7 @@ async function saveFile(filename, blob) {
 /* ============================== constants ============================== */
 const ASPECTS = [['16:9', 16 / 9, '16:9 widescreen'], ['9:16', 9 / 16, '9:16 vertical'], ['1:1', 1, '1:1 square'], ['4:5', 0.8, '4:5 portrait'], ['4:3', 4 / 3, '4:3'], ['2.39:1', 2.39, '2.39:1 cinemascope'], ['21:9', 21 / 9, '21:9 ultrawide']];
 const arOf = k => (ASPECTS.find(a => a[0] === k) || ASPECTS[0])[1];
-const SIZES = [[1280, '1280 px long side (720p)'], [1920, '1920 px long side (1080p)'], [2560, '2560 px long side (1440p)'], [3840, '3840 px long side (4K)']];
+const SIZES = [[1280, '720p (1280 px)'], [1920, '1080p (1920 px)'], [2560, '1440p (2560 px)'], [3840, '4K (3840 px)']];
 const STYLES = [
   ['shaded', 'Shaded', 'Colours, light and shadows', 'linear-gradient(135deg,#9fc3ea,#c98e6b 60%,#3d6fd8)'],
   ['clay', 'Clay', 'All grey: shape and light only', 'linear-gradient(135deg,#eee,#9a9a9a)'],
@@ -1550,7 +1550,7 @@ function selBarButtons(list) {
         if (s) sitPerson(q, freeSeat(s.o, q)); else toast('No seat within ' + SIT_REACH + ' m of ' + o.name + '. Move them closer, or right-click a seat and choose Sit here.', 4000);
       }));
     }
-    else if (o.type !== 'mark') out.push(btn('path', o.type === 'car' ? 'Draw drive path' : 'Draw path', () => startPath(o.id)), btn('target', 'Keep the camera on this', () => keepCameraOn(o)));
+    else if (o.type !== 'mark') out.push(btn('path', o.type === 'car' ? 'Draw drive path' : 'Draw path', () => startPath(o.id)), btn('target', 'Aim camera at this', () => keepCameraOn(o)));
     out.push(sep());
   }
   out.push(btn('dup', 'Duplicate (Ctrl D)', duplicateSel), btn(locked ? 'unlock' : 'lock', locked ? 'Unlock (Ctrl L)' : 'Lock: stop accidental moves (Ctrl L)', () => { const l = selObjs(); lockObjs(l, !l.every(o => o.locked)); }, locked ? 'on' : ''), btn('trash', 'Delete (Del)', deleteSel, 'danger'));
@@ -1904,7 +1904,7 @@ const MOVES = [
   ['static', '■', 'Static'], ['dollyIn', '↑', 'Dolly in'], ['dollyOut', '↓', 'Dolly out'], ['orbitL', '↺', 'Orbit left'], ['orbitR', '↻', 'Orbit right'],
   ['truckL', '←', 'Truck left'], ['truckR', '→', 'Truck right'], ['craneUp', '⤒', 'Crane up'], ['craneDown', '⤓', 'Crane down'],
   ['panL', '⟲', 'Pan left'], ['panR', '⟳', 'Pan right'], ['tiltUp', '⌃', 'Tilt up'], ['tiltDown', '⌄', 'Tilt down'],
-  ['zoomIn', '⊕', 'Zoom in'], ['dollyZoom', '◎', 'Dolly zoom'], ['arcPush', '↗', 'Arc + push'], ['droneRise', '✈', 'Drone rise'], ['reveal', '◐', 'Reveal (pull back)'],
+  ['zoomIn', '⊕', 'Zoom in'], ['dollyZoom', '◎', 'Dolly zoom'], ['arcPush', '↗', 'Arc + push'], ['droneRise', '✈', 'Drone rise'], ['reveal', '◐', 'Reveal'],
 ];
 let moveAmt = 1;
 function applyMove(kind) {
@@ -2029,7 +2029,7 @@ function renderOutliner() {
     h('span', { html: icon }), h('span', { class: 'nm' }, name),
     o && o.grp ? h('span', { class: 'gtag', title: 'In ' + groupName(o.grp) }, groupName(o.grp)) : null,
     o && parentOf(o) ? h('span', { class: 'ptag', title: 'Rides with ' + parentOf(o).name }, '↳ ' + parentOf(o).name) : null,
-    nk ? h('span', { class: 'kd', title: nk + ' keyframes' }, '◆' + nk) : null,
+    nk ? h('span', { class: 'kd', title: nk + (nk === 1 ? ' key' : ' keys') }, '◆' + nk) : null,
     o ? h('button', { class: 'eye lockb' + (o.locked ? ' on' : ''), title: o.locked ? 'Locked: click to unlock' : 'Lock (stops it being moved by accident)', 'aria-label': o.locked ? 'Unlock ' + name : 'Lock ' + name, html: svgI(o.locked ? 'lock' : 'unlock'), onclick: e => { e.stopPropagation(); lockObjs([o], !o.locked); } }) : null,
     onEye ? h('button', { class: 'eye', title: hidden ? 'Show' : 'Hide', onclick: e => { e.stopPropagation(); onEye(); } }, hidden ? '◌' : '●') : null);
   el.append(row('camera', svgI('camera'), 'Shot camera', state.camera.keys.length));
@@ -2177,18 +2177,20 @@ function keySection(kind) {
   const keys = kind === 'camera' ? state.camera.keys : getObj(kind).keys;
   const here = keyIndexAt(keys, T) >= 0;
   const line = h('div', { class: 'keyline' }, h('span', { class: 'kdia' }, here ? '◆' : '◇'),
-    keys.length ? `${keys.length} keyframe${keys.length > 1 ? 's' : ''}` + (here ? ' · one at the playhead' : '') : 'Not animated');
-  return sec('Animation', line,
+    keys.length ? `${keys.length} key${keys.length > 1 ? 's' : ''}` + (here ? ' · one here' : '') : 'No keys');
+  const asec = sec('Animation', line,
     h('div', { class: 'btns' },
-      h('button', { onclick: addKeySel, title: 'K' }, '◆ Add key here'),
+      h('button', { onclick: addKeySel, title: 'K' }, '◆ Add key'),
       h('button', { class: 'quiet', onclick: removeKeySel, disabled: !here }, 'Remove key'),
       h('button', { class: 'quiet', onclick: () => { if (kind === 'camera') { state.camera.base = clone(evalCamRaw(T)); state.camera.keys = []; } else { const o = getObj(kind); o.base = clone(evalLocal(o, T)); o.keys = []; } changed(true, true); toast('Animation cleared'); }, disabled: !keys.length }, 'Clear')),
     h('p', { class: 'note' }, keys.length ? 'Move the playhead, then change anything. A key is added for you at that time.' : 'Press ◆ Add key to start animating. Then move the playhead and change position. A second key is added for you.'));
+  if (keys.length) asec.dataset.inuse = '1';
+  return asec;
 }
 
 /* the right panel's sections: explanatory notes fold into a "?" on the heading, and clicking a heading folds the section (remembered per heading in prefs.closedSecs) */
 /* rare sections start folded; opening one is remembered (false) and wins over this default */
-const SECS_FOLDED = ['Animation', 'Attach', 'Save as a reusable set', 'Mount'];
+const SECS_FOLDED = ['Animation', 'Attach', 'Save as set', 'Mount'];
 function decorateSections(root) {
   const closed = getPref('closedSecs', {}) || {};
   for (const sc of root.querySelectorAll('.sec')) {
@@ -2202,7 +2204,9 @@ function decorateSections(root) {
       if (text) hd.append(h('span', { class: 'qtip', tabindex: 0, 'data-q': text, onclick: e => e.stopPropagation() }, '?'));
     }
     if (!name) continue;
-    if (closed[name] || (!(name in closed) && SECS_FOLDED.includes(name))) sc.classList.add('closed');
+    /* the first heading is a title, not a toggle: it never folds, and a stale folded entry for it is dropped */
+    if (sc === root.querySelector(':scope > .sec')) { if (closed[name]) { const now = { ...closed }; delete now[name]; setPref('closedSecs', now); } continue; }
+    if (closed[name] || (!(name in closed) && SECS_FOLDED.includes(name) && !sc.dataset.inuse)) sc.classList.add('closed');
     hd.addEventListener('click', () => {
       const on = sc.classList.toggle('closed'), now = { ...(getPref('closedSecs', {}) || {}) };
       if (on) now[name] = true; else if (SECS_FOLDED.includes(name)) now[name] = false; else delete now[name];
@@ -2222,10 +2226,10 @@ function renderPropsInner() {
   if (selected === 'sun') return propsSun(p);
   if (selected === 'camera' || selected === 'target' || (view === 'camera' && !selected)) return propsCamera(p);
   const o = selected && getObj(selected);
-  if (o && isMulti()) { propsMulti(p); if (!simple) p.append(setSaveSection(() => selObjs(), 'the ' + selIds.length + ' selected items')); return; }
-  if (o) { propsObject(p, o); if (!simple && o.type !== 'image' && o.type !== 'model') p.append(setSaveSection(() => [o], o.name)); return; }
+  if (o && isMulti()) { propsMulti(p); p.append(setSaveSection(() => selObjs(), 'the ' + selIds.length + ' selected items')); return; }
+  if (o) { propsObject(p, o); if (o.type !== 'image' && o.type !== 'model') p.append(setSaveSection(() => [o], o.name)); return; }
   propsScene(p);
-  if (state.objects.length && !simple) p.append(setSaveSection(() => state.objects, 'everything in the scene'));
+  if (state.objects.length) p.append(setSaveSection(() => state.objects, 'everything in the scene'));
 }
 function propsScene(p) {
   const s = state.settings;
@@ -2234,7 +2238,7 @@ function propsScene(p) {
     h('div', { class: 'chips' }, Object.entries(ENV).map(([k, e]) => h('button', { class: s.env === k ? 'on acc' : '', onclick: () => pickEnv(k) }, e.label)))));
   p.append(skySection(!simple));
   if (!state.objects.length) p.append(sec('Start from a set', h('p', { class: 'note', style: 'margin:0 0 6px' }, 'Ready-made layouts for common blocking situations.'),
-    h('button', { style: 'width:100%', onclick: () => openStarters() }, 'Browse starter sets…')));
+    h('button', { style: 'width:100%', onclick: () => openStarters() }, 'Starter sets…')));
   if (simple) {
     p.append(sec('Ground', check('Show ground', () => s.groundOn, v => set('groundOn', v)), check('Grid in editor', () => s.gridOn, v => { set('gridOn', v); syncTopUI(); }),
       h('p', { class: 'note' }, 'Sky colours and fog are in Advanced mode (gear menu, top right).')));
@@ -2245,7 +2249,7 @@ function propsScene(p) {
     h('li', null, 'Drag them on the floor, turn them with the orange ring, draw walk paths.'),
     h('li', null, 'Frame the shot: Set start, reframe, Set end. Or use a shot size or move.'),
     h('li', null, 'Export the video or frames.')),
-    h('button', { style: 'margin-top:8px', onclick: () => openModal('mHelp') }, 'Show quick start & shortcuts')));
+    h('button', { style: 'margin-top:8px', onclick: () => openModal('mHelp') }, 'Quick start and shortcuts')));
 }
 /* ---- shot description and move detection (the camera view's top line, the Camera move card) ---- */
 /* "Medium shot · 50 mm · eye level": the size is worked out from the person nearest the middle of the frame */
@@ -2327,7 +2331,7 @@ function moveCard() {
     h('div', { class: 'btns big2' },
       h('button', { class: ends.s ? 'on acc' : '', onclick: () => setShotEnd('start'), title: 'Save what the camera sees now as the first frame' }, 'Set start'),
       h('button', { class: ends.e ? 'on acc' : '', onclick: () => setShotEnd('end'), title: 'Save what the camera sees now as the last frame' }, 'Set end')),
-    keyed ? h('div', { class: 'btns' }, h('button', { onclick: () => { setTime(0); setPlaying(true); } }, '▶ Play the move'), h('button', { onclick: makeCameraStatic }, 'Make static')) : null,
+    keyed ? h('div', { class: 'btns' }, h('button', { onclick: () => { setTime(0); setPlaying(true); } }, '▶ Play'), h('button', { onclick: makeCameraStatic }, 'Clear move')) : null,
     h('p', { class: 'note' }, ends.s && ends.e ? 'Reframe at either end and press Set start or Set end again to change it.' : 'Frame the opening shot → Set start. Frame the closing shot → Set end.')));
 }
 
@@ -2381,6 +2385,7 @@ function sunSection(adv) {
     adv ? slider('Shadow depth', () => clamp(1 - (s.ambInt - 0.2) / 2.3, 0, 1), (v, c) => set('ambInt', r4(0.2 + (1 - v) * 2.3), c), { min: 0, max: 1, step: 0.01, fmt: v => v < 0.35 ? 'light' : v < 0.7 ? 'normal' : 'deep' }) : null,
     adv ? slider('Sun strength', () => s.sunInt, (v, c) => set('sunInt', v, c), { min: 0, max: 5, step: 0.05 }) : null,
     adv ? colorRow('Sun colour', () => s.sunColor, (v, c) => set('sunColor', v, c)) : null,
+    adv ? null : h('div', { class: 'note keep', style: 'opacity:.7' }, 'Strength, softness and shadow depth: Advanced'),
     h('p', { class: 'note' }, 'Tip: drag the yellow sun in the editor or top view and watch the shadows move. Shadows follow the area the camera is looking at.'));
 }
 /* the panel for the Sun row (and the sun in the 3D view) */
@@ -2388,7 +2393,7 @@ function propsSun(p) {
   const s = state.settings;
   p.append(sec('Sun', h('p', { class: 'note', style: 'margin:0' }, 'Drag the sun in the 3D view, or use the controls below. It lights the whole scene.')));
   p.append(sunSection(!simple));
-  p.append(h('div', { class: 'btns', style: 'margin:2px 0 8px' }, h('button', { 'data-role': 'to-scene', title: 'Environment presets, sky colours and clouds', onclick: () => select(null) }, 'Sky and clouds: Scene panel')));
+  p.append(h('div', { class: 'btns', style: 'margin:2px 0 8px' }, h('button', { 'data-role': 'to-scene', title: 'Environment presets, sky colours and clouds', onclick: () => { if (view === 'camera') setView(lastWorkView); select(null); } }, 'Sky and clouds: Scene panel')));
 }
 /* ---- the camera panel: Shot | Move | Lens | Photo | Output ---- */
 const CAM_TABS = [['shot', 'Shot'], ['move', 'Move'], ['lens', 'Lens'], ['photo', 'Photo'], ['output', 'Output']];
@@ -2407,28 +2412,30 @@ function propsCamera(p) {
     const ps = persons();
     if (ps.length) {
       if (!shotPerson || !getObj(shotPerson)) shotPerson = defaultShotPerson();
-      p.append(sec('Frame a person',
+      p.append(sec('Shot size',
         ps.length > 1 ? selectRow('Person', ps.map(x => [x.id, x.name]), () => shotPerson, v => { shotPerson = v; }) : null,
         shotGrid(() => shotPerson),
         h('p', { class: 'note' }, 'Uses the current lens. Try: Wide → Set start, Close-up → Set end.')));
-    } else p.append(sec('Frame a person', h('p', { class: 'note' }, 'Add a person to use one-click shot sizes (wide, medium, close-up…).')));
-    const subjOpts = [['', 'None (use the target point)'], ...state.objects.map(o => [o.id, o.name])];
+    } else p.append(sec('Shot size', h('p', { class: 'note' }, 'Add a person to use shot sizes.')));
+    const subjOpts = [['', 'None'], ...state.objects.map(o => [o.id, o.name])];
     p.append(sec('Subject',
       selectRow('Look at', subjOpts, () => c.lookAtId || '', v => { if (v && !c.lookAtId) { c.base.tg = evalCam(T).tg; } c.lookAtId = v || null; if (!v) c.follow = false; updateGizmo(); changed(true, true); }),
-      c.lookAtId ? check('Follow the subject (camera travels with it)', () => c.follow, v => { const cur = evalCam(T).p; c.follow = v; writeCam({ p: cur }, true); propsDirty = true; }) : null,
+      c.lookAtId ? check('Follow subject', () => c.follow, v => { const cur = evalCam(T).p; c.follow = v; writeCam({ p: cur }, true); propsDirty = true; }, 'The camera travels with the subject') : null,
       h('p', { class: 'note' }, c.lookAtId ? 'The camera keeps aiming at the subject while it moves.' : 'Pick a person or object to keep it centred automatically.')));
-    const mountSel = selectRow('Mount on', [['', 'Nothing (tripod or free)'], ...state.objects.filter(o => o.type !== 'mark').map(o => [o.id, o.name])], () => c.mount || '', v => mountCamera(v || null));
+    const mountSel = selectRow('Mount on', [['', 'None'], ...state.objects.filter(o => o.type !== 'mark').map(o => [o.id, o.name])], () => c.mount || '', v => mountCamera(v || null));
     mountSel.querySelector('select').dataset.role = 'mount';
-    p.append(sec('Mount', mountSel, h('p', { class: 'note' }, 'The camera rides with it, like a car mount or a camera on a moving cart. Your camera moves still work on top.')));
+    const msec = sec('Mount', mountSel, h('p', { class: 'note' }, 'The camera rides with it, like a car mount or a camera on a moving cart. Your camera moves still work on top.'));
+    if (c.mount) msec.dataset.inuse = '1';
+    p.append(msec);
   } else if (tab === 'move') {
     p.append(moveCard());
     const mg = h('div', { class: 'movegrid' }, MOVES.map(([k, ic, l]) => h('button', { onclick: () => applyMove(k), title: 'Animate the camera: ' + l.toLowerCase() + ', from the current framing' }, h('b', null, ic), l)));
-    p.append(sec('One-click camera moves',
+    p.append(sec('Camera moves',
       slider('Strength', () => moveAmt, v => { moveAmt = v; }, { min: 0.25, max: 2.5, step: 0.05, fmt: v => v.toFixed(2) + '×' }),
       mg, h('p', { class: 'note' }, 'Starts from the current framing and runs for the whole shot.')));
-    p.append(sec('Record a move live',
-      h('div', { class: 'btns' }, h('button', { class: 'recbtn', onclick: startRecord }, '● Record camera')),
-      h('p', { class: 'note' }, 'After a 3 s countdown the shot plays and you operate the camera: drag to orbit, right-drag to pan, scroll to dolly, W A S D Q E to fly. Your move is smoothed into keyframes.')));
+    p.append(sec('Record a move',
+      h('div', { class: 'btns' }, h('button', { class: 'recbtn', onclick: startRecord }, '● Record')),
+      h('p', { class: 'note' }, 'After a 3 s countdown the shot plays and you operate the camera: drag to orbit, right-drag to pan, scroll to dolly, W A S D Q E to fly. Your move is smoothed into keys.')));
     p.append(sec('Motion feel', feelSeg(), h('p', { class: 'note' }, 'How the camera starts and stops across the whole move.')));
     p.append(keySection('camera'));
   } else if (tab === 'lens') {
@@ -2439,7 +2446,7 @@ function propsCamera(p) {
       slider('Handheld', () => c.shake || 0, (v, cm) => { c.shake = v; changed(cm); }, { min: 0, max: 2, step: 0.05, fmt: v => v ? v.toFixed(2) : 'off' })));
     const fstops = [1.4, 2, 2.8, 4, 5.6, 8, 11, 16];
     p.append(sec('Depth of field',
-      check('Blur what is out of focus', () => dof.on, v => { dof.on = v; changed(true, true); }),
+      check('Blur background', () => dof.on, v => { dof.on = v; changed(true, true); }),
       dof.on ? h('div', null,
         slider('Aperture', () => dof.fstop, (v, cm) => { dof.fstop = v; changed(cm); }, { min: 1, max: 22, step: 0.1, fmt: v => 'f/' + v.toFixed(1) }),
         h('div', { class: 'chips' }, fstops.map(n => h('button', { class: Math.abs(dof.fstop - n) < 0.05 ? 'on' : '', onclick: () => { dof.fstop = n; changed(true, true); } }, 'f/' + n))),
@@ -2491,7 +2498,7 @@ function propsMulti(p) {
   p.append(sec('Arrange',
     h('div', { class: 'btns' },
       whole ? h('button', { onclick: ungroupSel }, 'Ungroup') : h('button', { class: 'primary', onclick: groupSel, title: 'Keep these together: clicking one selects them all (Ctrl+G)' }, 'Group'),
-      h('button', { onclick: () => lockObjs(list, !allLocked), title: 'Ctrl+L' }, allLocked ? 'Unlock all' : 'Lock all')),
+      h('button', { onclick: () => lockObjs(list, !allLocked), title: 'Ctrl+L' }, allLocked ? 'Unlock' : 'Lock')),
     h('div', { class: 'btns' },
       h('button', { onclick: dropToFloor }, 'Drop to floor'),
       people.some(o => !o.locked) ? h('button', { onclick: () => { for (const o of people.filter(x => !x.locked)) { const cur = clone(evalObj(o, T)); cur.r[1] = Math.atan2(camState.p[0] - cur.p[0], camState.p[2] - cur.p[2]) * R2D; if (o.opts.faceTravel && o.keys.length > 1) o.opts.faceTravel = false; writeObj(o, cur, false); } changed(true, true); toast('People face the camera'); } }, 'People face camera') : null),
@@ -2544,7 +2551,7 @@ function propsObject(p, o) {
   const moveKids = [
     h('div', { class: 'btns' }, h('button', { class: 'primary', onclick: () => startPath(o.id), title: 'Click points on the floor; ' + (o.type === 'person' ? 'they walk' : 'it moves') + ' through them' }, h('span', { html: svgI('path'), class: 'bi' }), 'Draw ' + who + 'path')),
     slider('Speed', () => pathSpeedOf(o), (v, cm) => { o.opts.pathSpeed = v; changed(cm); }, { min: 0.3, max: o.type === 'car' ? 30 : 8, step: 0.1, fmt: v => v.toFixed(1) + ' m/s' }),
-    check('Fit the path to the end of the shot', () => pathFit, v => { pathFit = v; }, 'Ignore the speed: arrive exactly on the last frame'),
+    check('Fit path to shot length', () => pathFit, v => { pathFit = v; }, 'Ignore the speed: arrive exactly on the last frame'),
     h('p', { class: 'note' }, 'Starts at the playhead (' + snapT(T).toFixed(2) + ' s). Walking ≈ ' + pref('walkSpeed') + ' m/s, jogging ≈ 3 m/s.'),
   ];
   const marks = state.objects.filter(m => m.type === 'mark');
@@ -2556,17 +2563,17 @@ function propsObject(p, o) {
     moveKids.push(h('div', { class: 'row' }, h('label', null, 'Go to mark'), sel), h('div', { class: 'row' }, h('label', null, 'Arrive at'), tIn, h('span', { class: 'note', style: 'margin:0' }, 's'), h('button', { class: 'grow', onclick: () => walkToMark(o, sel.value, parseFloat(tIn.value)) }, (o.type === 'person' ? 'Walk' : 'Move') + ' there')));
   } else moveKids.push(h('p', { class: 'note' }, 'Tip: add floor marks (left panel) to send people to them with an arrival time.'));
   const others = state.objects.filter(x => x !== o);
-  const fsel = h('select', { class: 'grow' }, h('option', { value: '' }, 'Face toward…'), others.map(x => h('option', { value: x.id }, x.name)));
+  const fsel = h('select', { class: 'grow' }, h('option', { value: '' }, 'Face…'), others.map(x => h('option', { value: x.id }, x.name)));
   fsel.onchange = () => { const t = getObj(fsel.value); if (t) faceToward(o, evalObj(t, T).p, t.name); };
   moveKids.push(h('div', { class: 'row' }, h('button', { onclick: () => faceToward(o, camState.p, 'the camera') }, 'Face camera'), fsel));
-  if (o.keys.length > 1 || o.type === 'person' || o.type === 'car') moveKids.push(check('Face the way ' + (o.type === 'person' ? 'they' : 'it') + ' travel' + (o.type === 'person' ? '' : 's'), () => o.opts.faceTravel, v => { o.opts.faceTravel = v; changed(true); }));
+  if (o.keys.length > 1 || o.type === 'person' || o.type === 'car') moveKids.push(check('Face travel direction', () => o.opts.faceTravel, v => { o.opts.faceTravel = v; changed(true); }));
   if (o.type === 'car') moveKids.push(h('p', { class: 'note' }, 'Wheels roll with the distance driven and the front wheels steer into the curves.'));
   if (o.type === 'person') moveKids.push(h('div', { class: 'btns' }, h('button', { 'data-role': 'frame-cam', title: 'Opens the shot camera, ready to frame ' + o.name, onclick: () => frameWithCamera(o) }, 'Frame with camera…')));
   const moveSec = sec('Move & face', ...moveKids), staticProp = o.type !== 'person' && o.type !== 'car';
   if (!staticProp) p.append(moveSec);
   if (o.type === 'person') {
     const targets = [...state.objects.filter(x => x !== o && x.type === 'person'), ...state.objects.filter(x => x !== o && x.type !== 'person' && x.type !== 'mark')];
-    p.append(sec('Eyeline', selectRow('Look at', [['', 'Ahead (no target)'], ['camera', 'The camera'], ...targets.map(x => [x.id, x.name])], () => o.opts.lookAt || '', v => setLookAt(o, v || null)),
+    p.append(sec('Eyeline', selectRow('Look at', [['', 'Ahead'], ['camera', 'Camera'], ...targets.map(x => [x.id, x.name])], () => o.opts.lookAt || '', v => setLookAt(o, v || null)),
       h('p', { class: 'note' }, 'The head and upper body turn to keep looking, even while either of them moves.')));
   }
   // ---- look
@@ -2590,12 +2597,12 @@ function propsObject(p, o) {
   // ---- placement
   const grounded = isGrounded(o);
   /* a grounded item rests on the floor or on what is under it; "Can float" is for things in the air */
-  const floatChk = groundOn() && !o.parent && !(o.opts.seated) ? check('Can float (not kept on the ground)', () => !!o.opts.free, v => { o.opts.free = v; propsDirty = true; syncScene(); updateGizmo(); changed(true, true); toast(v ? o.name + ' can float' : o.name + ' kept on the ground'); }, 'For things in the air: a drone, a bird, a hanging lamp, a thrown ball') : null;
+  const floatChk = groundOn() && !o.parent && !(o.opts.seated) ? check('Can float', () => !!o.opts.free, v => { o.opts.free = v; propsDirty = true; syncScene(); updateGizmo(); changed(true, true); toast(v ? o.name + ' can float' : o.name + ' kept on the ground'); }, 'For things in the air: a drone, a bird, a hanging lamp, a thrown ball') : null;
   const tools = h('div', { class: 'btns', style: 'margin-top:8px' },
     grounded ? null : h('button', { onclick: dropToFloor }, 'Drop to floor'),
     h('button', { onclick: duplicateSel }, 'Duplicate'),
     h('button', { class: 'danger', onclick: deleteSel }, 'Delete'));
-  const travelNote = o.opts.faceTravel && o.keys.length > 1 ? h('p', { class: 'note' }, 'Turning follows the path. Untick "Face the way they travel" to turn them yourself.') : null;
+  const travelNote = o.opts.faceTravel && o.keys.length > 1 ? h('p', { class: 'note' }, 'Turning follows the path. Untick "Face travel direction" to steer by hand.') : null;
   if (simple) {
     p.append(sec('Placement',
       slider('Turn', () => { let y = tr().r[1] % 360; if (y > 180) y -= 360; if (y < -180) y += 360; return y; }, (v, cm) => { const cur = clone(tr()); cur.r[1] = v; writeObj(o, cur, cm); }, { min: -180, max: 180, step: 1, fmt: v => v.toFixed(0) + '°' }),
@@ -2613,13 +2620,15 @@ function propsObject(p, o) {
   }
   if (staticProp) p.append(moveSec);
   // ---- attach: ride with another item (people in a car, a cup on a tray)
-  if (!simple) {
+  {
     const par = parentOf(o), under = par ? null : underneath(o);
-    const ride = selectRow('Ride with', [['', 'Nothing (moves on its own)'], ...state.objects.filter(x => x.type !== 'mark' && !ridesWith(o, x.id)).map(x => [x.id, x.name])], () => o.parent || '', v => attachObj(o, v || null));
+    const ride = selectRow('Ride with', [['', 'None'], ...state.objects.filter(x => x.type !== 'mark' && !ridesWith(o, x.id)).map(x => [x.id, x.name])], () => o.parent || '', v => attachObj(o, v || null));
     ride.querySelector('select').dataset.role = 'ride';
-    p.append(sec('Attach', ride,
+    const asec = sec('Attach', ride,
       under ? h('div', { class: 'btns' }, h('button', { onclick: () => attachObj(o, under.id) }, 'Attach to ' + under.name + ' (underneath)')) : null,
-      h('p', { class: 'note' }, par ? o.name + ' moves and turns with ' + par.name + '. Its own moves happen relative to it.' : 'Attach it to something so it moves along: people riding in a car, a cup on a table, a bag on a cart.')));
+      h('p', { class: 'note' }, par ? o.name + ' moves and turns with ' + par.name + '. Its own moves happen relative to it.' : 'Attach it to something so it moves along: people riding in a car, a cup on a table, a bag on a cart.'));
+    if (o.parent) asec.dataset.inuse = '1';
+    p.append(asec);
   }
   p.append(keySection(o.id));
 }
@@ -2912,7 +2921,7 @@ function fileMenuItems() {
     { id: 'export', label: 'Export\u2026', fn: () => goStep('export'), key: '3' }];
 }
 function gearMenuItems() {
-  return [{ id: 'advanced', label: 'Advanced controls', check: !simple, fn: () => setSimple(!simple) },
+  return [{ id: 'advanced', label: 'Advanced mode', check: !simple, fn: () => setSimple(!simple) },
     { id: 'settings', label: 'Settings\u2026', fn: openSettings },
     '-',
     { head: TOUR_COPY.menu.heading },
@@ -2999,7 +3008,7 @@ function ctxItems(hit, floor) {
   if (hit && (hit.id === 'camera' || hit.id === 'target')) {
     select('camera');
     items.push({ head: 'Shot camera' }, { label: 'Look through camera', fn: () => setView('camera'), key: 'C' }, { label: 'Set start frame', fn: () => setShotEnd('start') }, { label: 'Set end frame', fn: () => setShotEnd('end') });
-    if (state.camera.keys.length) items.push({ label: 'Make static (clear move)', fn: makeCameraStatic });
+    if (state.camera.keys.length) items.push({ label: 'Clear move', fn: makeCameraStatic });
     return items;
   }
   if (hit && hit.id.startsWith('ck:')) {
@@ -3028,7 +3037,7 @@ function ctxItems(hit, floor) {
         { label: allLocked ? 'Unlock ' + list.length + ' items' : 'Lock ' + list.length + ' items', fn: () => lockObjs(list, !allLocked), key: 'Ctrl L' }, '-',
         { label: 'Duplicate', fn: duplicateSel, key: 'Ctrl D' },
         { label: 'Drop to floor', fn: dropToFloor },
-        { label: 'Hide', fn: () => { for (const x of list.map(q => getObj(q.id)).filter(Boolean)) x.visible = false; syncScene(); updateGizmo(); changed(true, true); toast(list.length + ' items hidden (the eye in the Scene list brings them back)'); } },
+        { label: 'Hide', fn: () => { for (const x of list.map(q => getObj(q.id)).filter(Boolean)) x.visible = false; syncScene(); updateGizmo(); changed(true, true); toast(list.length + ' items hidden (the eye in the Items list brings them back)'); } },
         { label: 'Delete', fn: deleteSel, key: 'Del', danger: true });
       return items;
     }
@@ -3048,23 +3057,23 @@ function ctxItems(hit, floor) {
           { label: o.opts.lookAt === 'camera' ? 'Stop looking at the camera' : 'Look at the camera', fn: () => setLookAt(o, o.opts.lookAt === 'camera' ? null : 'camera') });
         if (selP && selP !== o) items.push({ label: `${o.name} looks at ${selP.name}`, fn: () => setLookAt(o, selP.id) });
       } else items.push({ label: 'Draw path', fn: () => startPath(o.id) });
-      items.push({ label: 'Face the camera', fn: () => faceToward(o, camState.p, 'the camera') });
+      items.push({ label: 'Face camera', fn: () => faceToward(o, camState.p, 'the camera') });
       if (seatsOf(o).length) {
         const who = persons().length ? (selP && selP !== o ? selP : persons().find(q => q.opts.seated !== o.id) || persons()[0]) : null;
         if (who) items.push({ label: `Sit ${who.name} here`, fn: () => sitPerson(who, freeSeat(o, who)) });
       }
-      items.push({ label: 'Keep camera on this', fn: () => keepCameraOn(o) },
-        state.camera.mount === o.id ? { label: 'Unmount the camera', fn: () => mountCamera(null) } : { label: 'Mount the camera on this', fn: () => mountCamera(o.id) });
+      items.push({ label: 'Aim camera at this', fn: () => keepCameraOn(o) },
+        state.camera.mount === o.id ? { label: 'Unmount camera', fn: () => mountCamera(null) } : { label: 'Mount camera on this', fn: () => mountCamera(o.id) });
       const par = parentOf(o), under = !par && underneath(o);
       if (par) items.push({ label: 'Detach from ' + par.name, fn: () => attachObj(o, null) });
       else if (under) items.push({ label: 'Attach to ' + under.name + ' (rides with it)', fn: () => attachObj(o, under.id) });
     }
-    items.push({ label: 'Focus the lens here', key: 'double-click', fn: () => focusLensAt(new THREE.Vector3().fromArray(aimPoint(o, T)), o.name) }, '-');
+    items.push({ label: 'Pull focus here', key: 'double-click', fn: () => focusLensAt(new THREE.Vector3().fromArray(aimPoint(o, T)), o.name) }, '-');
     if (o.grp) items.push({ label: 'Ungroup', fn: ungroupSel, key: 'Ctrl Shift G' });
-    items.push({ label: o.locked ? 'Unlock' : 'Lock (stop accidental moves)', fn: () => lockObjs([o], !o.locked), key: 'Ctrl L' },
+    items.push({ label: o.locked ? 'Unlock' : 'Lock', fn: () => lockObjs([o], !o.locked), key: 'Ctrl L' },
       { label: 'Duplicate', fn: duplicateSel, key: 'Ctrl D' },
       ...(o.type !== 'mark' && !isGrounded(o) ? [{ label: 'Drop to floor', fn: dropToFloor }] : []),
-      { label: 'Hide', fn: () => { const q = getObj(o.id); if (!q) return; q.visible = false; syncScene(); updateGizmo(); changed(true, true); toast(o.name + ' hidden (the eye in the Scene list brings it back)'); } },
+      { label: 'Hide', fn: () => { const q = getObj(o.id); if (!q) return; q.visible = false; syncScene(); updateGizmo(); changed(true, true); toast(o.name + ' hidden (the eye in the Items list brings it back)'); } },
       { label: 'Delete', fn: deleteSel, key: 'Del', danger: true });
     return items;
   }
@@ -3271,7 +3280,7 @@ function finishPath() {
   o.opts.faceTravel = true;
   const dur = total / speed;
   changed(true, true);
-  toast(`Path set: ${total.toFixed(1)} m in ${dur.toFixed(1)} s` + (t0 + dur > lastT() + 0.01 ? '. It runs past the end of the shot. Raise the speed or tick "Fit the path to the end of the shot".' : ''), MODE_TIP_MS);
+  toast(`Path set: ${total.toFixed(1)} m in ${dur.toFixed(1)} s` + (t0 + dur > lastT() + 0.01 ? '. It runs past the end of the shot. Raise the speed or tick "Fit path to shot length".' : ''), MODE_TIP_MS);
 }
 
 /* ---- marks & facing ---- */
@@ -3804,7 +3813,7 @@ function openStarters(firstLaunch = false) {
   /* first launch doubles as the welcome screen (branding/BRAND.md) */
   $('#startHead').style.display = firstLaunch ? '' : 'none';
   $('#mStartT').textContent = firstLaunch ? 'Start a shot' : 'Starter sets';
-  $('#mStartP').textContent = firstLaunch ? 'Pick a starter set, or start from an empty stage. Everything in it can be moved, changed or deleted.' : 'Pick a ready-made layout. Everything in it can be moved, changed or deleted.';
+  $('#mStartP').textContent = firstLaunch ? 'Pick a starter set or start empty.' : 'Pick a ready-made layout.';
   for (const [k, t, d] of STARTERS) g.append(h('button', { class: 'card', onclick: () => {
     closeModal(g);
     /* on first launch the scene is our sample, not the user's work: no replace question */
@@ -4008,7 +4017,7 @@ function plateSection() {
   const pl = state.plate, a = plateAsset();
   if (!pl || !a) return sec('Location photo',
     h('p', { class: 'note', style: 'margin:0 0 8px' }, 'Put a still of the real or AI-generated location behind the scene. Then block people and the camera on top of it.'),
-    h('button', { class: 'primary', style: 'width:100%', onclick: () => pickImport('#fPlate', importPlate, PLATE_FILTER) }, 'Load location photo…'));
+    h('button', { class: 'primary', style: 'width:100%', onclick: () => pickImport('#fPlate', importPlate, PLATE_FILTER) }, 'Choose photo…'));
   const fa = arOf(state.settings.aspect), ia = a.aspect || 1.5;
   const close = ASPECTS.reduce((b, x) => Math.abs(Math.log(x[1] / ia)) < Math.abs(Math.log(b[1] / ia)) ? x : b);
   const thumb = h('img', { src: assetURL(pl.asset), style: 'width:100%;border-radius:6px;display:block;border:1px solid var(--line2)' });
@@ -4282,14 +4291,14 @@ function propsExport(p) {
     selectRow('Size', SIZES.map(([v, l]) => [String(v), l]), () => String(s.size), v => { s.size = +v; changed(true, true); }),
     h('div', { class: 'lbl', style: 'width:auto;margin:8px 0 5px' }, 'Render style'),
     h('div', { class: 'stylechips' }, STYLES.map(([k, l, d, bg]) => h('button', { class: s.style === k ? 'on' : '', title: d, onclick: () => { s.style = k; changed(true, true); syncTopUI(); } }, h('div', { class: 'sw', style: 'background:' + bg }), l))),
-    check('Show the floor grid in exports', () => s.exportGrid, v => { s.exportGrid = v; changed(true); }));
-  const tog = h('button', { id: 'xoChange', 'aria-expanded': String(exportFmtOpen), onclick: () => { exportFmtOpen = !exportFmtOpen; fmt.classList.toggle('hidden', !exportFmtOpen); tog.setAttribute('aria-expanded', String(exportFmtOpen)); tog.textContent = exportFmtOpen ? 'Done' : 'Change'; } }, exportFmtOpen ? 'Done' : 'Change');
+    check('Grid in export', () => s.exportGrid, v => { s.exportGrid = v; changed(true); }));
+  const tog = h('button', { id: 'xoChange', 'aria-expanded': String(exportFmtOpen), 'aria-controls': 'xoFormat', onclick: () => { exportFmtOpen = !exportFmtOpen; fmt.classList.toggle('hidden', !exportFmtOpen); tog.setAttribute('aria-expanded', String(exportFmtOpen)); tog.textContent = exportFmtOpen ? 'Done' : 'Change'; } }, exportFmtOpen ? 'Done' : 'Change');
   p.append(sec('Export',
     h('div', { class: 'row' }, h('span', { id: 'xoSummary', class: 'grow', style: 'font-size:12.5px;color:#cfd3d8' }, `${w}×${hh} · ${asp} · ${sty}`), tog),
     h('p', { class: 'note keep', style: 'margin:0 0 8px' }, `${s.fps} fps · ${s.duration.toFixed(1)} s` + (sn ? ' · ' + sn : '')),
     fmt));
-  p.append(sec('Render video', h('div', { class: 'expgrid' },
-    h('button', { id: 'xoVideo', class: 'primary wide', onclick: () => { openModal('mExport'); exportVideo(); } }, 'Render video (MP4)'),
+  p.append(sec('Export video', h('div', { class: 'expgrid' },
+    h('button', { id: 'xoVideo', class: 'primary wide', onclick: () => { openModal('mExport'); exportVideo(); } }, 'Export video (MP4)'),
     h('button', { id: 'xoOptions', onclick: () => openModal('mExport') }, 'Video options…'))));
   p.append(sec('Frame pack', h('div', { class: 'expgrid' },
     h('button', { id: 'xoPack', onclick: exportFramePack, title: 'Start, middle and end frames plus the prompt, in one zip' }, 'Frame pack (zip)'),
@@ -4524,12 +4533,12 @@ function takeMenuItems() {
   return [{ head: 'Takes' },
     ...list.map(t => takeReadable(t) || !real ? { id: 'take:' + t.id, label: t.name, check: t.id === act, fn: () => switchTake(t.id) } : { id: 'take:' + t.id, label: t.name + " (can't be opened)", check: false, disabled: true }),
     '-',
-    { id: 'newtake', label: 'New take (copy of this one)', fn: () => newTake(true) },
-    { id: 'duptake', label: 'Duplicate this take', fn: () => newTake(false) },
-    { id: 'renametake', label: 'Rename this take…', fn: openTakeName },
-    { id: 'compare', label: 'Compare takes side by side…', fn: openCompare, disabled: good < 2 },
+    { id: 'newtake', label: 'New take', fn: () => newTake(true) },
+    { id: 'duptake', label: 'Duplicate take', fn: () => newTake(false) },
+    { id: 'renametake', label: 'Rename take…', fn: openTakeName },
+    { id: 'compare', label: 'Compare takes…', fn: openCompare, disabled: good < 2 },
     '-',
-    { id: 'deltake', label: 'Delete this take', danger: true, fn: () => deleteTake(act), disabled: list.length < 2 },
+    { id: 'deltake', label: 'Delete take', danger: true, fn: () => deleteTake(act), disabled: list.length < 2 },
     ...bad.map(t => ({ id: 'deltake:' + t.id, label: 'Delete "' + t.name + '" (can\'t be opened)', danger: true, fn: () => deleteTake(t.id) }))];
 }
 
@@ -5125,12 +5134,12 @@ function buildSettings() {
         prefSelect('newFps', 'Frame rate', PREF_LISTS.newFps.map(v => [v, v + ' fps'])),
         prefSelect('newAspect', 'Aspect', ASPECTS.map(a => [a[0], a[2]]), undefined, String),
         prefSelect('newSize', 'Size', SIZES.map(([v, l]) => [v, l])),
-        h('p', { class: 'note' }, 'Used when you start a new scene or pick a starter set. Opened files keep their own.')),
+        h('p', { class: 'note' }, 'Applies to new scenes. Opened files keep their own.')),
       sec('Blocking',
         prefRange('walkSpeed', 'Walking speed', { min: 0.6, max: 2.5, step: 0.05, fmt: v => (+v).toFixed(2) + ' m/s' }),
-        prefCheck('autoSit', 'Sit automatically when a person is dropped on a seat'),
-        prefCheck('ground', 'Keep things on the ground (nothing floats or sinks)', groundOn, v => setGround(v)),
-        h('p', { class: 'note' }, 'Things rest on the floor, or on the surface right under them (a cup on a table). Riders and people sitting are left alone. For a drone or a hanging lamp, tick "Can float" on that object.')),
+        prefCheck('autoSit', 'Sit when dropped on a seat'),
+        prefCheck('ground', 'Keep things on the ground', groundOn, v => setGround(v)),
+        h('p', { class: 'note' }, 'Things rest on the floor or the surface under them. For a drone or a hanging lamp, tick "Can float" on that object.')),
       sec('Export',
         prefSelect('videoQuality', 'Video quality', [['standard', 'Standard (smaller files)'], ['high', 'High'], ['max', 'Maximum (large files)']], undefined, String),
         h('div', { class: 'row' }, h('label', null, 'File names'), pre),
@@ -5138,31 +5147,31 @@ function buildSettings() {
         ex)),
     h('div', { class: 'setcol' },
       sec('Viewport',
-        prefSelect('quality', 'Preview quality', [['low', 'Fast (lower resolution)'], ['balanced', 'Balanced'], ['high', 'Sharp (uses more GPU)']], undefined, String),
+        prefSelect('quality', 'Preview quality', [['low', 'Fast'], ['balanced', 'Balanced'], ['high', 'Sharp']], undefined, String),
         prefSelect('layout', 'Layout', [['single', 'One view'], ['split', 'Split: editor + camera']], () => layout, v => { setLayout(v); }, String),
-        prefCheck('liveShadows', 'Shadows in the live view'),
-        prefCheck('pipDefault', 'Camera preview in the corner'),
-        prefCheck('showLabels', 'Name labels over people'),
-        prefCheck('showArrows', 'Facing arrows under people'),
-        prefCheck('showHints', 'Hint bar at the bottom'),
-        prefCheck('showSun', 'Draggable sun in the editor'),
-        prefCheck('selBar', 'Toolbar over the selection'),
-        prefCheck('camPoints', 'Draggable camera path points'),
-        h('p', { class: 'note' }, 'Exports always render at full quality with shadows.')),
+        prefCheck('liveShadows', 'Shadows'),
+        prefCheck('pipDefault', 'Camera preview'),
+        prefCheck('showLabels', 'Name labels'),
+        prefCheck('showArrows', 'Facing arrows'),
+        prefCheck('showHints', 'Hint bar'),
+        prefCheck('showSun', 'Sun handle'),
+        prefCheck('selBar', 'Selection toolbar'),
+        prefCheck('camPoints', 'Path points'),
+        h('p', { class: 'note' }, 'Exports always use full quality.')),
       sec('Mouse & keys',
         prefRange('orbitSpeed', 'Orbit speed', { min: 0.3, max: 2.5, step: 0.05, fmt: v => (+v).toFixed(2) + '×' }),
         prefRange('zoomSpeed', 'Zoom speed', { min: 0.3, max: 2.5, step: 0.05, fmt: v => (+v).toFixed(2) + '×' }),
         prefRange('flySpeed', 'Fly speed', { min: 0.5, max: 10, step: 0.1, fmt: v => (+v).toFixed(1) + ' m/s' }),
         prefSelect('snapStep', 'Snap step', [[0.1, '10 cm'], [0.25, '25 cm'], [0.5, '50 cm'], [1, '1 m']]),
         prefSelect('rotSnap', 'Turn snap', [[5, '5°'], [15, '15°'], [45, '45°'], [90, '90°']]),
-        h('p', { class: 'note' }, 'Snapping applies while the Snap button is on. Shift while flying moves 3× faster.')),
+        h('p', { class: 'note' }, 'Applies while Snap is on. Shift while flying is 3× faster.')),
       sec('Saving',
-        prefCheck('autosave', 'Autosave (restores your last session)'),
+        prefCheck('autosave', 'Autosave'),
         prefCheck('recentOn', 'Keep recent projects'),
-        prefSelect('keepRecent', 'Recent projects to keep', PREF_LISTS.keepRecent.map(v => [v, String(v)])),
+        prefSelect('keepRecent', 'How many to keep', PREF_LISTS.keepRecent.map(v => [v, String(v)])),
         h('div', { class: 'btns', style: 'margin-top:6px' },
           h('button', { onclick: () => { closeModal($('#mSettings')); confirmBox('Clear recent projects?', 'This removes the list of recent projects stored in this browser. Your current scene stays open.', async () => { const r = await clearRecents(); toast(r === null ? 'Recent projects are not available in this browser window.' : 'Recent projects cleared'); }, 'Clear'); } }, 'Clear recent projects'),
-          h('button', { onclick: () => { closeModal($('#mSettings')); openModal('mHelp'); } }, 'Show quick start')))),
+          h('button', { onclick: () => { closeModal($('#mSettings')); openModal('mHelp'); } }, 'Open quick start')))),
     h('div', { class: 'btns', style: 'margin-top:4px' }, h('button', { onclick: resetPrefs }, 'Reset all settings')));
 }
 function openSettings() { buildSettings(); openModal('mSettings'); $('#mSettings .dlg').scrollTop = 0; }
@@ -5251,7 +5260,7 @@ function setSaveSection(getObjs, what) {
   const nm = h('input', { type: 'text', class: 'grow', placeholder: 'Name', maxlength: 40, 'aria-label': 'Name for the set' });
   const go = () => { if (saveSet(nm.value, getObjs())) nm.value = ''; };
   nm.addEventListener('keydown', e => { if (e.key !== 'Tab') e.stopPropagation(); if (e.key === 'Enter') go(); });
-  const s = sec('Save as a reusable set', h('div', { class: 'row' }, nm, h('button', { onclick: go }, 'Save')),
+  const s = sec('Save as set', h('div', { class: 'row' }, nm, h('button', { onclick: go }, 'Save')),
     h('p', { class: 'note' }, 'Saves ' + what + '. Saved sets appear under "My sets" in the Add tab, ready to drop into any scene. Photos and models are left out.'));
   s.classList.add('setsave');
   return s;
@@ -5463,7 +5472,7 @@ function wire() {
   $('#exCancel').onclick = () => { exCancel = true; };
 
   wireMenu();
-  /* the Scene list has the same right-click menu as the 3D view */
+  /* the Items list has the same right-click menu as the 3D view */
   $('#outliner').addEventListener('contextmenu', e => {
     const r = e.target.closest('.ol'); if (!r || !r.dataset.id) return;
     e.preventDefault();
@@ -5846,7 +5855,7 @@ function boot() {
   wireAbout();
   platform.onMenu(onDesktopMenu);
   platform.onOpenFile(f => { if (f && typeof f.text === 'string') { launchFile = true; tourAsk = false; closeModal($('#mTour')); closeModal($('#mStart')); loadProjectText(f.text, f, true); } });
- setPref('launchCount', Math.min(1e6, (+getPref('launchCount', 0) || 0) + 1));
+ { let counted = false; try { counted = sessionStorage.getItem('shotref.counted'); sessionStorage.setItem('shotref.counted', '1'); } catch (e) { } if (!counted) setPref('launchCount', Math.min(1e6, (+getPref('launchCount', 0) || 0) + 1)); } /* once per browser session, not per page load */
   applyPrefs(); setView('editor'); setGizmoMode('translate');
   requestAnimationFrame(frame);
   let seen = false; try { seen = localStorage.getItem('shotref.seenHelp'); localStorage.setItem('shotref.seenHelp', '1'); } catch (e) { }

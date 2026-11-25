@@ -72,8 +72,8 @@ export const TOUR_COPY = {
     },
     'b-gear': {
       title: 'Settings and help',
-      text: 'Switch on Advanced controls for more detail, reopen the Quick start page or run these tours again.',
-      textSolo: 'Switch on Advanced controls for more detail, reopen the Quick start page or take this tour again.',
+      text: 'Switch on Advanced mode for more detail, reopen the Quick start page or run these tours again.',
+      textSolo: 'Switch on Advanced mode for more detail, reopen the Quick start page or take this tour again.',
     },
     'b-bye': {
       title: 'That is the lot',
@@ -150,8 +150,8 @@ export const TOUR_COPY = {
       text: 'Take saves an alternative version of the whole scene. Switch between takes to compare ideas.',
     },
     'h-gear': {
-      title: 'Advanced controls',
-      text: 'Open the gear menu and switch on Advanced controls when you want finer detail. Leave them off for now.',
+      title: 'Advanced mode',
+      text: 'Open the gear menu and switch on Advanced mode when you want finer detail. Leave them off for now.',
     },
     'h-export': {
       title: 'Export',

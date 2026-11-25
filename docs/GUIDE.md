@@ -3,7 +3,7 @@
 ShotRef helps you plan a shot and hand it to an AI video model. You build a rough set, move the camera, and export a clip or frames. This guide covers the basics. Everything is also in the app: press the **?** on any panel heading, or open **Quick start** from the welcome screen.
 
 **Contents**
-[Tours](#tours) · [The three steps](#the-three-steps) · [1. Build](#1-build-the-scene) · [2. Frame](#2-frame-the-shot-and-move-the-camera) · [3. Export](#3-export) · [Shots, takes and sets](#shots-takes-and-sets) · [Saving](#saving-and-opening) · [Shortcuts](#shortcuts) · [Advanced controls](#advanced-controls) · [Troubleshooting](#troubleshooting)
+[Tours](#tours) · [The three steps](#the-three-steps) · [1. Build](#1-build-the-scene) · [2. Frame](#2-frame-the-shot-and-move-the-camera) · [3. Export](#3-export) · [Shots, takes and sets](#shots-takes-and-sets) · [Saving](#saving-and-opening) · [Shortcuts](#shortcuts) · [Advanced mode](#advanced-mode) · [Troubleshooting](#troubleshooting)
 
 ## Tours
 
@@ -37,9 +37,9 @@ The small **split view** button next to them shows the editor on the left and th
 
 ## 1. Build the scene
 
-**Start from a set.** On first launch, or from **File, New**, pick a starter set: Two-person dialogue, Walk and talk, Living room, Café table, Street, Blocking practice, or an empty stage. Everything in a set can be moved, changed or deleted.
+**Start from a set.** On an empty scene (first launch, or after **File, New**), the **Scene** panel offers **Starter sets…** with these: Two-person dialogue, Walk and talk, Living room, Café table, Street, Blocking practice, or an empty stage. Everything in a set can be moved, changed or deleted.
 
-**Add things.** Click an item on the **Add** tab on the left, then click the floor to place it. There are people (man, woman, child), floor marks, furniture and props, and basic shapes. **Import** lets you bring in a location **Image** or a **Model .glb** of your own.
+**Add things.** Click an item on the **Add** tab on the left, then click the floor to place it. The **Items** tab lists everything in the scene. There are people (man, woman, child), floor marks, furniture and props, and basic shapes. **Import** lets you bring in a location **Image** or a **Model .glb** of your own.
 
 **Move things.** Drag across the floor. Drag the orange **ring** to turn someone. Let go over another person or the camera and they turn to face it. Hold `Shift` and click to select several, or drag a box on empty space. `Ctrl G` groups the selection. `Ctrl L` locks it so it can't be dragged by accident.
 
@@ -52,9 +52,9 @@ The small **split view** button next to them shows the editor on the left and th
 - Choose a different pose later in the shot to change it mid-shot. It shows as a blue tag on the timeline.
 - The eye button over a person makes them look at the camera.
 
-**Light.** The **Scene** panel has presets (Studio, Day, Overcast, Sunset, Night) and a **Time of day** slider. Drag the yellow sun in the editor to turn the light and the shadows.
+**Light.** The **Scene** panel has presets (Studio, Day, Overcast, Sunset, Night) and a **Sun & shadows** section. In the normal mode that is **Light the shot from** (front, side, backlight, top), **Time of day** and **Cast shadows**. Direction, height, softness, shadow depth, strength and colour are in Advanced mode. Drag the yellow sun in the editor to turn the light and the shadows. Clicking the sun shows the sun alone; sky and clouds stay in the **Scene** panel.
 
-**Sky and clouds.** The **Sky** section has cloud buttons from Clear to Overcast. Pick a **Look** (fluffy, wispy or a flat layer) and how fast the clouds **Drift** during the shot (or Still to freeze them). **Shuffle clouds** tries a different arrangement. Clouds also soften the sun, so more cloud means softer shadows, and the sky is named in the prompt. Advanced mode adds exact amount, edge softness and wind direction.
+**Sky and clouds.** The **Sky** section of the **Scene** panel has cloud buttons from Clear to Overcast. Pick a **Look** (fluffy, wispy or a flat layer) and how fast the clouds **Drift** during the shot (or Still to freeze them). **Shuffle clouds** tries a different arrangement. Clouds also soften the sun, so more cloud means softer shadows, and the sky is named in the prompt. Advanced mode adds exact amount, edge softness and wind direction.
 
 **Location photo.** In **Frame**, open the **Photo** tab to put a photo behind your scene as a location. Useful when you want the AI to match a real place.
 
@@ -65,20 +65,24 @@ Press `C` for camera view.
 **Steer the camera.**
 - Drag to orbit, right-drag to pan, scroll to dolly in and out.
 - `W A S D Q E` fly the camera. `Alt` plus scroll changes the lens.
-- Or pick a shot size: Wide, Medium, Close-up and so on.
+- Or pick a **Shot size**: Wide, Medium, Close-up and so on.
+- To frame a person, select them and press **Frame with camera…** in their panel. It opens the camera's Shot tab with that person picked.
 
-**Make the move.** There are three ways, pick any:
+**Make the move.** The **Camera moves** section has three ways, pick any:
 
 1. **Set start, then Set end.** Frame the first moment and press **Set start**. Frame the last and press **Set end**. ShotRef moves the camera between them.
 2. **One-click moves.** Dolly in, Dolly out, Orbit left and right, Truck left and right, Crane up and down, Pan, Tilt, Zoom in, Dolly zoom, Arc and push, Drone rise, Reveal. **Strength** makes the move bigger or smaller.
-3. **Record.** Press **Record** and fly the camera live. ShotRef keeps what you did.
+3. **Record a move.** Press **Record** and fly the camera live. ShotRef keeps what you did.
+
+**Clear move** removes the camera's move and keeps it where it is now.
 
 Press **Play the move** or `Space` to watch it. Drag the yellow points on the camera path to reshape it. Right-click the path to add a point.
 
 **Camera tabs.** The panel on the right has **Shot**, **Move**, **Lens**, **Photo** and **Output**.
-- **Lens:** focal length in mm, depth of field, and focus. Double-click anything in the picture to focus on it. Double-click something else later to pull focus.
+- **Lens:** focal length in mm, depth of field, and focus. Double-click anything in the picture to focus on it. Double-click something else later, or right-click it and choose **Pull focus here**, to pull focus.
 - **Move:** motion feel (**Constant**, **Gentle**, **Strong**) and handheld shake.
-- The camera can also **look at** a person or ride on an object, such as a car.
+- The camera can also aim at a person (right-click them, **Aim camera at this**) or ride on an object such as a car (**Mount camera on this**, or the **Mount** section, which starts folded).
+- Rarely used sections (Animation, Attach, Save as set, Mount) start folded. Click the heading to open them.
 
 **Length.** The bar under the picture sets the shot length (5 s, 8 s, 10 s or your own).
 
@@ -90,15 +94,15 @@ Press `3`.
 
 | Button | You get |
 |---|---|
-| **Render video (MP4)** | The whole shot as an MP4, rendered frame by frame. If your browser can't do MP4, you get a WebM instead |
+| **Export video (MP4)** | The whole shot as an MP4, rendered frame by frame. If your browser can't do MP4, you get a WebM instead. **Video options…** has more |
 | **Current frame (PNG)** | The frame at the playhead |
 | **Frame pack (zip)** | Start, middle and end frames, plus the prompt |
 | **Copy frame** | The current frame on your clipboard, ready to paste |
-| **Contact sheet** | One image with every shot, when you have several |
+| **Every shot** and **Contact sheet** | Under **All shots**, shown only when you have two or more shots: every shot as its own video, or one image with every shot |
 
-Choose **Aspect** (16:9, 9:16 vertical, 1:1, 4:5, 4:3, 2.39:1, 21:9) and **Size** (720p up to 4K) at the top of the panel.
+The panel runs top to bottom: a one-line summary of the format (size, aspect, style) with a **Change** button, **Export video**, **Frame pack**, **All shots** (two or more shots only), then the prompt. Press **Change** to choose **Aspect** (16:9, 9:16 vertical, 1:1, 4:5, 4:3, 2.39:1, 21:9) and **Size** (720p up to 4K).
 
-**Render style.**
+**Render style** (under **Change**).
 - **Shaded** is the normal look.
 - **Clay** is plain grey, to keep the AI from copying the colours.
 - **Depth** and **Normals** are guide passes for tools that take depth or normal input.
@@ -121,8 +125,8 @@ Every tool has its own limits on length, size and file type. Set **Aspect** and 
 ## Shots, takes and sets
 
 - **Shots** are different camera setups on the same scene. Add one with **+ New shot** above the timeline. Each has its own camera and length. Export one shot or all of them.
-- **Takes** are alternative versions of the whole scene. Use the **Take** button at the top to make a copy, try something, and switch back.
-- **My sets** (on the Add tab) keep a layout you use again and again.
+- **Takes** are alternative versions of the whole scene. The **Take** menu at the top has **New take**, **Duplicate take**, **Rename take…**, **Compare takes…** and **Delete take**. Make a copy, try something, and switch back.
+- **My sets** (on the Add tab) keep a layout you use again and again. Save one with **Save as set** in an object's panel.
 
 ## Saving and opening
 
@@ -160,11 +164,13 @@ The installed Windows app looks for a new version a few seconds after it starts.
 | `Ctrl S` · `Ctrl O` | Save · open |
 | `P` · `Ctrl C` | Save the current frame as PNG · copy it |
 | Right-click | A menu for what is under the pointer |
-| Double-click (camera view) | Focus the lens on it |
+| Double-click (camera view) | Focus the lens on it (**Pull focus here** in the right-click menu) |
 
-## Advanced controls
+## Advanced mode
 
-The app hides detail you rarely need. Open the **gear menu** at the top right and turn on **Advanced controls** for numeric fields, keyframe tools and the move, rotate and scale arrows (`W` `E` `R`).
+The app hides detail you rarely need. Open the **gear menu** at the top right and turn on **Advanced mode** for numeric fields, key tools and the move, rotate and scale arrows (`W` `E` `R`).
+
+A few things live in **Settings** (gear menu) instead: the **Hint bar** under the picture (it shows for your first 5 launches, then stays off unless you turn it on) and **Keep things on the ground**.
 
 ## Troubleshooting
 
