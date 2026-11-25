@@ -6182,10 +6182,12 @@ check('sky: bad clouds are repaired', async ({ open }) => {
 });
 check('sky: undo names and restores clouds', async ({ open }) => {
   const p = await open();
-  const r0 = await p.evaluate(() => { const a = JSON.stringify(__shotref.state), before = __shotref.state.settings.clouds.cover, h = __shotref.history.length; __shotref.setClouds({ cover: 0.68 }); return { name: __shotref.describeChange(a, JSON.stringify(__shotref.state)), before, steps: __shotref.history.length - h }; });
+  const r0 = await p.evaluate(() => { const a = JSON.stringify(__shotref.state), before = __shotref.state.settings.clouds.cover, lit0 = __shotref.lights(), h = __shotref.history.length; __shotref.setClouds({ cover: 0.68 }); return { name: __shotref.describeChange(a, JSON.stringify(__shotref.state)), before, lit0, litMid: __shotref.lights(), steps: __shotref.history.length - h }; });
   await p.keyboard.press('Control+z');
-  const after = await p.evaluate(() => __shotref.state.settings.clouds.cover);
-  if (r0.name !== 'clouds' || r0.steps !== 1 || after !== r0.before) throw new Error(JSON.stringify({ ...r0, after }));
+  const after = await p.evaluate(() => ({ cover: __shotref.state.settings.clouds.cover, lit: __shotref.lights() }));
+  if (r0.name !== 'clouds' || r0.steps !== 1 || after.cover !== r0.before) throw new Error(JSON.stringify({ ...r0, after }));
+  if (!(r0.litMid.sun < r0.lit0.sun)) throw new Error('setup: cover did not soften the sun: ' + JSON.stringify(r0));
+  if (JSON.stringify(after.lit) !== JSON.stringify(r0.lit0)) throw new Error('undo did not restore the live light: ' + JSON.stringify({ before: r0.lit0, after: after.lit }));
 });
 check('sky: same frame, same clouds', async ({ open }) => {
   const p = await open();
@@ -6268,8 +6270,16 @@ check('sky: shuffle changes the seed and is undoable', async ({ open }) => {
 });
 check('sky: simple mode has no cloud sliders', async ({ open }) => {
   const p = await open();
+  const settle = () => p.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+  await p.evaluate(() => { __shotref.setSimple(false); __shotref.setClouds({ cover: 0.5, drift: 'slow' }); });
+  await settle();
   await p.evaluate(() => __shotref.setSimple(true));
-  if (await p.locator('#props').getByText('Drift direction').count()) throw new Error('advanced slider in simple mode');
+  await settle();
+  if (!(await p.locator('#props').getByText('Shuffle clouds').count())) throw new Error('setup: the Sky panel is not showing the cloud rows');
+  for (const t of ['Wind', 'Amount', 'Edges']) if (await p.locator('#props').getByText(t, { exact: true }).count()) throw new Error(t + ' slider in simple mode');
+  await p.evaluate(() => __shotref.setSimple(false));
+  await settle();
+  if (!(await p.locator('#props').getByText('Amount', { exact: true }).count())) throw new Error('Advanced mode should show the Amount slider');
 });
 check('sky: the note names the sky and the shadows, and look and drift chips set the clouds', async ({ open }) => {
   const p = await open();
@@ -6291,7 +6301,7 @@ check('sky: advanced adds amount, edges and direction, and one sky section holds
   await p.evaluate(() => { __shotref.setSimple(false); __shotref.setClouds({ cover: 0.5, drift: 'slow' }); });
   await p.waitForTimeout(300);
   const sky = p.locator('#props .sec').filter({ has: p.locator('h3', { hasText: /^Sky[?]?$/ }) });
-  for (const t of ['Amount', 'Edges', 'Drift direction', 'Fog / haze', 'Show ground'])
+  for (const t of ['Amount', 'Edges', 'Wind', 'Fog / haze', 'Show ground'])
     if (!(await sky.getByText(t).count())) throw new Error('missing in Advanced: ' + t);
   if (await p.locator('#props h3', { hasText: /^Sky & ground$/ }).count()) throw new Error('old Sky & ground section still there');
   /* the chip for 50% is the nearest one, Scattered */
@@ -6299,7 +6309,7 @@ check('sky: advanced adds amount, edges and direction, and one sky section holds
   if (!on.some(o => o.trim() === 'Scattered')) throw new Error('nearest chip not active: ' + on);
   await p.evaluate(() => __shotref.setClouds({ drift: 'still' }));
   await p.waitForTimeout(300);
-  if (await sky.getByText('Drift direction').count()) throw new Error('direction shown with Still');
+  if (await sky.getByText('Wind', { exact: true }).count()) throw new Error('wind shown with Still');
 });
 check('sky: the Sun panel has the same Sky section', async ({ open }) => {
   const p = await open();
@@ -6329,4 +6339,75 @@ check('sky: prompt wording for looks and overcast', async ({ open }) => {
   if (!/Overcast grey sky/.test(r.over) || !/Overcast grey sky/.test(r.overW) || /Wispy/.test(r.overW)) throw new Error(r.over + r.overW);
   const n = await p.evaluate(() => { __shotref.setClouds({ cover: 1 }); __shotref.state.settings.env = 'overcast'; __shotref.setClouds({ cover: 1 }); return __shotref.promptText(); });
   if (/Overcast, soft light/.test(n) || (n.match(/overcast/gi) || []).length !== 1) throw new Error(n);
+});
+
+/* ---- sky and clouds: look fixes, rows, prompt wording, autosave ---- */
+/* in the page: the average luminance of one pixel row, over the left strip only (no scenery there), and the row where the sky ends */
+const SKY_ROWS = `(d, w, h) => {
+  const lum = y => { let s = 0; for (let x = 0; x < 40; x++) { const i = (y * w + x) * 4; s += 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]; } return s / 40; };
+  const blue = y => { let s = 0; for (let x = 0; x < 40; x++) s += d[(y * w + x) * 4 + 2]; return s / 40; };
+  let hy = 0, best = 0; for (let y = Math.round(h * 0.2); y < Math.round(h * 0.8); y++) { const j = Math.abs(lum(y + 1) - lum(y)); if (j > best) { best = j; hy = y; } }
+  return { lum, blue, hy };
+}`;
+check('sky: night sky is dark at eye level', async ({ open }) => {
+  const p = await open();
+  const r = await p.evaluate(`(() => { __shotref.pickEnv('night'); __shotref.setClouds({ cover: 0 }); const w = 240, h = 135, d = __shotref.shotPixels(0, w), R = (${SKY_ROWS})(d, w, h); return { top: R.lum(0), above: R.lum(R.hy - 1), hy: R.hy }; })()`);
+  if (!(r.hy > 30 && r.hy < 105)) throw new Error('setup: no horizon found in the night frame: ' + JSON.stringify(r));
+  if (!(r.top < 80) || !(r.top < r.above)) throw new Error('night sky is not dark at the top of an eye-level frame: ' + JSON.stringify(r));
+});
+check('sky: day sky darkens upward', async ({ open }) => {
+  const p = await open();
+  const r = await p.evaluate(`(() => { __shotref.pickEnv('day'); __shotref.setClouds({ cover: 0 }); const w = 240, h = 135, d = __shotref.shotPixels(0, w), R = (${SKY_ROWS})(d, w, h); return { top: R.blue(0), above: R.blue(R.hy - 1), hy: R.hy }; })()`);
+  if (!(r.hy > 30 && r.hy < 105)) throw new Error('setup: no horizon found in the day frame: ' + JSON.stringify(r));
+  if (!(r.top < r.above)) throw new Error('top of the frame is not darker than the horizon: ' + JSON.stringify(r));
+});
+check('sky: clouds show low in an eye-level frame', async ({ open }) => {
+  const p = await open();
+  /* flat cloud over the whole sky: about 3 degrees above the horizon (12 rows up) it must already change the pixels (the old fade left that row almost clear) */
+  const r = await p.evaluate(`(() => { __shotref.pickEnv('day'); __shotref.setClouds({ cover: 0 }); const w = 240, h = 135, a = __shotref.shotPixels(0, w), R0 = (${SKY_ROWS})(a, w, h);
+    __shotref.setClouds({ cover: 1, look: 'flat' }); const b = __shotref.shotPixels(0, w); const y = R0.hy - 12; let diff = 0;
+    for (let x = 0; x < 40; x++) { const i = (y * w + x) * 4; diff += Math.abs(a[i] - b[i]) + Math.abs(a[i + 2] - b[i + 2]); } return { diff: diff / 40, hy: R0.hy }; })()`);
+  if (!(r.diff >= 12)) throw new Error('flat cloud is barely visible 12 rows above the horizon: ' + JSON.stringify(r));
+});
+check('sky: studio has no sun glow', async ({ open }) => {
+  const p = await open();
+  /* aim straight at the sun: the day sky shows the white disc (control), the studio backdrop must not */
+  const r = await p.evaluate(`(() => { const S = __shotref, out = {};
+    for (const env of ['day', 'studio']) { S.pickEnv(env); const st = S.state.settings, az = st.sunAz * Math.PI / 180, el = st.sunEl * Math.PI / 180, c = S.state.camera.base;
+      c.tg = [c.p[0] + 10 * Math.cos(el) * Math.sin(az), c.p[1] + 10 * Math.sin(el), c.p[2] + 10 * Math.cos(el) * Math.cos(az)]; S.state.camera.keys = [];
+      const d = S.shotPixels(0, 240); let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] > 235 && d[i + 1] > 235 && d[i + 2] > 235) n++; out[env] = n; }
+    return out; })()`);
+  if (!(r.day > 0)) throw new Error('setup: the day sky shows no sun disc when aimed at the sun: ' + JSON.stringify(r));
+  if (r.studio !== 0) throw new Error('the studio backdrop shows a sun disc or halo: ' + JSON.stringify(r));
+});
+check('sky: 3% cloud reads Clear in the panel, rows and prompt', async ({ open }) => {
+  const p = await open();
+  await p.evaluate(() => { __shotref.setSimple(false); __shotref.setClouds({ cover: 0.03 }); });
+  await p.waitForTimeout(300);
+  const sky = p.locator('#props .sec').filter({ has: p.locator('h3', { hasText: /^Sky[?]?$/ }) });
+  const t = await sky.innerText();
+  if (!/Clear sky/.test(t)) throw new Error('3% is not worded as clear: ' + t);
+  for (const x of ['Shuffle clouds', 'Look', 'Drift', 'Edges', 'Wind']) if (await sky.getByText(x, { exact: true }).count()) throw new Error(x + ' shown at 3%');
+  if (!(await sky.locator('button.on').allInnerTexts()).some(o => o.trim() === 'Clear')) throw new Error('Clear chip is not active at 3%');
+  if (/cloud|sky/i.test(await p.evaluate(() => __shotref.promptText()))) throw new Error('prompt mentions clouds at 3%');
+});
+check('sky: prompt keeps the light words after a sky phrase', async ({ open }) => {
+  const p = await open();
+  const r = await p.evaluate(() => {
+    const g = (env, c) => { __shotref.pickEnv(env); __shotref.setClouds(c); return __shotref.promptText(); };
+    return { night: g('night', { cover: 0.42, drift: 'slow' }), studio: g('studio', { cover: 0.42, drift: 'slow' }), breezy: g('day', { cover: 0.42, drift: 'breezy' }), fast: g('day', { cover: 0.42, drift: 'fast' }) };
+  });
+  if (!/Partly cloudy sky, night,/.test(r.night)) throw new Error(r.night);
+  if (!/Partly cloudy sky, studio lighting,/.test(r.studio)) throw new Error(r.studio);
+  if (!/Partly cloudy sky, clouds drifting,/.test(r.breezy) || !/Partly cloudy sky, clouds drifting,/.test(r.fast)) throw new Error(r.breezy + ' | ' + r.fast);
+});
+check('sky: clouds survive an autosave reload', async ({ open }) => {
+  const p = await open();
+  const want = { cover: 0.68, look: 'wispy', drift: 'fast', seed: 42 };
+  await p.evaluate(w => __shotref.setClouds(w), want);
+  await p.waitForTimeout(1000);
+  await p.reload();
+  await p.waitForFunction(() => window.__shotref && window.__shotref.state);
+  const c = await p.evaluate(() => __shotref.state.settings.clouds);
+  for (const k of Object.keys(want)) if (c[k] !== want[k]) throw new Error('clouds not restored: ' + JSON.stringify(c));
 });
