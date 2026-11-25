@@ -75,10 +75,12 @@ async function main() {
 
   for (const c of todo) {
     const contexts = [];
-    const newContext = async (viewport, firstLaunch) => {
+    const newContext = async (viewport, firstLaunch, keepFolds) => {
       const ctx = await browser.newContext({ viewport: viewport || { width: 1440, height: 900 }, acceptDownloads: false });
       await ctx.addInitScript(DL_SCRIPT);
       if (!firstLaunch) await ctx.addInitScript(() => { try { localStorage.setItem('shotref.seenHelp', '1'); } catch (e) { } });
+      /* the rare panel sections start folded; most checks work inside them, so they start open here unless a check asks for the real default */
+      if (!keepFolds) await ctx.addInitScript(() => { try { const p = JSON.parse(localStorage.getItem('shotref.prefs') || '{}'), c = p.closedSecs || {}; for (const k of ['Animation', 'Attach', 'Save as a reusable set', 'Mount']) if (!(k in c)) c[k] = false; p.closedSecs = c; localStorage.setItem('shotref.prefs', JSON.stringify(p)); } catch (e) { } });
       contexts.push(ctx);
       return ctx;
     };
@@ -97,7 +99,7 @@ async function main() {
       ctx, fixtures: FIX, base,
       open: (p, o = {}) => pageOf(o.ctx || ctx, p, o.firstLaunch),
       /* isolated profile; opts {viewport, firstLaunch} */
-      freshContext: async (o = {}) => { const cx = await newContext(o.viewport, o.firstLaunch); return { ctx: cx, open: p => pageOf(cx, p, o.firstLaunch) }; },
+      freshContext: async (o = {}) => { const cx = await newContext(o.viewport, o.firstLaunch, o.keepFolds); return { ctx: cx, open: p => pageOf(cx, p, o.firstLaunch) }; },
       /* captured downloads on a page: .wait('.png') resolves {name,size,bytes,text()} */
       downloads: page => ({
         async wait(ext, ms = 45000) {
@@ -2927,6 +2929,7 @@ check('parenting: duplicating a parent and its child keeps the child on the copy
 
 check('parenting: the panel has Ride with (no loops offered), the scene list shows the parent tag, undo takes it back', async ({ open }) => {
   const p = await open(); await settle(p, 300);
+  await p.evaluate(() => window.__shotref.setSimple(false));
   const car = await mkObj(p, 'box', [0, 0, 0], { name: 'Truck' });
   const cup = await mkObj(p, 'ball', [0, 0, 0], { name: 'Mug', opts: { free: true } });
   await p.evaluate(i => window.__shotref.select(i), cup); await settle(p, 300);
@@ -3246,15 +3249,15 @@ check('restoring an autosave at start never moves anything either', async ({ ope
   noErrors(p);
 });
 
-check('gear menu: "Keep things on the ground" switches the rule; switching on moves nothing', async ({ open }) => {
+check('settings: "Keep things on the ground" switches the rule; switching on moves nothing', async ({ open }) => {
   const p = await open(); await settle(p, 300);
-  await p.click('#bMenu');
-  ok(await p.evaluate(() => { const b = document.querySelector('#ctxMenu [data-cmd="ground"]'); return !!b && b.getAttribute('aria-checked') === 'true'; }), 'on by default, with a tick');
-  await p.click('#ctxMenu [data-cmd="ground"]'); await settle(p, 200);
+  await openSettings(p);
+  ok(await p.isChecked('#setBody [data-pref="ground"]'), 'on by default, with a tick');
+  await p.click('#setBody [data-pref="ground"]'); await p.keyboard.press('Escape'); await settle(p, 200);
   ok(await p.evaluate(() => window.__shotref.getPref('ground', true)) === false, 'switched off');
   const id = await mkObj(p, 'box', [3, 0, 3], { base: { p: [3, 2, 3], r: [0, 0, 0], s: [1, 1, 1] } }); await settle(p, 400);
   ok(Math.abs((await objOf(p, id)).base.p[1] - 2) < 0.001, 'off: nothing is dropped');
-  await gearCmd(p, 'ground'); await settle(p, 700);
+  await openSettings(p); await p.click('#setBody [data-pref="ground"]'); await p.keyboard.press('Escape'); await settle(p, 700);
   const o = await objOf(p, id);
   ok(Math.abs(o.base.p[1] - 2) < 0.001 && o.opts.free === true, 'switching on leaves the raised box where it is, as Can float: ' + JSON.stringify([o.base.p, o.opts]));
   noErrors(p);
@@ -3614,6 +3617,7 @@ check('light the shot from: Front, Side left, Side right, Backlight, Top place t
 
 check('shadows: Cast shadows and Softness change the sun in the scene and in the exported frame; Shadow depth maps to the fill light', async ({ open }) => {
   const p = await open(); await settle(p, 300);
+  await p.evaluate(() => window.__shotref.setSimple(false)); /* Softness and Shadow depth are Advanced controls */
   await p.evaluate(() => { const S = window.__shotref; S.select(null); S.state.settings.sunEl = 40; S.state.settings.sunAz = 60; S.changed(true, true); }); await settle(p, 300);
   ok(await p.evaluate(() => document.querySelector('#props').textContent.includes('Cast shadows')), 'Cast shadows is in the Scene panel');
   ok((await sunInfo(p)).castShadow === true && Math.abs((await sunInfo(p)).radius - 3.64) < 0.01, 'default: shadows on, radius 1 + (0.3 + 0.7 x 0.2 few clouds) x 6');
@@ -3964,10 +3968,11 @@ check('Export step opens the Export panel (not a window) with output, this shot,
   ok(await p.evaluate(() => window.__shotref.view) === 'camera', 'the Export step shows the camera view');
   ok(await p.evaluate(() => document.querySelector('#stepSeg .on').dataset.step) === 'export', 'step pill');
   const heads = await p.evaluate(() => [...document.querySelectorAll('#props .sec > h3')].map(x => x.textContent.replace(/\?$/, '')));
-  for (const w of ['Export', 'This shot', 'All shots', 'Prompt for the AI model']) ok(heads.includes(w), 'no "' + w + '" section: ' + heads.join());
+  for (const w of ['Export', 'Render video', 'Frame pack', 'Prompt for the AI model']) ok(heads.includes(w), 'no "' + w + '" section: ' + heads.join());
   const btns = await p.evaluate(() => [...document.querySelectorAll('#props button')].map(b => b.textContent.trim()));
   for (const w of ['Render video (MP4)', 'Frame pack (zip)', 'Current frame (PNG)', 'Copy frame', 'Video options…', 'Copy prompt', 'Rewrite from scene']) ok(btns.includes(w), 'no "' + w + '" button: ' + btns.join(' | '));
-  ok(!btns.some(b => /^Every shot/.test(b)), 'Every shot offered with one shot');
+  ok(!btns.some(b => /^Every shot/.test(b)) && !heads.includes('All shots'), 'Every shot offered with one shot');
+  await p.click('#xoChange'); await settle(p, 100); /* the format settings are folded behind the summary line */
   ok((await p.evaluate(() => document.querySelectorAll('#props .stylechips button').length)) === 4, 'four render style chips');
   await p.click('#props .stylechips button >> nth=1'); await settle(p, 150);
   ok(await p.evaluate(() => window.__shotref.state.settings.style) === 'clay', 'Clay chip did not set the style');
@@ -3976,7 +3981,7 @@ check('Export step opens the Export panel (not a window) with output, this shot,
   ok(sel.length === 2 && sel[0] === 7 && sel[1] === 4, 'aspect and size dropdowns: ' + sel);
   await p.selectOption('#props select >> nth=0', '9:16'); await settle(p, 150);
   ok(await p.evaluate(() => window.__shotref.state.settings.aspect) === '9:16', 'aspect');
-  const sum = await p.evaluate(() => document.querySelector('#props .sec .note').textContent);
+  const sum = await p.evaluate(() => document.querySelector('#xoSummary').textContent);
   ok(/1080×1920/.test(sum), 'summary line: ' + sum);
   await p.click('#xoOptions'); await settle(p, 150);
   ok(await p.evaluate(() => !document.querySelector('#mExport').classList.contains('hidden')), 'Video options did not open the window');
@@ -4030,6 +4035,7 @@ check('prompt: your edits stay until you press Rewrite from scene', async ({ ope
   const orig = await p.inputValue('#props textarea.promptbox');
   ok(orig.length > 60 && orig === await p.evaluate(() => window.__shotref.promptText()), 'box holds the written prompt');
   await p.fill('#props textarea.promptbox', 'My own words.');
+  await p.click('#xoChange');
   await p.selectOption('#props select >> nth=0', '1:1'); await settle(p, 200);
   ok(await p.inputValue('#props textarea.promptbox') === 'My own words.', 'the edit was lost when the panel rebuilt');
   await p.keyboard.press('Escape'); await p.keyboard.press('3'); await settle(p, 200);
@@ -4494,17 +4500,17 @@ check('settings: every preference has a control, and the old placeholder text is
   ok(await p.isVisible('#setBody button:has-text("Reset all settings")') && await p.isVisible('#setBody button:has-text("Clear recent projects")') && await p.isVisible('#setBody button:has-text("Show quick start")'), 'buttons missing');
   noErrors(p);
 });
-check('settings: "Keep things on the ground" in Settings and in the gear menu always agree', async ({ open }) => {
+check('settings: "Keep things on the ground" lives in Settings only, not in the gear menu', async ({ open }) => {
   const p = await open(); await openSettings(p);
   ok(await p.isChecked('#setBody [data-pref="ground"]'), 'should start on');
   await p.click('#setBody [data-pref="ground"]');
   ok((await prefsOf(p)).ground === false, 'pref not saved: ' + JSON.stringify(await prefsOf(p)));
   await p.keyboard.press('Escape');
   await p.click('#bMenu');
-  ok(await p.getAttribute('#ctxMenu [data-cmd="ground"]', 'aria-checked') === 'false', 'gear menu should now be off');
-  await p.click('#ctxMenu [data-cmd="ground"]');
+  ok(!(await p.evaluate(() => !!document.querySelector('#ctxMenu [data-cmd="ground"]'))), 'the gear menu still has a second copy of the switch');
+  await p.keyboard.press('Escape');
   await openSettings(p);
-  ok(await p.isChecked('#setBody [data-pref="ground"]'), 'Settings should be on again after the gear menu switched it on');
+  ok(!(await p.isChecked('#setBody [data-pref="ground"]')), 'Settings should still be off');
   noErrors(p);
 });
 check('settings: new-scene defaults apply to New and starter sets, never to opened files', async ({ open }) => {
@@ -4691,11 +4697,12 @@ check('split view: placing works from the left half and the camera frame stays i
 
 /* ---- My sets ---- */
 const libOf = p => p.evaluate(() => { try { return JSON.parse(localStorage.getItem('shotref.library') || '[]'); } catch (e) { return null; } });
-const saveSetFrom = async (p, name) => { await p.fill('.setsave input', name); await p.click('.setsave button'); await settle(p, 250); };
+const saveSetFrom = async (p, name) => { await p.evaluate(() => window.__shotref.setSimple(false)); await settle(p, 150); await p.fill('.setsave input', name); await p.click('.setsave button'); await settle(p, 250); };
 check('my sets: save the selection, see it in the Add tab, place it as a group, delete it', async ({ open }) => {
   const p = await open(); await settle(p, 300);
   await p.evaluate(() => { const S = window.__shotref; S.selectMany(S.state.objects.slice(0, 2).map(o => o.id)); });
   await settle(p, 200);
+  await p.evaluate(() => window.__shotref.setSimple(false)); await settle(p, 200);
   ok(await p.isVisible('.setsave'), 'no "Save as a reusable set" section for a selection');
   const before = await p.evaluate(() => JSON.stringify(window.__shotref.state)), hist0 = await p.evaluate(() => window.__shotref.history.length);
   await saveSetFrom(p, 'Corner');
@@ -4732,6 +4739,7 @@ check('my sets: one item or the whole scene can be saved, photos and models are 
   const p = await open(); await settle(p, 300);
   await p.evaluate(() => { const S = window.__shotref; S.assets.m1 = { kind: 'model', name: 'x.glb', b64: 'AAAA', mime: 'model/gltf-binary' }; S.addObject('model', { asset: 'm1' }, false); S.changed(true); S.select(null); });
   await settle(p, 300);
+  await p.evaluate(() => window.__shotref.setSimple(false)); await settle(p, 200);
   ok(await p.isVisible('.setsave'), 'nothing selected: the panel should offer to save the scene as a set');
   await saveSetFrom(p, 'Whole');
   let lib = await libOf(p);
@@ -5061,15 +5069,15 @@ check('right panel: notes fold into a ? on the heading, clicking a heading folds
   ok(await p.$('#props .sec > p.note') === null && await p.$('#props .sec > div > p.note') === null, 'notes are still shown inline');
   const q = await p.evaluate(() => document.querySelector('#props .sec > h3 > .qtip').dataset.q);
   ok(q && q.length > 10, 'the ? has no text');
-  const head = '#props .sec:has(> h3 > .qtip) > h3';
+  const head = '#props .sec:not(:first-child):has(> h3 > .qtip) > h3'; /* the first heading is a title, not a fold toggle */
   await p.click(head); await settle(p, 200);
   ok(await p.evaluate(() => !!document.querySelector('#props .sec.closed')), 'clicking the heading did not fold the section');
-  const saved = await p.evaluate(() => Object.keys(window.__shotref.getPref('closedSecs', {})));
+  const saved = await p.evaluate(() => Object.entries(window.__shotref.getPref('closedSecs', {})).filter(e => e[1]).map(e => e[0]));
   ok(saved.length === 1, 'folded state not saved in prefs: ' + saved);
   await p.evaluate(() => { window.__shotref.select('camera'); window.__shotref.select(null); }); await settle(p, 300);
   ok(await p.evaluate(() => !!document.querySelector('#props .sec.closed')), 'the section opened again after the panel was rebuilt');
   await p.click('#props .sec.closed > h3'); await settle(p, 200);
-  ok(await p.evaluate(() => !document.querySelector('#props .sec.closed') && Object.keys(window.__shotref.getPref('closedSecs', {})).length === 0), 'opening it did not forget it');
+  ok(await p.evaluate(() => !document.querySelector('#props .sec.closed') && Object.values(window.__shotref.getPref('closedSecs', {})).filter(Boolean).length === 0), 'opening it did not forget it');
   noErrors(p);
 });
 
@@ -5398,7 +5406,7 @@ check('Help heading in the gear menu starts both tours; Quick start page has bot
   await p.click('#bMenu');
   const m = await p.evaluate(() => ({ head: [...document.querySelectorAll('#ctxMenu .head')].map(e => e.textContent), cmds: [...document.querySelectorAll('#ctxMenu [data-cmd]')].map(e => e.dataset.cmd), role: document.querySelector('#ctxMenu [data-cmd="tour-basic"]').getAttribute('role') }));
   ok(m.head.includes('Help'), 'no Help heading: ' + m.head);
-  ok(m.cmds.join() === 'advanced,ground,settings,tour-basic,help,about', 'items (hands-on tour switched off): ' + m.cmds.join());
+  ok(m.cmds.join() === 'advanced,settings,tour-basic,help,about', 'items (hands-on tour switched off): ' + m.cmds.join());
   ok(m.role === 'menuitemcheckbox', 'the tour item has no tick slot');
   await p.click('#ctxMenu [data-cmd="tour-basic"]');
   ok(await p.evaluate(() => window.__shotref.tour.active()), 'the gear menu item did not start the basic tour');
@@ -6311,11 +6319,13 @@ check('sky: advanced adds amount, edges and direction, and one sky section holds
   await p.waitForTimeout(300);
   if (await sky.getByText('Wind', { exact: true }).count()) throw new Error('wind shown with Still');
 });
-check('sky: the Sun panel has the same Sky section', async ({ open }) => {
+check('sky: the Sun panel has no Sky section, only a link to the Scene panel that has it', async ({ open }) => {
   const p = await open();
-  await p.evaluate(() => __shotref.select('sun'));
+  await p.evaluate(() => __shotref.select('sun')); await settle(p, 250);
   const sky = p.locator('#props .sec').filter({ has: p.locator('h3', { hasText: /^Sky[?]?$/ }) });
-  if (!(await sky.getByRole('button', { name: 'Scattered', exact: true }).count())) throw new Error('no Sky section in the Sun panel');
+  if (await sky.count()) throw new Error('the Sun panel still has a Sky section');
+  await p.click('#props [data-role="to-scene"]'); await settle(p, 250);
+  if (!(await sky.getByRole('button', { name: 'Scattered', exact: true }).count())) throw new Error('no Sky section in the Scene panel');
 });
 check('sky: clear keeps the old prompt', async ({ open }) => {
   const p = await open();
@@ -6410,4 +6420,74 @@ check('sky: clouds survive an autosave reload', async ({ open }) => {
   await p.waitForFunction(() => window.__shotref && window.__shotref.state);
   const c = await p.evaluate(() => __shotref.state.settings.clouds);
   for (const k of Object.keys(want)) if (c[k] !== want[k]) throw new Error('clouds not restored: ' + JSON.stringify(c));
+});
+check('declutter: the Sun panel in Simple shows sun and shadows only, with a link to the Scene panel', async ({ open }) => {
+  const p = await open();
+  await p.evaluate(() => { __shotref.setSimple(true); __shotref.select('sun'); }); await settle(p, 300);
+  const t = await p.innerText('#props');
+  for (const x of ['Sun colour', 'Direction', 'Height', 'Shadow depth', 'Sun strength', 'Softness', 'Environment']) ok(!t.includes(x), x + ' shown in Simple: ' + t);
+  for (const x of ['Light the shot from', 'Time of day', 'Cast shadows', 'Sky and clouds']) ok(t.includes(x), x + ' missing');
+  await p.evaluate(() => { __shotref.setSimple(false); }); await settle(p, 300);
+  const a = await p.innerText('#props');
+  ok(a.includes('Direction') && a.includes('Sun colour') && a.includes('Shadow depth'), 'Advanced lost its sun controls');
+  await p.click('#props [data-role="to-scene"]'); await settle(p, 300);
+  ok(await p.evaluate(() => __shotref.selected) === null, 'the link did not open the Scene panel');
+  ok((await p.innerText('#props')).includes('Sky'), 'Scene panel has no Sky section');
+});
+check('declutter: Getting started and Start from a set show only on an empty scene', async ({ open }) => {
+  const p = await open();
+  await p.evaluate(() => { const S = __shotref; S.state.objects.length = 0; S.select(null); S.changed(true, true); }); await settle(p, 300);
+  const empty = await p.innerText('#props');
+  ok(empty.includes('Getting started') && empty.includes('Start from a set'), 'missing on an empty scene');
+  await p.evaluate(() => { __shotref.addObject('person'); __shotref.select(null); }); await settle(p, 300);
+  const full = await p.innerText('#props');
+  ok(!full.includes('Getting started') && !full.includes('Start from a set'), 'still shown with objects in the scene');
+});
+check('declutter: Frame with camera selects the camera with that person picked', async ({ open }) => {
+  const p = await open();
+  const ids = await p.evaluate(() => { const S = __shotref; while (S.state.objects.filter(o => o.type === 'person').length < 2) S.addObject('person'); return S.state.objects.filter(o => o.type === 'person').map(o => o.id); });
+  ok(ids.length === 2, 'need two people');
+  await p.evaluate(id => { __shotref.select(id); }, ids[0]); await settle(p, 300);
+  ok(!(await p.innerText('#props')).includes('Keep camera on this'), 'the Camera section is back');
+  await p.evaluate(id => { __shotref.select(id); }, ids[1]); await settle(p, 300);
+  await p.click('#props [data-role="frame-cam"]'); await settle(p, 300);
+  ok(await p.evaluate(() => __shotref.selected) === 'camera', 'camera not selected');
+  const v = await p.evaluate(() => { const s = [...document.querySelectorAll('#props select')].find(x => [...x.options].some(o => o.text.includes('Person'))); return s && s.value; });
+  ok(v === ids[1], 'the person was not picked: ' + v);
+  ok((await p.innerText('#props')).includes('Frame a person'), 'Shot tab not open');
+});
+check('declutter: the Export panel folds the format behind a summary line and hides All shots with one shot', async ({ open }) => {
+  const p = await open();
+  await p.evaluate(() => { __shotref.select('export'); }); await settle(p, 300);
+  const sum = (await p.innerText('#xoSummary')).trim();
+  ok(/^\d+×\d+ · 16:9 · Shaded$/.test(sum), 'summary: ' + sum);
+  ok(!(await p.isVisible('#xoFormat')), 'format settings not folded');
+  ok(!(await p.innerText('#props')).includes('All shots'), 'All shots shown with one shot');
+  const order = await p.evaluate(() => [...document.querySelectorAll('#props .sec h3')].map(h => h.textContent.replace('?', '').trim()));
+  ok(order.indexOf('Render video') < order.indexOf('Frame pack') && order.indexOf('Frame pack') < order.findIndex(x => x.startsWith('Prompt')), 'order: ' + order);
+  await p.click('#xoChange'); await settle(p, 150);
+  ok(await p.isVisible('#xoFormat'), 'Change did not open the format settings');
+});
+check('declutter: the hint bar shows for the first 5 launches, then is off unless the user turns it on', async ({ freshContext }) => {
+  const shown = async (c, prefs) => {
+    const p = await c.open(); await settle(p, 200);
+    return p.evaluate(() => getComputedStyle(document.querySelector('#hint')).display !== 'none');
+  };
+  const a = await freshContext();
+  ok(await shown(a), 'hint off on the first launch');
+  const b = await freshContext(); await b.ctx.addInitScript(() => { try { localStorage.setItem('shotref.prefs', JSON.stringify({ launchCount: 5 })); } catch (e) { } });
+  ok(!(await shown(b)), 'hint still on at launch 6');
+  const c = await freshContext(); await c.ctx.addInitScript(() => { try { localStorage.setItem('shotref.prefs', JSON.stringify({ launchCount: 9, showHints: true })); } catch (e) { } });
+  ok(await shown(c), 'an explicit setting to show the hint was ignored');
+});
+check('declutter: Animation starts folded, opening it is remembered', async ({ freshContext }) => {
+  const fc = await freshContext({ keepFolds: true });
+  const p = await fc.open(); await settle(p, 300);
+  await p.evaluate(() => { const S = __shotref; S.select(S.state.objects[0].id); }); await settle(p, 300);
+  const closed = () => p.evaluate(() => { const s = [...document.querySelectorAll('#props .sec')].find(x => /^Animation/.test(x.querySelector('h3').textContent)); return !!s && s.classList.contains('closed'); });
+  ok(await closed(), 'Animation is not folded by default');
+  await p.click('#props .sec:has(> h3:text-matches("^Animation")) > h3'); await settle(p, 200);
+  ok(!(await closed()), 'did not open');
+  await p.evaluate(() => { __shotref.select(null); __shotref.select(__shotref.state.objects[0].id); }); await settle(p, 300);
+  ok(!(await closed()), 'the choice to open it was not remembered');
 });

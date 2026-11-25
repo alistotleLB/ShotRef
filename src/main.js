@@ -89,10 +89,12 @@ function savePrefs() { try { localStorage.setItem(PREFS_KEY, JSON.stringify(pref
 function setPref(k, v) { prefs[k] = v; savePrefs(); }
 /* the Settings window's preferences: what each one is when nothing is stored, and the values a list-type one may take.
    pref(k) always answers with a usable value (a stored value of the wrong kind or outside its list counts as not stored). */
+/* the hint line under the view shows for the first few launches, then is off unless the user turns it on in Settings */
+const HINT_LAUNCHES = 5;
 const PREF_DEFAULTS = {
   newDuration: 5, newFps: 24, newAspect: '16:9', newSize: 1920, walkSpeed: 1.4, autoSit: true, ground: true,
   videoQuality: 'high', filePrefix: 'shotref', dateStamp: true, quality: 'high', layout: 'single', liveShadows: true, pipDefault: true,
-  showLabels: true, showArrows: true, showHints: true, showSun: true, selBar: true, camPoints: true,
+  showLabels: true, showArrows: true, get showHints() { return (+getPref('launchCount', 1) || 1) <= HINT_LAUNCHES; }, showSun: true, selBar: true, camPoints: true,
   orbitSpeed: 1, zoomSpeed: 1, flySpeed: 2, snapStep: 0.25, rotSnap: 15, autosave: true, recentOn: true, keepRecent: 12,
 };
 const PREF_LISTS = {
@@ -1983,7 +1985,7 @@ function addPerson(body, place = true, at = null) {
     o.color = n ? SHIRTS[(n + 2) % SHIRTS.length] : b.color; o.name = nextName(b.label);
   });
 }
-/* the Add | Scene tabs on the left; the last one is remembered */
+/* the Add | Items tabs on the left; the last one is remembered */
 function setLeftTab(t, save = true) {
   if (t !== 'scene') t = 'add';
   if (save) setPref('leftTab', t);
@@ -2179,12 +2181,14 @@ function keySection(kind) {
   return sec('Animation', line,
     h('div', { class: 'btns' },
       h('button', { onclick: addKeySel, title: 'K' }, '◆ Add key here'),
-      h('button', { onclick: removeKeySel, disabled: !here }, 'Remove key'),
-      h('button', { onclick: () => { if (kind === 'camera') { state.camera.base = clone(evalCamRaw(T)); state.camera.keys = []; } else { const o = getObj(kind); o.base = clone(evalLocal(o, T)); o.keys = []; } changed(true, true); toast('Animation cleared'); }, disabled: !keys.length }, 'Clear')),
+      h('button', { class: 'quiet', onclick: removeKeySel, disabled: !here }, 'Remove key'),
+      h('button', { class: 'quiet', onclick: () => { if (kind === 'camera') { state.camera.base = clone(evalCamRaw(T)); state.camera.keys = []; } else { const o = getObj(kind); o.base = clone(evalLocal(o, T)); o.keys = []; } changed(true, true); toast('Animation cleared'); }, disabled: !keys.length }, 'Clear')),
     h('p', { class: 'note' }, keys.length ? 'Move the playhead, then change anything. A key is added for you at that time.' : 'Press ◆ Add key to start animating. Then move the playhead and change position. A second key is added for you.'));
 }
 
 /* the right panel's sections: explanatory notes fold into a "?" on the heading, and clicking a heading folds the section (remembered per heading in prefs.closedSecs) */
+/* rare sections start folded; opening one is remembered (false) and wins over this default */
+const SECS_FOLDED = ['Animation', 'Attach', 'Save as a reusable set', 'Mount'];
 function decorateSections(root) {
   const closed = getPref('closedSecs', {}) || {};
   for (const sc of root.querySelectorAll('.sec')) {
@@ -2198,10 +2202,10 @@ function decorateSections(root) {
       if (text) hd.append(h('span', { class: 'qtip', tabindex: 0, 'data-q': text, onclick: e => e.stopPropagation() }, '?'));
     }
     if (!name) continue;
-    if (closed[name]) sc.classList.add('closed');
+    if (closed[name] || (!(name in closed) && SECS_FOLDED.includes(name))) sc.classList.add('closed');
     hd.addEventListener('click', () => {
       const on = sc.classList.toggle('closed'), now = { ...(getPref('closedSecs', {}) || {}) };
-      if (on) now[name] = true; else delete now[name];
+      if (on) now[name] = true; else if (SECS_FOLDED.includes(name)) now[name] = false; else delete now[name];
       setPref('closedSecs', now);
     });
   }
@@ -2218,25 +2222,25 @@ function renderPropsInner() {
   if (selected === 'sun') return propsSun(p);
   if (selected === 'camera' || selected === 'target' || (view === 'camera' && !selected)) return propsCamera(p);
   const o = selected && getObj(selected);
-  if (o && isMulti()) { propsMulti(p); p.append(setSaveSection(() => selObjs(), 'the ' + selIds.length + ' selected items')); return; }
-  if (o) { propsObject(p, o); if (o.type !== 'image' && o.type !== 'model') p.append(setSaveSection(() => [o], o.name)); return; }
+  if (o && isMulti()) { propsMulti(p); if (!simple) p.append(setSaveSection(() => selObjs(), 'the ' + selIds.length + ' selected items')); return; }
+  if (o) { propsObject(p, o); if (!simple && o.type !== 'image' && o.type !== 'model') p.append(setSaveSection(() => [o], o.name)); return; }
   propsScene(p);
-  if (state.objects.length) p.append(setSaveSection(() => state.objects, 'everything in the scene'));
+  if (state.objects.length && !simple) p.append(setSaveSection(() => state.objects, 'everything in the scene'));
 }
 function propsScene(p) {
   const s = state.settings;
   const set = (k, v, c = true) => { s[k] = v; applyEnv(); changed(c); };
   p.append(sec('Scene', h('p', { class: 'note', style: 'margin:0 0 8px' }, 'Nothing selected. Click an object, or click Shot camera in the list or the timeline.'),
-    h('div', { class: 'chips' }, Object.entries(ENV).map(([k, e]) => h('button', { class: s.env === k ? 'on' : '', onclick: () => pickEnv(k) }, e.label)))));
+    h('div', { class: 'chips' }, Object.entries(ENV).map(([k, e]) => h('button', { class: s.env === k ? 'on acc' : '', onclick: () => pickEnv(k) }, e.label)))));
   p.append(skySection(!simple));
-  p.append(sec('Start from a set', h('p', { class: 'note', style: 'margin:0 0 6px' }, 'Ready-made layouts for common blocking situations.'),
-    h('button', { class: 'primary', style: 'width:100%', onclick: () => openStarters() }, 'Browse starter sets…')));
+  if (!state.objects.length) p.append(sec('Start from a set', h('p', { class: 'note', style: 'margin:0 0 6px' }, 'Ready-made layouts for common blocking situations.'),
+    h('button', { style: 'width:100%', onclick: () => openStarters() }, 'Browse starter sets…')));
   if (simple) {
     p.append(sec('Ground', check('Show ground', () => s.groundOn, v => set('groundOn', v)), check('Grid in editor', () => s.gridOn, v => { set('gridOn', v); syncTopUI(); }),
       h('p', { class: 'note' }, 'Sky colours and fog are in Advanced mode (gear menu, top right).')));
   }
   p.append(sunSection(!simple));
-  p.append(sec('Getting started', h('ol', { class: 'steps', style: 'font-size:12px;margin:0' },
+  if (!state.objects.length) p.append(sec('Getting started', h('ol', { class: 'steps', style: 'font-size:12px;margin:0' },
     h('li', null, 'Add people and props from the left: click a tile, then click where it goes, or drag the tile onto the view.'),
     h('li', null, 'Drag them on the floor, turn them with the orange ring, draw walk paths.'),
     h('li', null, 'Frame the shot: Set start, reframe, Set end. Or use a shot size or move.'),
@@ -2321,8 +2325,8 @@ function moveCard() {
     h('div', { class: 'mc-title' }, mv.title), h('div', { class: 'mc-sub' }, mv.sub),
     h('div', { class: 'mc-thumbs' }, thumb('Start', th.s, ends.s, 0), h('span', { class: 'mc-arrow' }, '→'), thumb('End', th.e, ends.e, lastT())),
     h('div', { class: 'btns big2' },
-      h('button', { class: ends.s ? 'on' : '', onclick: () => setShotEnd('start'), title: 'Save what the camera sees now as the first frame' }, 'Set start'),
-      h('button', { class: ends.e ? 'on' : '', onclick: () => setShotEnd('end'), title: 'Save what the camera sees now as the last frame' }, 'Set end')),
+      h('button', { class: ends.s ? 'on acc' : '', onclick: () => setShotEnd('start'), title: 'Save what the camera sees now as the first frame' }, 'Set start'),
+      h('button', { class: ends.e ? 'on acc' : '', onclick: () => setShotEnd('end'), title: 'Save what the camera sees now as the last frame' }, 'Set end')),
     keyed ? h('div', { class: 'btns' }, h('button', { onclick: () => { setTime(0); setPlaying(true); } }, '▶ Play the move'), h('button', { onclick: makeCameraStatic }, 'Make static')) : null,
     h('p', { class: 'note' }, ends.s && ends.e ? 'Reframe at either end and press Set start or Set end again to change it.' : 'Frame the opening shot → Set start. Frame the closing shot → Set end.')));
 }
@@ -2370,12 +2374,12 @@ function sunSection(adv) {
     h('div', { class: 'chips' }, [['front', 'Front'], ['left', 'Side left'], ['right', 'Side right'], ['back', 'Backlight'], ['top', 'Top']].map(([k, l]) => h('button', { onclick: () => lightFrom(k), title: 'Place the sun relative to where the camera looks' }, l))),
     slider('Time of day', () => typeof s.tod === 'number' ? s.tod : 14, (v, c) => { const a = todSun(v); s.tod = v; s.sunEl = a.el; s.sunColor = a.color; s.sunInt = a.int; applyEnv(); changed(c); }, { min: 5, max: 20, step: 0.25, fmt: todLabel }),
     h('div', { class: 'row' }, note),
-    slider('Direction', () => s.sunAz, (v, c) => set('sunAz', v, c), { min: 0, max: 360, step: 1, fmt: v => v.toFixed(0) + '\u00b0' }),
-    slider('Height', () => s.sunEl, (v, c) => set('sunEl', v, c), { min: 2, max: 90, step: 1, fmt: v => v.toFixed(0) + '\u00b0' }),
+    adv ? slider('Direction', () => s.sunAz, (v, c) => set('sunAz', v, c), { min: 0, max: 360, step: 1, fmt: v => v.toFixed(0) + '\u00b0' }) : null,
+    adv ? slider('Height', () => s.sunEl, (v, c) => set('sunEl', v, c), { min: 2, max: 90, step: 1, fmt: v => v.toFixed(0) + '\u00b0' }) : null,
     check('Cast shadows', () => s.shadows !== false, v => { s.shadows = v; applyEnv(); changed(true, true); }),
-    s.shadows !== false ? slider('Softness', () => typeof s.shadowSoft === 'number' ? s.shadowSoft : 0.3, (v, c) => set('shadowSoft', v, c), { min: 0, max: 1, step: 0.01, fmt: v => v < 0.15 ? 'hard' : v < 0.5 ? 'medium' : 'soft' }) : null,
-    slider('Shadow depth', () => clamp(1 - (s.ambInt - 0.2) / 2.3, 0, 1), (v, c) => set('ambInt', r4(0.2 + (1 - v) * 2.3), c), { min: 0, max: 1, step: 0.01, fmt: v => v < 0.35 ? 'light' : v < 0.7 ? 'normal' : 'deep' }),
-    slider('Sun strength', () => s.sunInt, (v, c) => set('sunInt', v, c), { min: 0, max: 5, step: 0.05 }),
+    adv && s.shadows !== false ? slider('Softness', () => typeof s.shadowSoft === 'number' ? s.shadowSoft : 0.3, (v, c) => set('shadowSoft', v, c), { min: 0, max: 1, step: 0.01, fmt: v => v < 0.15 ? 'hard' : v < 0.5 ? 'medium' : 'soft' }) : null,
+    adv ? slider('Shadow depth', () => clamp(1 - (s.ambInt - 0.2) / 2.3, 0, 1), (v, c) => set('ambInt', r4(0.2 + (1 - v) * 2.3), c), { min: 0, max: 1, step: 0.01, fmt: v => v < 0.35 ? 'light' : v < 0.7 ? 'normal' : 'deep' }) : null,
+    adv ? slider('Sun strength', () => s.sunInt, (v, c) => set('sunInt', v, c), { min: 0, max: 5, step: 0.05 }) : null,
     adv ? colorRow('Sun colour', () => s.sunColor, (v, c) => set('sunColor', v, c)) : null,
     h('p', { class: 'note' }, 'Tip: drag the yellow sun in the editor or top view and watch the shadows move. Shadows follow the area the camera is looking at.'));
 }
@@ -2383,10 +2387,8 @@ function sunSection(adv) {
 function propsSun(p) {
   const s = state.settings;
   p.append(sec('Sun', h('p', { class: 'note', style: 'margin:0' }, 'Drag the sun in the 3D view, or use the controls below. It lights the whole scene.')));
-  p.append(sunSection(true));
-  p.append(sec('Environment', h('div', { class: 'chips' }, Object.entries(ENV).map(([k, e]) => h('button', { class: s.env === k ? 'on' : '', onclick: () => pickEnv(k) }, e.label))),
-    h('p', { class: 'note' }, 'Presets change the sky, sun and fill light together.')));
-  p.append(skySection(!simple));
+  p.append(sunSection(!simple));
+  p.append(h('div', { class: 'btns', style: 'margin:2px 0 8px' }, h('button', { 'data-role': 'to-scene', title: 'Environment presets, sky colours and clouds', onclick: () => select(null) }, 'Sky and clouds: Scene panel')));
 }
 /* ---- the camera panel: Shot | Move | Lens | Photo | Output ---- */
 const CAM_TABS = [['shot', 'Shot'], ['move', 'Move'], ['lens', 'Lens'], ['photo', 'Photo'], ['output', 'Output']];
@@ -2394,7 +2396,7 @@ function propsCamera(p) {
   const c = state.camera, s = state.settings, dof = ensureDof();
   p.append(sec('Shot camera',
     h('div', { class: 'btns' },
-      h('button', { class: view === 'camera' ? 'on' : '', onclick: () => setView(view === 'camera' ? 'editor' : 'camera') }, view === 'camera' ? 'Back to editor' : 'Look through camera'),
+      h('button', { class: view === 'camera' ? 'quiet' : '', onclick: () => setView(view === 'camera' ? 'editor' : 'camera') }, view === 'camera' ? 'Back to editor' : 'Look through camera'),
       view === 'editor' ? h('button', { onclick: camToEditorView, title: 'Place the camera where the editor view is' }, 'Camera to editor view') : null),
   ));
   const tab = CAM_TABS.some(t => t[0] === getPref('camTab')) ? getPref('camTab') : 'move';
@@ -2483,7 +2485,7 @@ function propsMulti(p) {
     sc.append(h('div', { class: 'row' }, h('label', null, 'Name'), nm));
   }
   sc.append(h('div', { class: 'chips', style: 'margin:4px 0 6px' }, list.map(o => h('button', { onclick: () => select(o.id, 'single'), title: 'Select only this one (or Alt-click it)' }, o.name))),
-    h('p', { class: 'note' }, 'Drag any of them to move them all. The orange ring turns them together. Shift-click adds or removes items. ' + (whole ? '' : list.length + ' items selected.')));
+    h('p', { class: 'note' }, 'Drag any of them to move them all. The orange ring turns them together. Shift-click adds or removes items.'));
   p.append(sc);
   const allLocked = list.every(o => o.locked), people = list.filter(o => o.type === 'person');
   p.append(sec('Arrange',
@@ -2493,7 +2495,7 @@ function propsMulti(p) {
     h('div', { class: 'btns' },
       h('button', { onclick: dropToFloor }, 'Drop to floor'),
       people.some(o => !o.locked) ? h('button', { onclick: () => { for (const o of people.filter(x => !x.locked)) { const cur = clone(evalObj(o, T)); cur.r[1] = Math.atan2(camState.p[0] - cur.p[0], camState.p[2] - cur.p[2]) * R2D; if (o.opts.faceTravel && o.keys.length > 1) o.opts.faceTravel = false; writeObj(o, cur, false); } changed(true, true); toast('People face the camera'); } }, 'People face camera') : null),
-    h('div', { class: 'btns' }, h('button', { onclick: duplicateSel }, 'Duplicate'), h('button', { onclick: deleteSel, style: 'color:#ff9c9c' }, 'Delete'))));
+    h('div', { class: 'btns' }, h('button', { onclick: duplicateSel }, 'Duplicate'), h('button', { class: 'danger', onclick: deleteSel }, 'Delete'))));
 }
 function propsObject(p, o) {
   const tr = () => evalObj(o, T);
@@ -2513,7 +2515,7 @@ function propsObject(p, o) {
     p.append(sec('Floor mark', h('div', { class: 'row' }, h('label', null, 'Letter'), letter),
       colorRow('Colour', () => o.color, (v, cm) => { o.color = v; rebuild(cm); }),
       h('p', { class: 'note' }, 'Marks show in the editor and top view only, never in the shot. Select a person to send them to a mark.'),
-      h('div', { class: 'btns' }, h('button', { onclick: duplicateSel }, 'Duplicate'), h('button', { onclick: deleteSel, style: 'color:#ff9c9c' }, 'Delete'))));
+      h('div', { class: 'btns' }, h('button', { onclick: duplicateSel }, 'Duplicate'), h('button', { class: 'danger', onclick: deleteSel }, 'Delete'))));
     return;
   }
   if (o.type === 'person') {
@@ -2559,25 +2561,17 @@ function propsObject(p, o) {
   moveKids.push(h('div', { class: 'row' }, h('button', { onclick: () => faceToward(o, camState.p, 'the camera') }, 'Face camera'), fsel));
   if (o.keys.length > 1 || o.type === 'person' || o.type === 'car') moveKids.push(check('Face the way ' + (o.type === 'person' ? 'they' : 'it') + ' travel' + (o.type === 'person' ? '' : 's'), () => o.opts.faceTravel, v => { o.opts.faceTravel = v; changed(true); }));
   if (o.type === 'car') moveKids.push(h('p', { class: 'note' }, 'Wheels roll with the distance driven and the front wheels steer into the curves.'));
-  p.append(sec('Move & face', ...moveKids));
+  if (o.type === 'person') moveKids.push(h('div', { class: 'btns' }, h('button', { 'data-role': 'frame-cam', title: 'Opens the shot camera, ready to frame ' + o.name, onclick: () => frameWithCamera(o) }, 'Frame with camera…')));
+  const moveSec = sec('Move & face', ...moveKids), staticProp = o.type !== 'person' && o.type !== 'car';
+  if (!staticProp) p.append(moveSec);
   if (o.type === 'person') {
     const targets = [...state.objects.filter(x => x !== o && x.type === 'person'), ...state.objects.filter(x => x !== o && x.type !== 'person' && x.type !== 'mark')];
     p.append(sec('Eyeline', selectRow('Look at', [['', 'Ahead (no target)'], ['camera', 'The camera'], ...targets.map(x => [x.id, x.name])], () => o.opts.lookAt || '', v => setLookAt(o, v || null)),
       h('p', { class: 'note' }, 'The head and upper body turn to keep looking, even while either of them moves.')));
-    p.append(sec('Frame with the camera', shotGrid(() => o.id), h('p', { class: 'note' }, 'Moves the shot camera to frame ' + o.name + '.')));
-  }
-  // ---- attach: ride with another item (people in a car, a cup on a tray)
-  {
-    const par = parentOf(o), under = par ? null : underneath(o);
-    const ride = selectRow('Ride with', [['', 'Nothing (moves on its own)'], ...state.objects.filter(x => x.type !== 'mark' && !ridesWith(o, x.id)).map(x => [x.id, x.name])], () => o.parent || '', v => attachObj(o, v || null));
-    ride.querySelector('select').dataset.role = 'ride';
-    p.append(sec('Attach', ride,
-      under ? h('div', { class: 'btns' }, h('button', { onclick: () => attachObj(o, under.id) }, 'Attach to ' + under.name + ' (underneath)')) : null,
-      h('p', { class: 'note' }, par ? o.name + ' moves and turns with ' + par.name + '. Its own moves happen relative to it.' : 'Attach it to something so it moves along: people riding in a car, a cup on a table, a bag on a cart.')));
   }
   // ---- look
   if (o.type === 'person') {
-    p.append(sec('Look',
+    p.append(sec('Appearance',
       h('div', { class: 'seg feel', style: 'margin-bottom:6px' }, Object.entries(BODIES).map(([k, b]) => h('button', { class: bodyOf(o) === k ? 'on' : '', 'data-body': k, onclick: () => {
         o.opts.body = k; o.opts.height = b.height; if (k === 'woman' && o.opts.hair === BODIES.man.hair) o.opts.hair = b.hair;
         syncScene(); updateGizmo(); changed(true, true);
@@ -2590,7 +2584,7 @@ function propsObject(p, o) {
   } else if (o.type === 'image') {
     p.append(sec('Image card', check('Unlit (no shading, like a backdrop)', () => o.opts.unlit, v => { o.opts.unlit = v; rebuild(); })));
   } else if (o.type !== 'model') {
-    p.append(sec('Look', colorRow('Colour', () => o.color, (v, cm) => { o.color = v; rebuild(cm); }),
+    p.append(sec('Appearance', colorRow('Colour', () => o.color, (v, cm) => { o.color = v; rebuild(cm); }),
       o.type === 'car' ? check('Convertible (open top)', () => !!o.opts.convertible, v => { o.opts.convertible = v; rebuild(); propsDirty = true; }) : null));
   }
   // ---- placement
@@ -2600,7 +2594,7 @@ function propsObject(p, o) {
   const tools = h('div', { class: 'btns', style: 'margin-top:8px' },
     grounded ? null : h('button', { onclick: dropToFloor }, 'Drop to floor'),
     h('button', { onclick: duplicateSel }, 'Duplicate'),
-    h('button', { onclick: deleteSel, style: 'color:#ff9c9c' }, 'Delete'));
+    h('button', { class: 'danger', onclick: deleteSel }, 'Delete'));
   const travelNote = o.opts.faceTravel && o.keys.length > 1 ? h('p', { class: 'note' }, 'Turning follows the path. Untick "Face the way they travel" to turn them yourself.') : null;
   if (simple) {
     p.append(sec('Placement',
@@ -2617,10 +2611,22 @@ function propsObject(p, o) {
       vecRow('Scale', () => tr().s, (v, cm) => setPart('s')(v.map(x => Math.max(0.01, x)), cm), { step: 0.01, min: 0.01 }),
       floatChk, travelNote, tools));
   }
+  if (staticProp) p.append(moveSec);
+  // ---- attach: ride with another item (people in a car, a cup on a tray)
+  if (!simple) {
+    const par = parentOf(o), under = par ? null : underneath(o);
+    const ride = selectRow('Ride with', [['', 'Nothing (moves on its own)'], ...state.objects.filter(x => x.type !== 'mark' && !ridesWith(o, x.id)).map(x => [x.id, x.name])], () => o.parent || '', v => attachObj(o, v || null));
+    ride.querySelector('select').dataset.role = 'ride';
+    p.append(sec('Attach', ride,
+      under ? h('div', { class: 'btns' }, h('button', { onclick: () => attachObj(o, under.id) }, 'Attach to ' + under.name + ' (underneath)')) : null,
+      h('p', { class: 'note' }, par ? o.name + ' moves and turns with ' + par.name + '. Its own moves happen relative to it.' : 'Attach it to something so it moves along: people riding in a car, a cup on a table, a bag on a cart.')));
+  }
   p.append(keySection(o.id));
-  p.append(sec('Camera', h('div', { class: 'btns' },
-    h('button', { onclick: () => { state.camera.lookAtId = o.id; state.camera.base.tg = evalCam(T).tg; changed(true); toast('Camera now keeps ' + o.name + ' in frame'); } }, 'Keep camera on this'),
-    state.camera.mount === o.id ? h('button', { onclick: () => mountCamera(null) }, 'Unmount the camera') : h('button', { onclick: () => mountCamera(o.id), title: 'The camera rides with it, like a car mount' }, 'Mount camera on this'))));
+}
+/* "Frame with camera…" on a person: open the shot camera's Shot tab with this person picked */
+function frameWithCamera(o) {
+  shotPerson = o.id; setPref('camTab', 'shot');
+  select('camera');
 }
 /* ============================== timeline ============================== */
 function laneW() { const l = $('#rulerLane'); return l ? l.clientWidth : 1; }
@@ -2907,7 +2913,6 @@ function fileMenuItems() {
 }
 function gearMenuItems() {
   return [{ id: 'advanced', label: 'Advanced controls', check: !simple, fn: () => setSimple(!simple) },
-    { id: 'ground', label: 'Keep things on the ground', check: groundOn(), fn: () => setGround(!groundOn()) }, /* the same switch as in Settings */
     { id: 'settings', label: 'Settings\u2026', fn: openSettings },
     '-',
     { head: TOUR_COPY.menu.heading },
@@ -4268,25 +4273,31 @@ async function copyPromptText(text, box) {
 }
 
 /* ============================== export panel ============================== */
+let exportFmtOpen = false; /* the Export panel's format settings: folded behind the summary line until Change is pressed */
 function propsExport(p) {
   const s = state.settings, { w, h: hh } = exportSize(), sn = shotName();
-  p.append(sec('Export',
-    h('p', { class: 'note keep', style: 'margin:0 0 8px;font-size:12.5px;color:#cfd3d8' }, `${w}×${hh} · ${s.fps} fps · ${s.duration.toFixed(1)} s` + (sn ? ' · ' + sn : '')),
+  const asp = (ASPECTS.find(a => a[0] === s.aspect) || ASPECTS[0])[0], sty = (STYLES.find(x => x[0] === s.style) || STYLES[0])[1];
+  const fmt = h('div', { class: 'xofmt' + (exportFmtOpen ? '' : ' hidden'), id: 'xoFormat' },
     selectRow('Aspect', ASPECTS.map(a => [a[0], a[2]]), () => s.aspect, v => { s.aspect = v; changed(true, true); syncTopUI(); }),
     selectRow('Size', SIZES.map(([v, l]) => [String(v), l]), () => String(s.size), v => { s.size = +v; changed(true, true); }),
     h('div', { class: 'lbl', style: 'width:auto;margin:8px 0 5px' }, 'Render style'),
     h('div', { class: 'stylechips' }, STYLES.map(([k, l, d, bg]) => h('button', { class: s.style === k ? 'on' : '', title: d, onclick: () => { s.style = k; changed(true, true); syncTopUI(); } }, h('div', { class: 'sw', style: 'background:' + bg }), l))),
-    check('Show the floor grid in exports', () => s.exportGrid, v => { s.exportGrid = v; changed(true); })));
-  p.append(sec('This shot', h('div', { class: 'expgrid' },
+    check('Show the floor grid in exports', () => s.exportGrid, v => { s.exportGrid = v; changed(true); }));
+  const tog = h('button', { id: 'xoChange', 'aria-expanded': String(exportFmtOpen), onclick: () => { exportFmtOpen = !exportFmtOpen; fmt.classList.toggle('hidden', !exportFmtOpen); tog.setAttribute('aria-expanded', String(exportFmtOpen)); tog.textContent = exportFmtOpen ? 'Done' : 'Change'; } }, exportFmtOpen ? 'Done' : 'Change');
+  p.append(sec('Export',
+    h('div', { class: 'row' }, h('span', { id: 'xoSummary', class: 'grow', style: 'font-size:12.5px;color:#cfd3d8' }, `${w}×${hh} · ${asp} · ${sty}`), tog),
+    h('p', { class: 'note keep', style: 'margin:0 0 8px' }, `${s.fps} fps · ${s.duration.toFixed(1)} s` + (sn ? ' · ' + sn : '')),
+    fmt));
+  p.append(sec('Render video', h('div', { class: 'expgrid' },
     h('button', { id: 'xoVideo', class: 'primary wide', onclick: () => { openModal('mExport'); exportVideo(); } }, 'Render video (MP4)'),
+    h('button', { id: 'xoOptions', onclick: () => openModal('mExport') }, 'Video options…'))));
+  p.append(sec('Frame pack', h('div', { class: 'expgrid' },
     h('button', { id: 'xoPack', onclick: exportFramePack, title: 'Start, middle and end frames plus the prompt, in one zip' }, 'Frame pack (zip)'),
     h('button', { id: 'xoPng', onclick: () => exportPNG(T) }, 'Current frame (PNG)'),
-    h('button', { id: 'xoCopy', onclick: copyFrame }, 'Copy frame'),
-    h('button', { id: 'xoOptions', onclick: () => openModal('mExport') }, 'Video options…')),
+    h('button', { id: 'xoCopy', onclick: copyFrame }, 'Copy frame')),
   h('p', { class: 'note' }, 'Frame pack: the first, middle and last frames as PNG plus the prompt as a text file, in one zip. Made for image-to-video and keyframe models.')));
   const n = hasShots() ? state.shots.length : 1;
-  p.append(sec('All shots', n > 1 ? h('div', { class: 'expgrid' }, h('button', { id: 'xoAll', onclick: exportAllShots }, `Every shot (${n} videos)`), h('button', { id: 'xoSheet', onclick: makeContactSheet }, 'Contact sheet'))
-    : h('p', { class: 'note' }, 'Add shots with "+ New shot" above the timeline to export them together or make a contact sheet.')));
+  if (n > 1) p.append(sec('All shots', h('div', { class: 'expgrid' }, h('button', { id: 'xoAll', onclick: exportAllShots }, `Every shot (${n} videos)`), h('button', { id: 'xoSheet', onclick: makeContactSheet }, 'Contact sheet'))));
   const box = h('textarea', { class: 'promptbox', spellcheck: 'false', 'aria-label': 'Prompt for the AI model' });
   box.value = currentPrompt();
   box.addEventListener('input', () => { promptEdit = box.value; });
@@ -5835,7 +5846,8 @@ function boot() {
   wireAbout();
   platform.onMenu(onDesktopMenu);
   platform.onOpenFile(f => { if (f && typeof f.text === 'string') { launchFile = true; tourAsk = false; closeModal($('#mTour')); closeModal($('#mStart')); loadProjectText(f.text, f, true); } });
- applyPrefs(); setView('editor'); setGizmoMode('translate');
+ setPref('launchCount', Math.min(1e6, (+getPref('launchCount', 0) || 0) + 1));
+  applyPrefs(); setView('editor'); setGizmoMode('translate');
   requestAnimationFrame(frame);
   let seen = false; try { seen = localStorage.getItem('shotref.seenHelp'); localStorage.setItem('shotref.seenHelp', '1'); } catch (e) { }
   if (autosaveOff) toast(NO_AUTOSAVE, 6000); /* starter sets still open below on a first visit */

@@ -109,8 +109,8 @@ export const TOUR_COPY = {
       done: 'Opened',
     },
     'h-scenetab': {
-      title: 'The Scene tab',
-      text: 'Click Scene to list everything in the shot, plus the sun. Select anything from the list to work on it.',
+      title: 'The Items tab',
+      text: 'Click Items to list everything in the shot, plus the sun. Select anything from the list to work on it.',
       done: 'Opened',
     },
     'h-top': {

@@ -458,7 +458,7 @@ const ok = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
       mark: !!document.querySelector('svg.mark'),
     }));
     ok(look.text.includes('What\'s new in ShotRef ' + appVersion), look.text);
-    ok(look.bg === 'rgb(27, 29, 33)' && look.main === 'rgb(255, 154, 60)' && look.mark, JSON.stringify(look));
+    ok(look.bg === 'rgb(22, 24, 28)' && look.main === 'rgb(255, 154, 60)' && look.mark, JSON.stringify(look));
     ok(look.focus === 'primary', 'main button not focused');
     const frame = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().map(w => [w.isVisible(), w.isModal()]));
     ok(frame.length === 2 && frame.every(f => f[0]) && frame.some(f => f[1]), JSON.stringify(frame));

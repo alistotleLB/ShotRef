@@ -36,7 +36,7 @@ function openBox(parent, raw) {
     const win = new BrowserWindow({
       parent: owner || undefined, modal: !!owner, width: opts.width, height: 200, useContentSize: true, show: false,
       frame: false, resizable: false, minimizable: false, maximizable: false, fullscreenable: false, skipTaskbar: !!owner,
-      backgroundColor: '#1b1d21', title: opts.title, icon: ICON,
+      backgroundColor: '#16181c', title: opts.title, icon: ICON,
       webPreferences: { preload: path.join(__dirname, 'popup-preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false },
     });
     const id = win.webContents.id;

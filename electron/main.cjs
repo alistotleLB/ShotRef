@@ -260,7 +260,7 @@ function contextMenuTemplate(params, wc) {
 global.__shotrefContextMenu = p => contextMenuTemplate(p, null).map(i => i.type === 'separator' ? '-' : i.label + (i.enabled === false ? ' (off)' : '')); /* for test/desktop.cjs */
 function createWindow(startFile) {
   win = new BrowserWindow({
-    width: 1440, height: 900, minWidth: 1100, minHeight: 700, backgroundColor: '#141518', icon: ICON, title: 'ShotRef', show: false,
+    width: 1440, height: 900, minWidth: 1100, minHeight: 700, backgroundColor: '#0e0f12', icon: ICON, title: 'ShotRef', show: false,
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false },
   });
   const wc = win.webContents;
