@@ -16,6 +16,7 @@ Code:    PUBLIC GitHub main = release 1.5.0. Branch feature/onboarding-tour merg
 Known:   walking feet slide slightly at heel strike. claude.ai artifact 6uRy4QMBjvK9Rn5PLedSUq republished from 1.4.0 (version 10, private).
 Built:   1.5.0 RELEASED 2026-11-24 (https://github.com/alistotleLB/ShotRef/releases/tag/v1.5.0): What's new box after an update (every version since the one you had) and ShotRef-styled
          desktop message boxes with no Windows alert sound (electron/popup.cjs). npm test 318/318, test:desktop 27/27.
+Built:   drag and drop from the Add panel (2026-11-25, NOT committed): press a tile, drag it onto the view, it lands under the pointer. npm test 322/322, test:desktop 28/28.
 Next:    Ali runs checklist C5 (update the installed app to 1.5.0). Also C4 (quick tour). Then: improve the hands-on tour (what Ali disliked: to ask), installable web app + website.
 Not yet tried by Ali: the quick tour; everything since 2026-11-22.
 
@@ -174,3 +175,4 @@ NEXT      Ali runs C5 on the installed Windows app (updated from 1.4.0):
 - 2026-11-24 claude.ai artifact 6uRy4QMBjvK9Rn5PLedSUq republished from 1.4.0 (Ali: "Yes, republish"), Desert overlook demo embed kept (same method as 1.2.0). Checked headless under the claude.ai CSP first: 23 objects + photo, 0 errors, no first-run question, quick tour runs, no hands-on item.
 - 2026-11-24 1.5.0 built (N-015, N-016): ShotRef message boxes replace native ones (no alert sound), What's new lists every version since the user's. npm test 318/318 (631 s), test:desktop 27/27 (+4), 0 Electron left. Not committed, not released.
 - 2026-11-24 1.5.0 committed (044f9ce), pushed, installers built (setup 122 MB, portable 111 MB), released v1.5.0 (Ali: "Commit and release"). latest.yml on GitHub serves 1.5.0.
+- 2026-11-25 drag and drop from the Add panel (side session, not committed): people, floor mark, props, shapes and My sets drag onto the editor, top, camera view and both split halves; the tile's own click-to-place runs when the pointer reaches the floor, so the real item is the preview and the drop is the same one undo step. Esc or letting go off the view leaves nothing. A chip with the tile follows the pointer off the view. Clicks still place as before. 3 new smoke checks; npm test 322/322 (640 s), test:desktop 28/28, 0 Electron left. Reviewed by a Sonnet helper; fixed Esc reaching the tour, the swallowed-click timing, drops over labels drawn on the view. Design: side-session notes drag-drop-design.md.

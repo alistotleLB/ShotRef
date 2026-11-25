@@ -446,10 +446,10 @@ const ok = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
   const expectHeads = since => NOTES.filter(n => cmpV(n.version, appVersion) <= 0 && (!since || cmpV(n.version, since) > 0))
     .sort((a, b) => cmpV(b.version, a.version)).map(n => 'ShotRef ' + n.version);
 
-  await check('message boxes are ShotRef\'s own: About opens a branded box, not the native one, and Esc closes it', async () => {
+  await check('message boxes are ShotRef\'s own: What\'s new opens a branded box, not the native one, and Esc closes it', async () => {
     const { app } = await launch();
     await stubNative(app);
-    await helpClick(app, 'About ShotRef');
+    await helpClick(app, 'What\'s new');
     const pp = await popupPage(app);
     ok(pp, 'no ShotRef box opened');
     const look = await pp.evaluate(() => ({
@@ -457,7 +457,7 @@ const ok = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
       main: getComputedStyle(document.querySelector('button.primary')).backgroundColor, focus: document.activeElement && document.activeElement.className,
       mark: !!document.querySelector('svg.mark'),
     }));
-    ok(look.text.includes('ShotRef ' + appVersion) && /Block the shot/.test(look.text), look.text);
+    ok(look.text.includes('What\'s new in ShotRef ' + appVersion), look.text);
     ok(look.bg === 'rgb(27, 29, 33)' && look.main === 'rgb(255, 154, 60)' && look.mark, JSON.stringify(look));
     ok(look.focus === 'primary', 'main button not focused');
     const frame = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().map(w => [w.isVisible(), w.isModal()]));
@@ -524,6 +524,29 @@ const ok = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
     const hh = await hp.$$eval('#notes h2', h => h.map(x => x.textContent));
     ok(hh.length === 1 && hh[0] === expectHeads(null)[0], 'Help showed: ' + hh.join(', '));
     await kill(fresh.app);
+  });
+
+  await check('Help > About opens the page\'s About window: desktop line, all licences, What\'s new and Check for updates', async () => {
+    const { app, page, errors } = await launch();
+    await stubMsg(app, []);
+    await helpClick(app, 'About ShotRef');
+    await page.waitForSelector('#mAbout:not(.hidden)', { timeout: 5000 });
+    const o = await page.evaluate(() => ({ ver: document.querySelector('#aboutVer').textContent, priv: document.querySelector('#aboutPrivacy').textContent,
+      heads: [...document.querySelectorAll('#aboutLic h3')].map(x => x.textContent.split(' ')[0]),
+      news: document.querySelector('#aboutNews').offsetParent !== null, upd: document.querySelector('#aboutUpd').offsetParent !== null }));
+    ok(o.ver.startsWith('Version ' + appVersion + ' · Desktop app · built '), 'version line: ' + o.ver);
+    ok(/stay on this computer/.test(o.priv) && /check for updates/.test(o.priv), 'privacy line: ' + o.priv);
+    ok(o.heads.join() === 'three,mp4-muxer,electron,electron-updater', 'licences: ' + o.heads.join());
+    ok(o.news && o.upd, 'desktop buttons hidden');
+    ok((await msgs(app)).length === 0, 'a message box opened as well');
+    await page.click('#aboutNews');
+    const m1 = await waitMsgs(app, 1);
+    ok(/^What's new in ShotRef /.test(m1[0][0]), 'What\'s new box: ' + JSON.stringify(m1[0]));
+    await page.click('#aboutUpd');
+    const m2 = await waitMsgs(app, 2);
+    ok(/Updates work in the installed ShotRef/.test(m2[1][0]), 'update check box: ' + JSON.stringify(m2[1]));
+    ok(!errors.length, 'page errors: ' + errors.join(' | '));
+    await kill(app);
   });
 
   for (const a of apps) await kill(a);

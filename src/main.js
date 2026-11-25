@@ -1972,19 +1972,19 @@ function buildAddPanel() {
   const cats = { People: [], Shapes: [], Props: [], Import: [], Blocking: [] };
   for (const [k, c] of Object.entries(CATALOG)) cats[c.cat].push(k);
   area.append(h('div', { class: 'addgrid' },
-    ...Object.entries(BODIES).map(([k, b]) => h('button', { class: 'tile', 'data-body': k, title: 'Add a ' + b.label.toLowerCase() + ', then click where they stand', onclick: () => addPerson(k) }, h('span', { html: svgI(k === 'man' ? 'person' : k) }), b.label)),
-    h('button', { class: 'tile big', title: 'Floor mark (like tape on set). Not visible in the shot.', onclick: () => addObject('mark', null, true) }, h('span', { html: svgI('mark') }), 'Add floor mark')));
+    ...Object.entries(BODIES).map(([k, b]) => dndTile(h('button', { class: 'tile', 'data-body': k, title: 'Add a ' + b.label.toLowerCase() + ': click, then click where they stand, or drag it onto the view', onclick: () => addPerson(k) }, h('span', { html: svgI(k === 'man' ? 'person' : k) }), b.label), () => addPerson(k))),
+    dndTile(h('button', { class: 'tile big', title: 'Floor mark (like tape on set). Not visible in the shot. Click, or drag it onto the view.', onclick: () => addObject('mark', null, true) }, h('span', { html: svgI('mark') }), 'Add floor mark'), () => addObject('mark', null, true))));
   const mine = librarySets();
   if (mine.length) {
     area.append(h('div', { class: 'addcat' }, 'My sets'));
     area.append(h('div', { class: 'addgrid' }, mine.map(set => h('div', { class: 'setile' },
-      h('button', { class: 'tile', title: 'Add "' + set.name + '" (' + set.items.length + ' item' + (set.items.length > 1 ? 's' : '') + '), then click where it goes', onclick: () => placeSet(set) }, h('span', { html: svgI('group') }), set.name),
+      dndTile(h('button', { class: 'tile', title: 'Add "' + set.name + '" (' + set.items.length + ' item' + (set.items.length > 1 ? 's' : '') + '): click, then click where it goes, or drag it onto the view', onclick: () => placeSet(set) }, h('span', { html: svgI('group') }), set.name), () => placeSet(set)),
       h('button', { class: 'setdel', title: 'Delete this set', 'aria-label': 'Delete the set ' + set.name, onclick: e => { e.stopPropagation(); deleteSet(set); } }, '\u00d7')))));
   }
   for (const cat of ['Props', 'Shapes']) {
     const fewer = cat === 'Shapes' && simple && !getPref('moreShapes', false);
     const list = fewer ? cats[cat].filter(k => SIMPLE_SHAPES.includes(k)) : cats[cat];
-    const grid = h('div', { class: 'addgrid' }, list.map(k => h('button', { class: 'tile', title: 'Add ' + CATALOG[k].label.toLowerCase() + ', then click where it goes', onclick: () => addObject(k, null, true) }, h('span', { html: svgI(k) }), CATALOG[k].label)));
+    const grid = h('div', { class: 'addgrid' }, list.map(k => dndTile(h('button', { class: 'tile', title: 'Add ' + CATALOG[k].label.toLowerCase() + ': click, then click where it goes, or drag it onto the view', onclick: () => addObject(k, null, true) }, h('span', { html: svgI(k) }), CATALOG[k].label), () => addObject(k, null, true))));
     if (cat === 'Shapes' && simple) grid.append(h('button', { class: 'tile more', title: fewer ? 'Show every shape' : 'Show fewer shapes', onclick: () => { setPref('moreShapes', fewer); buildAddPanel(); } },
       h('span', { html: fewer ? '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>' : '<svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg>' }), fewer ? 'More shapes' : 'Fewer'));
     area.append(h('div', { class: 'addcat' }, cat), grid);
@@ -2220,7 +2220,7 @@ function propsScene(p) {
     slider('Fog amount', () => s.fogDensity, (v, c) => set('fogDensity', v, c), { min: 0.002, max: 0.08, step: 0.001, fmt: v => v.toFixed(3) })));
   p.append(sunSection(!simple));
   p.append(sec('Getting started', h('ol', { class: 'steps', style: 'font-size:12px;margin:0' },
-    h('li', null, 'Add people and props from the left, then click where they go.'),
+    h('li', null, 'Add people and props from the left: click a tile, then click where it goes, or drag the tile onto the view.'),
     h('li', null, 'Drag them on the floor, turn them with the orange ring, draw walk paths.'),
     h('li', null, 'Frame the shot: Set start, reframe, Set end. Or use a shot size or move.'),
     h('li', null, 'Export the video or frames.')),
@@ -2862,7 +2862,34 @@ function gearMenuItems() {
     { id: 'tour-basic', label: TOUR_COPY.menu.quick, check: !!getPref('tourBasicDone', false), fn: () => startTour('basic') },
     ...(handsTourOn() ? [{ id: 'tour-hands', label: TOUR_COPY.menu.hands, check: !!getPref('tourHandsDone', false), fn: () => startTour('hands') }] : []),
     { id: 'help', label: 'Quick start and shortcuts', fn: () => openModal('mHelp'), key: '?' },
-    { id: 'about', label: 'About ShotRef', fn: () => { const v = platform.version || APP_VERSION; $('#aboutVer').textContent = v ? 'Version ' + v : ''; openModal('mAbout'); } }];
+    { id: 'about', label: 'About ShotRef', fn: openAbout }];
+}
+/* About ShotRef: version, where it runs and when it was built; privacy; copyright; the bundled libraries' licences.
+   On the desktop it also offers What's new and Check for updates (both shown by the main process). */
+const BUILD_DATE = typeof __BUILD_DATE__ !== 'undefined' ? __BUILD_DATE__ : '';
+const LICENSES = typeof __LICENSES__ !== 'undefined' ? __LICENSES__ : [];
+function niceDate(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || ''); if (!m) return '';
+  return (+m[3]) + ' ' + 'Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec'.split(' ')[m[2] - 1] + ' ' + m[1];
+}
+function openAbout() {
+  const desk = platform.kind === 'desktop';
+  const v = platform.version || APP_VERSION, d = niceDate(BUILD_DATE);
+  $('#aboutVer').textContent = [v && 'Version ' + v, { desktop: 'Desktop app', claude: 'On claude.ai', web: 'Web page' }[platform.kind], d && 'built ' + d].filter(Boolean).join(' \u00b7 ');
+  $('#aboutPrivacy').textContent = desk
+    ? 'Works offline. Your scenes, photos and models stay on this computer. ShotRef only goes online to check for updates, and you can turn the automatic check off in the Help menu.'
+    : 'Works offline. ShotRef never uploads your scenes, photos or models. They stay in this browser and in the files you save.';
+  $('#aboutNews').hidden = $('#aboutUpd').hidden = !desk;
+  const box = $('#aboutLic'); box.hidden = true; $('#aboutLicBtn').setAttribute('aria-expanded', 'false');
+  box.replaceChildren(h('p', { class: 'note', style: 'margin:0' }, 'ShotRef is built with these open-source libraries. Thank you to their authors.'),
+    ...LICENSES.filter(l => desk || !l.desktop).flatMap(l => [h('h3', null, l.name + ' ', h('span', null, l.version)), h('pre', null, l.text)]),
+    ...(desk ? [h('p', { class: 'note' }, 'The licences for Chromium, which Electron includes, are in LICENSES.chromium.html in the folder where ShotRef is installed.')] : []));
+  openModal('mAbout');
+}
+function wireAbout() {
+  $('#aboutLicBtn').addEventListener('click', () => { const box = $('#aboutLic'); box.hidden = !box.hidden; $('#aboutLicBtn').setAttribute('aria-expanded', String(!box.hidden)); if (!box.hidden) box.scrollIntoView({ block: 'nearest' }); });
+  $('#aboutNews').addEventListener('click', () => platform.whatsNew());
+  $('#aboutUpd').addEventListener('click', () => platform.checkUpdates());
 }
 function wireMenu() {
   const m = $('#ctxMenu');
@@ -3061,6 +3088,88 @@ function movePlacing(e) {
   const rc = rayFromEvent(e); if (!rc) return; const g = planeHit(rc, 0); const o = getObj(placing); if (!g || !o) return;
   o.base.p = [snapV(g.x), o.base.p[1], snapV(g.z)]; editRev++;
   for (const r of placeRest) { const q = getObj(r.id); if (q) q.base.p = [r4(o.base.p[0] + r.dx), q.base.p[1], r4(o.base.p[2] + r.dz)]; }
+}
+
+/* ---- drag a tile from the Add panel onto the view ----
+   The tile's own click-to-place action runs the moment the pointer first reaches the floor, so the real item
+   follows the pointer (it is the preview) and letting go is the same commit as a click: one undo step, selected,
+   settled by the ground rule. Let go anywhere else, or press Esc, and nothing is left behind. */
+const tileAct = new WeakMap();
+function dndTile(el, act) { tileAct.set(el, act); return el; }
+let tileDrag = null, tileClickBlock = 0, tileSwallowUp = false; /* {el, act, x0, y0, on, made, id}; the release and click that end a drag are swallowed */
+/* the floor point under the pointer, anywhere over the view (labels and bars drawn on top of it count as the view) */
+function tileFloor(e) {
+  const r = canvas.getBoundingClientRect();
+  if (e.clientX < r.left || e.clientY < r.top || e.clientX > r.right || e.clientY > r.bottom) return null;
+  const was = pane; setPane(paneOf(e)); /* the half under the pointer takes the drop */
+  const rc = rayFromEvent(e), g = rc && planeHit(rc, 0);
+  if (!g) setPane(was);
+  return g;
+}
+function tileChip(d, show, e) {
+  let c = $('#dragChip');
+  if (!c) { c = h('div', { id: 'dragChip', 'aria-hidden': 'true' }); document.body.append(c); }
+  if (show && !c.dataset.for) { c.innerHTML = d.el.innerHTML; c.dataset.for = '1'; }
+  c.style.display = show ? 'flex' : 'none';
+  if (show && e) { c.style.left = e.clientX + 14 + 'px'; c.style.top = e.clientY + 10 + 'px'; }
+}
+function endTileDrag(drop, e) {
+  const d = tileDrag; if (!d) return; tileDrag = null;
+  if (d.on) {
+    if (d.made && placing && placing === d.id) {
+      const g = drop && e ? tileFloor(e) : null;
+      if (g) { movePlacing(e); commitPlacing(); } else cancelPlacing();
+    }
+    document.body.classList.remove('tiledrag'); tileChip(d, false);
+    const c = $('#dragChip'); if (c) delete c.dataset.for;
+    if (!drop) tileSwallowUp = true; /* cancelled with the button still down: its release ends nothing else */
+    requestRender();
+  }
+}
+function wireTileDrag() {
+  window.addEventListener('pointerdown', () => { tileClickBlock = 0; tileSwallowUp = false; }, true);
+  $('#addArea').addEventListener('pointerdown', e => {
+    if (e.button !== 0 || e.pointerType === 'touch' || tileDrag || openModals().length) return;
+    if (menuOpen()) hideMenu();
+    const el = e.target.closest('.tile'), act = el && tileAct.get(el);
+    if (act) tileDrag = { el, act, x0: e.clientX, y0: e.clientY, on: false, made: false, id: null };
+  });
+  window.addEventListener('pointermove', e => {
+    const d = tileDrag; if (!d) return;
+    if (!d.on) {
+      if (Math.hypot(e.clientX - d.x0, e.clientY - d.y0) < 6) return;
+      if (!e.buttons) { tileDrag = null; return; }
+      d.on = true; document.body.classList.add('tiledrag');
+      if (placing) cancelPlacing(); /* a click-to-place still waiting: the drag replaces it */
+      if (pathMode) cancelPath();
+    }
+    e.preventDefault();
+    if (!e.buttons) { endTileDrag(false); return; } /* the release was missed (outside the window) */
+    if (d.made && placing !== d.id) { endTileDrag(false); return; } /* something else ended the placing */
+    const g = tileFloor(e);
+    if (g && !d.made) {
+      d.act(); d.made = true; d.id = placing;
+      if (!placing) { endTileDrag(false); return; }
+      showModeBar('Let go on the floor to place ' + (placeSetName ? '"' + placeSetName + '"' : getObj(placing).name) + ' · Esc cancels', []);
+    }
+    if (g) movePlacing(e);
+    tileChip(d, !g, e); requestRender();
+  }, true);
+  window.addEventListener('pointerup', e => {
+    const d = tileDrag;
+    if (!d && !tileSwallowUp) return;
+    if (d && !d.on) { tileDrag = null; return; } /* a plain click: the tile's click runs as before */
+    e.preventDefault(); e.stopPropagation();
+    if (d) endTileDrag(true, e);
+    tileSwallowUp = false; tileClickBlock = performance.now() + 400; /* the click that follows this release */
+  }, true);
+  window.addEventListener('pointercancel', () => endTileDrag(false), true);
+  window.addEventListener('blur', () => endTileDrag(false));
+  window.addEventListener('click', e => { if (performance.now() < tileClickBlock) { tileClickBlock = 0; e.preventDefault(); e.stopPropagation(); } }, true);
+  window.addEventListener('keydown', e => {
+    if (e.key !== 'Escape' || !tileDrag || !tileDrag.on) return;
+    e.preventDefault(); e.stopImmediatePropagation(); endTileDrag(false); /* immediate: the tour listens on window too */
+  }, true);
 }
 
 /* ---- draw a path ---- */
@@ -4893,6 +5002,7 @@ function closeRequested() {
 /* menu clicks from the desktop app's native menu */
 function onDesktopMenu(cmd) {
   if (cmd === 'close-request') { closeRequested(); return; }
+  if (cmd === 'about') { openAbout(); return; } /* only a window: a running tour just pauses under it */
   if (practicing && !/^tour-/.test(cmd)) { endPracticeFirst(() => onDesktopMenu(cmd)); return; }
   if (exporting) { toast('Wait for the export to finish.'); return; }
   if (cmd === 'new') openStarters();
@@ -5201,7 +5311,7 @@ function syncTopUI() {
   drawGuides();
 }
 function wire() {
-  wireTourDialogs();
+  wireTourDialogs(); wireTileDrag();
   buildAddPanel();
   setLeftTab(getPref('leftTab', 'add'), false);
   $$('#leftTabs button').forEach(b => b.onclick = () => setLeftTab(b.dataset.lt));
@@ -5669,6 +5779,7 @@ function boot() {
   }
   cleanTakes(); migrateAll(); pushHistory(); platform.setDirty(wasDirty); setSimple(simple);
   /* only now: queued menu / file events from the desktop shell must see the restored scene and its unsaved mark */
+  wireAbout();
   platform.onMenu(onDesktopMenu);
   platform.onOpenFile(f => { if (f && typeof f.text === 'string') { launchFile = true; tourAsk = false; closeModal($('#mTour')); closeModal($('#mStart')); loadProjectText(f.text, f, true); } });
  applyPrefs(); setView('editor'); setGizmoMode('translate');

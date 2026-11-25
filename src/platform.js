@@ -13,7 +13,8 @@
  *   openProject()                            native Open dialog -> Promise<{ text, name, path } | null>
  *   pickFile(kind, filters)                  native Open dialog for imports ('import' has its own remembered folder) -> Promise<{ name, type, data: ArrayBuffer } | null>
  *   setTitle(str)                            window title
- *   onMenu(cb)                               cb(cmd) for menu clicks: 'new' | 'open' | 'save' | 'save-as' | 'close-request'
+ *   onMenu(cb)                               cb(cmd) for menu clicks: 'new' | 'open' | 'save' | 'save-as' | 'help' | 'about' | 'tour-basic' | 'tour-hands' | 'close-request'
+ *   whatsNew(), checkUpdates()               desktop only: the main process shows What's new / runs a manual update check
  *   onOpenFile(cb)                           cb({ text, name, path }): a file passed on launch, double-clicked or picked from Recent
  *   Notes for the main process: do not give menu items the page's own shortcuts (Ctrl+S, Ctrl+Shift+S, Ctrl+O), or they fire twice
  *   (registerAccelerator:false keeps the label). Send 'close-request' on every close attempt; do not latch a "closing" flag.
@@ -110,4 +111,6 @@ export const platform = {
   onMenu(cb) { if (desk && typeof desk.onMenu === 'function') desk.onMenu(cb); },
   onOpenFile(cb) { if (desk && typeof desk.onOpenFile === 'function') desk.onOpenFile(cb); },
   closeOk() { if (desk && typeof desk.closeOk === 'function') desk.closeOk(); },
+  whatsNew() { if (desk && typeof desk.whatsNew === 'function') desk.whatsNew(); },
+  checkUpdates() { if (desk && typeof desk.checkUpdates === 'function') desk.checkUpdates(); },
 };

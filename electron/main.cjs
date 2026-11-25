@@ -155,6 +155,9 @@ ipcMain.on('shotref:page-ready', () => { pageReady = true; if (pendingFile) { co
 ipcMain.on('shotref:set-title', (e, t) => { if (typeof t === 'string' && win && !win.isDestroyed()) win.setTitle(t.slice(0, 200)); });
 ipcMain.on('shotref:close-ok', () => { closeAllowed = true; if (win && !win.isDestroyed()) win.close(); });
 ipcMain.on('shotref:version-sync', e => { e.returnValue = app.getVersion(); });
+/* buttons in the page's About window */
+ipcMain.on('shotref:whats-new', () => { showWhatsNew(null, false).catch(e => console.error("ShotRef: What's new", e)); });
+ipcMain.on('shotref:check-updates', () => { updater.checkNow(true).catch(e => console.error('ShotRef: update check', e)); });
 
 /* ---------- What's new ----------
    After an update, list every change between the version that last ran here and this one: all of them, newest first.
@@ -220,9 +223,7 @@ function buildMenu() {
       { label: 'Check for updates automatically', type: 'checkbox', checked: settings.autoUpdate, click: i => { settings.autoUpdate = i.checked; saveSettings(); } },
       { type: 'separator' },
       { label: "What's new", click: () => showWhatsNew(null, false) },
-      { label: 'About ShotRef', click: () => popup.show(win, {
-        type: 'info', title: 'About ShotRef', message: 'ShotRef ' + app.getVersion(),
-        detail: 'Block the shot. Move the camera. Guide the AI.\nA simple 3D tool for blocking scenes and camera moves, then exporting reference clips for AI video models.' }) },
+      { label: 'About ShotRef', click: () => send('shotref:menu', 'about') }, /* the page's About window: version, privacy, copyright, licences */
     ] },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(tpl));

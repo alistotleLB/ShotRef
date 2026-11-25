@@ -6065,3 +6065,103 @@ check('the hands-on tour is switched off: the quick tour ends with one-tour word
   await p.click('#tourNext'); await settle(p, 200);
   noErrors(p);
 });
+
+check('About: version, where it runs, build date, privacy, copyright and licences (no desktop buttons on the web)', async ({ open }) => {
+  const p = await open();
+  await gearCmd(p, 'about');
+  const o = await p.evaluate(() => ({
+    ver: document.querySelector('#aboutVer').textContent, priv: document.querySelector('#aboutPrivacy').textContent,
+    copy: document.querySelector('#aboutCopy').textContent, lic: document.querySelector('#aboutLic').hidden,
+    news: document.querySelector('#aboutNews').offsetParent !== null, upd: document.querySelector('#aboutUpd').offsetParent !== null }));
+  ok(/^Version \d+\.\d+\.\d+ \u00b7 (Web page|On claude\.ai) \u00b7 built \d{1,2} [A-Z][a-z]{2} \d{4}$/.test(o.ver), 'version line: ' + o.ver);
+  ok(/Works offline/.test(o.priv) && /never uploads/.test(o.priv), 'privacy line: ' + o.priv);
+  ok(o.copy === '\u00a9 2026 Ali Chehade Farhat', 'copyright: ' + o.copy);
+  ok(o.lic && !o.news && !o.upd, 'licences should start folded and the desktop buttons hidden: ' + JSON.stringify(o));
+  await p.click('#aboutLicBtn');
+  const l = await p.evaluate(() => ({ shown: !document.querySelector('#aboutLic').hidden, heads: [...document.querySelectorAll('#aboutLic h3')].map(x => x.textContent),
+    text: document.querySelector('#aboutLic').textContent, exp: document.querySelector('#aboutLicBtn').getAttribute('aria-expanded') }));
+  ok(l.shown && l.exp === 'true', 'Licences did not open');
+  ok(l.heads.length === 2 && /^three \d/.test(l.heads[0]) && /^mp4-muxer \d/.test(l.heads[1]), 'licence list: ' + l.heads.join(', '));
+  ok(/Permission is hereby granted/.test(l.text) && /three\.js authors/.test(l.text), 'licence text missing');
+  await p.keyboard.press('Escape');
+  noErrors(p);
+});
+
+/* ---- drag a tile from the Add panel onto the view ---- */
+const tileBox = async (p, sel) => { const b = await p.locator(sel).first().boundingBox(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
+/* press on a tile, move in steps to (x, y), then let go (or not, with up = false) */
+const dragTile = async (p, sel, x, y, up = true) => {
+  const t = await tileBox(p, sel);
+  await p.mouse.move(t.x, t.y); await p.mouse.down();
+  for (let i = 1; i <= 12; i++) { await p.mouse.move(t.x + (x - t.x) * i / 12, t.y + (y - t.y) * i / 12); await p.waitForTimeout(16); }
+  if (up) { await p.mouse.up(); await settle(p, 400); }
+};
+const dropNear = async (p, x, y) => p.evaluate(([x, y]) => { const S = window.__shotref, o = S.state.objects[S.state.objects.length - 1], w = S.evalObj(o, S.T).p, q = S.project(w[0], 0, w[2]); return Math.hypot(q[0] - x, q[1] - y); }, [x, y]);
+check('drag and drop: a tile dragged onto the view lands under the pointer, selected, as one undo step', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.click('#leftTabs [data-lt="add"]');
+  const cb = await canvasBox(p), n0 = await nObj(p), h0 = await p.evaluate(() => window.__shotref.history.length);
+  const x = cb.x + cb.w * 0.35, y = cb.y + cb.h * 0.7;
+  await dragTile(p, '#addArea .tile[data-body="man"]', x, y, false);
+  ok(await p.evaluate(() => !!window.__shotref.placing), 'the item does not follow the pointer during the drag');
+  ok(await p.evaluate(() => getComputedStyle(document.querySelector('#modeBar')).display !== 'none'), 'the bar is not shown during the drag');
+  await p.mouse.up(); await settle(p, 400);
+  const s = await stateOf(p), o = s.objects[s.objects.length - 1];
+  ok(s.objects.length === n0 + 1 && o.type === 'person', 'not one person added: ' + (s.objects.length - n0));
+  ok(await p.evaluate(id => window.__shotref.selected === id && window.__shotref.placing === null, o.id), 'not selected, or still placing');
+  ok(await p.evaluate(() => window.__shotref.history.length) === h0 + 1, 'not one undo step');
+  const d = await dropNear(p, x, y); ok(d < 30, 'landed ' + Math.round(d) + ' px from the drop point');
+  ok(await nObj(p) === n0 + 1, 'the release click added a second item');
+  await undoN(p, 1); ok(await nObj(p) === n0, 'undo did not remove it');
+  noErrors(p);
+});
+check('drag and drop: Esc mid-drag and a release outside the view both cancel with nothing left behind', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.click('#leftTabs [data-lt="add"]');
+  const cb = await canvasBox(p), n0 = await nObj(p), h0 = await p.evaluate(() => window.__shotref.history.length);
+  await dragTile(p, '#addArea .tile:text-is("Box")', cb.x + cb.w * 0.5, cb.y + cb.h * 0.6, false);
+  await p.keyboard.press('Escape'); await p.mouse.up(); await settle(p, 300);
+  ok(await nObj(p) === n0 && await p.evaluate(() => window.__shotref.placing === null), 'Esc left an item or placing on');
+  /* over the view, then back to the panel and let go there */
+  const t = await tileBox(p, '#addArea .tile:text-is("Box")');
+  await dragTile(p, '#addArea .tile:text-is("Box")', cb.x + cb.w * 0.5, cb.y + cb.h * 0.6, false);
+  for (let i = 1; i <= 6; i++) { await p.mouse.move(cb.x + cb.w * 0.5 + (t.x - cb.x - cb.w * 0.5) * i / 6, cb.y + cb.h * 0.6 + (t.y - cb.y - cb.h * 0.6) * i / 6); await p.waitForTimeout(16); }
+  await p.mouse.up(); await settle(p, 300);
+  ok(await nObj(p) === n0 && await p.evaluate(() => window.__shotref.placing === null), 'a release outside the view left an item or placing on');
+  ok(await p.evaluate(() => window.__shotref.history.length) === h0, 'cancelling made an undo step');
+  ok(await p.evaluate(() => !document.querySelector('#dragChip') || getComputedStyle(document.querySelector('#dragChip')).display === 'none'), 'the drag chip stayed up');
+  /* a plain click still starts click-to-place */
+  await p.click('#addArea .tile:text-is("Box")'); await settle(p, 150);
+  ok(await p.evaluate(() => !!window.__shotref.placing), 'a click no longer starts placing');
+  await p.mouse.click(cb.x + cb.w * 0.4, cb.y + cb.h * 0.7); await settle(p, 300);
+  ok(await nObj(p) === n0 + 1, 'click to place did not place');
+  noErrors(p);
+});
+check('drag and drop: works in the top view, the camera view and both halves of split view', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.click('#leftTabs [data-lt="add"]');
+  await p.evaluate(() => window.__shotref.setView('top')); await settle(p, 300);
+  let cb = await canvasBox(p), n0 = await nObj(p);
+  let x = cb.x + cb.w * 0.4, y = cb.y + cb.h * 0.4;
+  await dragTile(p, '#addArea .tile:text-is("Chair")', x, y);
+  ok(await nObj(p) === n0 + 1, 'top view: nothing added');
+  let d = await dropNear(p, x, y); ok(d < 30, 'top view: landed ' + Math.round(d) + ' px away');
+  await p.evaluate(() => window.__shotref.setView('camera')); await settle(p, 300);
+  const fr = await p.evaluate(() => { const r = document.querySelector('#camFrame').getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; });
+  x = fr.x + fr.w * 0.5; y = fr.y + fr.h * 0.85;
+  await dragTile(p, '#addArea .tile:text-is("Box")', x, y);
+  ok(await nObj(p) === n0 + 2, 'camera view: nothing added');
+  d = await dropNear(p, x, y); ok(d < 30, 'camera view: landed ' + Math.round(d) + ' px away');
+  await p.evaluate(() => window.__shotref.setView('editor')); await settle(p, 200); await splitOn(p);
+  cb = await canvasBox(p);
+  x = cb.x + cb.w * 0.25; y = cb.y + cb.h * 0.7;
+  await dragTile(p, '#addArea .tile[data-body="woman"]', x, y);
+  ok(await nObj(p) === n0 + 3, 'split, left half: nothing added');
+  d = await dropNear(p, x, y); ok(d < 30, 'split, left half: landed ' + Math.round(d) + ' px away');
+  const f2 = await p.evaluate(() => { const r = document.querySelector('#camFrame').getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; });
+  x = f2.x + f2.w * 0.5; y = f2.y + f2.h * 0.85;
+  await dragTile(p, '#addArea .tile:text-is("Box")', x, y);
+  ok(await nObj(p) === n0 + 4, 'split, shot half: nothing added');
+  d = await dropNear(p, x, y); ok(d < 30, 'split, shot half: landed ' + Math.round(d) + ' px away');
+  noErrors(p);
+});

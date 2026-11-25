@@ -24,4 +24,6 @@ contextBridge.exposeInMainWorld('shotrefDesktop', {
   setTitle: t => ipcRenderer.send('shotref:set-title', String(t)),
   onMenu, onOpenFile,
   closeOk: () => ipcRenderer.send('shotref:close-ok'),
+  whatsNew: () => ipcRenderer.send('shotref:whats-new'),
+  checkUpdates: () => ipcRenderer.send('shotref:check-updates'),
 });
