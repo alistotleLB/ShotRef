@@ -8,6 +8,8 @@
  * Throws Error('NOT_SHOTREF') when raw is not a ShotRef project at all.
  * Only ever adds or repairs fields, so files stay readable by older ShotRef builds.
  */
+import { cleanClouds } from './sky.js';
+
 export const FORMAT_VERSION = 2;
 
 const isObj = v => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -172,6 +174,8 @@ export function normalizeProject(raw, defaults = {}) {
   /* a file without softness keeps the old shadow edge (radius 2 = 1/6); a new scene uses 0.3 */
   ss.shadowSoft = clampN(isObj(src.settings) ? src.settings.shadowSoft : undefined, 0, 1, 1 / 6); /* read from the raw file: the defaults would fill in 0.3 */
   if ('tod' in ss) ss.tod = clampN(ss.tod, 5, 20, 14);
+  /* clouds: read from the raw file, so an old file opens clear instead of taking the new-scene Few */
+  ss.clouds = cleanClouds(isObj(src.settings) ? src.settings.clouds : undefined);
 
   /* location photo */
   if ('plate' in src) st.plate = isObj(src.plate) && typeof src.plate.asset === 'string' ? src.plate : null;
@@ -243,8 +247,9 @@ export function describeChange(beforeJSON, afterJSON) {
   if (!same(a.settings, b.settings)) {
     const sa = a.settings || {}, sb = b.settings || {}, diff = k => !same(sa[k], sb[k]);
     if (diff('tod')) return 'time of day';
+    if (diff('clouds') && !Object.keys({ ...sa, ...sb }).some(k => k !== 'clouds' && diff(k))) return 'clouds';
     if (diff('shadows') || diff('shadowSoft')) return 'shadows';
-    const sun = ['sunAz', 'sunEl', 'sunInt', 'sunColor'].some(diff), rest = Object.keys({ ...sa, ...sb }).some(k => !['sunAz', 'sunEl', 'sunInt', 'sunColor', 'ambInt', 'tod', 'shadows', 'shadowSoft'].includes(k) && diff(k));
+    const sun = ['sunAz', 'sunEl', 'sunInt', 'sunColor'].some(diff), rest = Object.keys({ ...sa, ...sb }).some(k => !['sunAz', 'sunEl', 'sunInt', 'sunColor', 'ambInt', 'tod', 'shadows', 'shadowSoft', 'clouds'].includes(k) && diff(k));
     if (sun && !rest) return 'sun';
     return 'settings change';
   }

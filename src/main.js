@@ -6,6 +6,7 @@ import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
 import { normalizeProject, FORMAT_VERSION, describeChange } from './project.js';
 import * as K from './keys.js';
 import { platform } from './platform.js';
+import { CLOUDS_NEW, cleanClouds } from './sky.js';
 import { runTour, tourActive, tourTick } from './tour.js';
 import { TOUR_COPY } from './tour-copy.js';
 
@@ -147,6 +148,7 @@ const DEFAULT_SETTINGS = {
   duration: 5, fps: 24, aspect: '16:9', size: 1920, interp: 'smooth', loop: true,
   env: 'day', ...ENV.day, groundOn: true, gridOn: true, fogDensity: 0.018,
   style: 'shaded', exportGrid: false, guides: 'thirds', depthAuto: true, depthNear: 0.5, depthFar: 25, shadowSoft: 0.3,
+  clouds: { ...CLOUDS_NEW },
 };
 
 /* shape icons (24x24 line art) */
@@ -5826,6 +5828,7 @@ function boot() {
     get rebuilds() { return rebuilds; }, urlCacheIds: () => [...urlCache.keys()],
     /* batch H (takes) hooks for the smoke test */
     switchTake, newTake, snapPoolSize: () => snapLive, snapPruned: () => snapPruned,
+    normalize: raw => normalizeProject(raw, projectDefaults()), describeChange, setClouds: patch => { state.settings.clouds = cleanClouds({ ...state.settings.clouds, ...patch }); applyEnv(); changed(true, true); },
     get history() { return { at: hi, length: hist.length, bytes: hist[hi].length }; },
     /* batch F (camera UX and light) hooks for the smoke test */
     editCamPos: () => edCam.position.toArray(), detectMove, describeShot, camToWorld, pointsVisible: () => ckPts.some(m => m.visible),

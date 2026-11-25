@@ -6165,3 +6165,25 @@ check('drag and drop: works in the top view, the camera view and both halves of 
   d = await dropNear(p, x, y); ok(d < 30, 'split, shot half: landed ' + Math.round(d) + ' px away');
   noErrors(p);
 });
+check('sky: old file opens clear', async ({ open }) => {
+  const p = await open();
+  const c = await p.evaluate(() => { const st = JSON.parse(JSON.stringify(__shotref.state)); delete st.settings.clouds; return __shotref.normalize({ app: 'ShotRef', version: 2, state: st }).state.settings.clouds; });
+  if (c.cover !== 0) throw new Error('old file should open with cover 0, got ' + c.cover);
+});
+check('sky: new scene has few clouds', async ({ open }) => {
+  const p = await open();
+  const c = await p.evaluate(() => __shotref.state.settings.clouds);
+  if (c.cover !== 0.2 || c.look !== 'fluffy' || c.drift !== 'slow') throw new Error(JSON.stringify(c));
+});
+check('sky: bad clouds are repaired', async ({ open }) => {
+  const p = await open();
+  const c = await p.evaluate(() => { const st = JSON.parse(JSON.stringify(__shotref.state)); st.settings.clouds = { cover: 7, look: 'x', drift: null, dir: -30, seed: 2.5 }; return __shotref.normalize({ app: 'ShotRef', version: 2, state: st }).state.settings.clouds; });
+  if (c.cover !== 1 || c.look !== 'fluffy' || c.drift !== 'slow' || c.dir !== 330 || !Number.isInteger(c.seed)) throw new Error(JSON.stringify(c));
+});
+check('sky: undo names and restores clouds', async ({ open }) => {
+  const p = await open();
+  const r0 = await p.evaluate(() => { const a = JSON.stringify(__shotref.state), before = __shotref.state.settings.clouds.cover, h = __shotref.history.length; __shotref.setClouds({ cover: 0.68 }); return { name: __shotref.describeChange(a, JSON.stringify(__shotref.state)), before, steps: __shotref.history.length - h }; });
+  await p.keyboard.press('Control+z');
+  const after = await p.evaluate(() => __shotref.state.settings.clouds.cover);
+  if (r0.name !== 'clouds' || r0.steps !== 1 || after !== r0.before) throw new Error(JSON.stringify({ ...r0, after }));
+});
