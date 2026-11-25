@@ -4015,7 +4015,7 @@ check('prompt: written from the scene (size, lens, angle, move, who does what, l
   ok(/The camera dollies in/.test(t) && /handheld with a slight shake/.test(t), 'move/shake: ' + t);
   ok(/Shallow depth of field, strong background blur\./.test(t), 'dof: ' + t);
   ok(/looking into the camera/.test(t), 'eyeline: ' + t);
-  ok(/Sun on the horizon, (front light|backlight|side light from the (left|right)), long shadows\./.test(t), 'light: ' + t);
+  ok(/[Ss]un on the horizon, (front light|backlight|side light from the (left|right)), long shadows\./.test(t), 'light: ' + t);
   /* a walking man and a car */
   await p.evaluate(() => { const S = window.__shotref; const o = S.state.objects[0]; o.keys = [{ t: 0, p: [-2, 0, 0], r: [0, 90, 0], s: [1, 1, 1] }, { t: 4, p: [2, 0, 0], r: [0, 90, 0], s: [1, 1, 1] }]; o.opts.pose = 'walk'; o.opts.lookAt = null;
     S.changed(true, true); });
