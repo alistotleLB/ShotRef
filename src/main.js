@@ -678,7 +678,7 @@ function applyEnv() {
   if (skyTex) skyTex.tex.dispose();
   skyTex = skyTexture(s.sky); /* still the fog colour (its horizon), and the top view's background */
   placeSun();
-  skyDome.update({ sky: s.sky, clouds: s.clouds, sunDir: _sunDir, sunColor: s.sunColor, night: s.env === 'night' });
+  skyDome.update({ sky: s.sky, clouds: s.clouds, sunDir: _sunDir, sunColor: s.sunColor, night: s.env === 'night', glow: s.env !== 'studio' });
   showDome(view !== 'top');
   scene.fog = s.fog ? new THREE.FogExp2(skyTex.horizon, s.fogDensity) : null;
   hemi.color.set(s.sky).lerp(new THREE.Color('#ffffff'), 0.35); hemi.groundColor.set(s.groundColor); hemi.intensity = L.ambInt;

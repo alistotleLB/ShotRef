@@ -70,7 +70,7 @@ void main() {
 const SKY_FRAG = `
 uniform vec3 uTop, uMid, uHor, uLit, uShade, uSunCol, uSunDir;
 uniform vec2 uWind, uDrift, uSeed;
-uniform float uCover, uSoft, uLook, uNight;
+uniform float uCover, uSoft, uLook, uNight, uGlow;
 varying vec3 vDir;
 
 float hash(vec2 p) { vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
@@ -92,8 +92,10 @@ float density(vec2 q, int n) {
 
 void main() {
   vec3 d = normalize(vDir);
-  float el = clamp(asin(clamp(d.y, -1.0, 1.0)) / 1.5707963, 0.0, 1.0);
-  vec3 col = el < 0.38 ? mix(uHor, uMid, smoothstep(0.0, 1.0, el / 0.38)) : mix(uMid, uTop, smoothstep(0.0, 1.0, (el - 0.38) / 0.62));
+  /* by degrees above the horizon: a frame at eye level only reaches 15 to 18 degrees up, so the colours change quickly
+     (horizon to mid by 6, mid to top by 35) and that frame still reads light at the horizon, darker toward the top */
+  float el = degrees(asin(clamp(d.y, -1.0, 1.0)));
+  vec3 col = el < 6.0 ? mix(uHor, uMid, smoothstep(0.0, 6.0, el)) : mix(uMid, uTop, smoothstep(6.0, 35.0, el));
   float alpha = 0.0;
   if (uCover > 0.0 && d.y > 0.0) {
     vec2 plane = d.xz / (d.y + 0.08) - uDrift;
@@ -113,15 +115,15 @@ void main() {
     float lit = clamp(0.62 + (dn - density(q + toSun * 0.12, 3)) * 3.2, 0.0, 1.0);
     vec3 cc = mix(uShade, uLit, lit);
     cc = mix(cc, uShade, thick * 0.55);
-    alpha = a * smoothstep(0.0, 0.18, d.y);
+    alpha = a * smoothstep(0.0, 0.07, d.y);
     col = mix(col, cc, alpha);
   }
   float sd = dot(d, uSunDir);
-  if (uNight > 0.5) col += uSunCol * pow(max(sd, 0.0), 160.0) * 0.18 * (1.0 - alpha * 0.9); /* a faint moon glow */
+  if (uNight > 0.5) col += uSunCol * pow(max(sd, 0.0), 160.0) * 0.18 * uGlow * (1.0 - alpha * 0.9); /* a faint moon glow */
   else {
     float disc = uSunDir.y < -0.02 ? 0.0 : smoothstep(0.9995, 0.9999, sd) * 3.0;
     float halo = pow(max(sd, 0.0), 12.0) * 0.35 + pow(max(sd, 0.0), 300.0) * 0.4;
-    col += uSunCol * (disc + halo) * (1.0 - alpha * 0.9);
+    col += uSunCol * (disc + halo) * uGlow * (1.0 - alpha * 0.9); /* uGlow 0 in the studio: an indoor backdrop has no sun */
   }
   gl_FragColor = vec4(col, 1.0);
   #include <tonemapping_fragment>
@@ -133,7 +135,7 @@ export function makeSkyDome(THREE) {
   const u = {
     uTop: { value: C() }, uMid: { value: C() }, uHor: { value: C() }, uLit: { value: C() }, uShade: { value: C() }, uSunCol: { value: C() },
     uSunDir: { value: new THREE.Vector3(0, 1, 0) }, uWind: { value: new THREE.Vector2(1, 0) }, uDrift: { value: new THREE.Vector2() }, uSeed: { value: new THREE.Vector2() },
-    uCover: { value: 0 }, uSoft: { value: 0.5 }, uLook: { value: 0 }, uNight: { value: 0 },
+    uCover: { value: 0 }, uSoft: { value: 0.5 }, uLook: { value: 0 }, uNight: { value: 0 }, uGlow: { value: 1 },
   };
   const mat = new THREE.ShaderMaterial({ uniforms: u, vertexShader: SKY_VERT, fragmentShader: SKY_FRAG, side: THREE.BackSide, depthWrite: false, depthTest: true, fog: false, toneMapped: false });
   const mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16), mat);
@@ -143,13 +145,14 @@ export function makeSkyDome(THREE) {
   return {
     mesh,
     uniforms: u,
-    /* any subset of { sky, clouds, sunDir, sunColor, night } */
+    /* any subset of { sky, clouds, sunDir, sunColor, night, glow } (glow 0 hides the sun disc and halo) */
     update(o) {
       if (o.sky != null) {
         const base = C(o.sky);
         u.uMid.value.copy(base); u.uTop.value.copy(base).multiplyScalar(0.72); u.uHor.value.copy(base).lerp(C('#ffffff'), 0.32);
       }
       if (o.night != null) u.uNight.value = o.night ? 1 : 0;
+      if (o.glow != null) u.uGlow.value = o.glow ? 1 : 0;
       if (o.sunColor != null || o.night != null || o.sky != null) {
         const night = u.uNight.value > 0.5;
         if (o.sunColor != null) u.uSunCol.value.set(o.sunColor);
