@@ -4006,7 +4006,7 @@ check('prompt: written from the scene (size, lens, angle, move, who does what, l
   ok(/^[A-Z][A-Za-z -]* of the man in a blue top, 50mm normal lens, eye level\./.test(t), 'opening: ' + t);
   ok(/The camera stays locked off \(static camera\)\./.test(t), 'static: ' + t);
   ok(/A man in a blue top stands in the centre of frame\./.test(t), 'person: ' + t);
-  ok(/Daylight, high sun|Low sun|Golden hour/.test(t) && /16:9, 5 seconds\.$/.test(t), 'light/aspect: ' + t);
+  ok(/Daylight, high sun|Low sun|Golden hour/i.test(t) && /16:9, 5 seconds\.$/.test(t), 'light/aspect: ' + t);
   await p.evaluate(() => { const S = window.__shotref; S.addObject('car', null, false, [0, 0, -3]); S.changed(true, true); });
   t = await p.evaluate(() => window.__shotref.promptText());
   ok(/A red car is parked in the (centre|left|right) of frame./.test(t), 'car: ' + t);
@@ -6306,4 +6306,27 @@ check('sky: the Sun panel has the same Sky section', async ({ open }) => {
   await p.evaluate(() => __shotref.select('sun'));
   const sky = p.locator('#props .sec').filter({ has: p.locator('h3', { hasText: /^Sky[?]?$/ }) });
   if (!(await sky.getByRole('button', { name: 'Scattered', exact: true }).count())) throw new Error('no Sky section in the Sun panel');
+});
+check('sky: clear keeps the old prompt', async ({ open }) => {
+  const p = await open();
+  const t = await p.evaluate(() => { __shotref.setClouds({ cover: 0 }); return __shotref.promptText(); });
+  if (/cloud|sky/i.test(t)) throw new Error(t);
+});
+check('sky: prompt names the clouds', async ({ open }) => {
+  const p = await open();
+  const t = await p.evaluate(() => { __shotref.setClouds({ cover: 0.42, drift: 'fast' }); return __shotref.promptText(); });
+  if (!/Partly cloudy sky/.test(t) || !/clouds drifting/.test(t)) throw new Error(t);
+});
+check('sky: prompt wording for looks and overcast', async ({ open }) => {
+  const p = await open();
+  const r = await p.evaluate(() => {
+    const g = (c) => { __shotref.setClouds(c); return __shotref.promptText(); };
+    return { few: g({ cover: 0.2, look: 'fluffy', drift: 'slow' }), wispy: g({ cover: 0.42, look: 'wispy' }), flat: g({ cover: 0.42, look: 'flat' }),
+      over: g({ cover: 1, look: 'fluffy' }), overW: g({ cover: 1, look: 'wispy' }) };
+  });
+  if (!/A few clouds, /.test(r.few) || /drifting/.test(r.few)) throw new Error(r.few);
+  if (!/Wispy high clouds/.test(r.wispy) || !/A thin grey cloud layer/.test(r.flat)) throw new Error(r.wispy + r.flat);
+  if (!/Overcast grey sky/.test(r.over) || !/Overcast grey sky/.test(r.overW) || /Wispy/.test(r.overW)) throw new Error(r.over + r.overW);
+  const n = await p.evaluate(() => { __shotref.setClouds({ cover: 1 }); __shotref.state.settings.env = 'overcast'; __shotref.setClouds({ cover: 1 }); return __shotref.promptText(); });
+  if (/Overcast, soft light/.test(n) || (n.match(/overcast/gi) || []).length !== 1) throw new Error(n);
 });

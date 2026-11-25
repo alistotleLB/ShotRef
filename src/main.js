@@ -6,7 +6,7 @@ import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
 import { normalizeProject, FORMAT_VERSION, describeChange } from './project.js';
 import * as K from './keys.js';
 import { platform } from './platform.js';
-import { CLOUDS_NEW, COVER, DRIFTS, LOOKS, cleanClouds, cloudLight, makeSkyDome, nearestCover, skyWording } from './sky.js';
+import { CLOUDS_NEW, COVER, DRIFTS, LOOKS, cleanClouds, cloudLight, makeSkyDome, nearestCover, skyPhrase, skyWording } from './sky.js';
 import { runTour, tourActive, tourTick } from './tour.js';
 import { TOUR_COPY } from './tour-copy.js';
 
@@ -4244,7 +4244,8 @@ function writePrompt() {
   const az = Math.atan2(c0.p[0] - c0.tg[0], c0.p[2] - c0.tg[2]) * R2D, rel = ((st.sunAz - az) % 360 + 540) % 360 - 180;
   const dir = Math.abs(rel) < 45 ? 'front light' : Math.abs(rel) > 135 ? 'backlight' : `side light from the ${rel > 0 ? 'right' : 'left'}`;
   const light = st.env === 'night' ? 'Night' : st.env === 'overcast' ? 'Overcast, soft light' : st.env === 'studio' ? 'Studio lighting' : st.sunEl < 8 ? 'Sun on the horizon' : st.sunEl < 18 ? 'Golden hour' : st.sunEl < 40 ? 'Low sun' : 'Daylight, high sun';
-  out.push(`${light}, ${dir}${st.shadows === false ? ', no hard shadows' : st.sunEl < 18 ? ', long shadows' : ''}.`);
+  const sky = skyPhrase(st.clouds), skyOver = sky.startsWith('Overcast') && st.env === 'overcast';
+  out.push(`${sky ? sky + (skyOver ? '' : ', ' + light.charAt(0).toLowerCase() + light.slice(1)) : light}, ${dir}${st.shadows === false ? ', no hard shadows' : st.sunEl < 18 ? ', long shadows' : ''}.`);
   out.push(`${st.aspect}, ${st.duration % 1 ? st.duration.toFixed(1) : st.duration} seconds.`);
   return out.join(' ');
 }

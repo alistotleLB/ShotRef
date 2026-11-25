@@ -170,3 +170,15 @@ export function makeSkyDome(THREE) {
     get time() { return time; },
   };
 }
+
+/* the sky as the prompt says it; '' when clear */
+export function skyPhrase(clouds) {
+  const c = cleanClouds(clouds), key = nearestCover(c.cover);
+  if (key === 'clear') return '';
+  let s = key === 'overcast' ? 'Overcast grey sky'
+    : c.look === 'wispy' ? 'Wispy high clouds'
+    : c.look === 'flat' ? 'A thin grey cloud layer'
+    : key === 'few' ? 'A few clouds' : key === 'scattered' ? 'Partly cloudy sky' : 'Mostly cloudy sky';
+  if (c.drift === 'breezy' || c.drift === 'fast') s += ', clouds drifting';
+  return s;
+}
