@@ -5437,7 +5437,7 @@ check('tour dimming is the charcoal at about 62 percent', async ({ open }) => {
   let m = /rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/.exec(c), rgb, a;
   if (m) { rgb = [+m[1], +m[2], +m[3]]; a = m[4] === undefined ? 1 : parseFloat(m[4]); }
   else { m = /color\(srgb ([\d.]+) ([\d.]+) ([\d.]+)(?: \/ ([\d.]+))?\)/.exec(c); ok(m, 'no colour in the dim shadow: ' + c); rgb = [m[1], m[2], m[3]].map(v => Math.round(parseFloat(v) * 255)); a = m[4] === undefined ? 1 : parseFloat(m[4]); }
-  ok(rgb.join() === '20,21,24' && Math.abs(a - 0.62) < 0.03, 'dim colour is ' + c);
+  ok(rgb.join() === '14,15,18' && Math.abs(a - 0.62) < 0.03, 'dim colour is ' + c);
   await p.evaluate(() => window.__shotref.tour.end());
 });
 
