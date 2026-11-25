@@ -36,6 +36,21 @@ export function cloudLight(s) {
   return { sunInt: s.sunInt * (1 - 0.8 * c2), ambInt: s.ambInt + 0.6 * c2, shadowSoft: c ? Math.min(1, soft + 0.7 * c) : soft };
 }
 
+/* one plain line for the Sky panel: what the sky is and what that does to the shadows, worked out from the light clouds really leave */
+export function skyWording(clouds, settings) {
+  const c = cleanClouds(clouds), key = nearestCover(c.cover), L = cloudLight({ ...settings, clouds: c });
+  const sun = typeof settings.sunInt === 'number' ? settings.sunInt : 1;
+  let sky = { clear: 'Clear sky', few: 'A few clouds', scattered: 'Partly cloudy', mostly: 'Mostly cloudy', overcast: 'Overcast' }[key];
+  if (key !== 'clear') {
+    if (c.look === 'wispy') sky = key === 'overcast' ? 'Thin cloud everywhere' : 'Wispy high clouds';
+    else if (c.look === 'flat' && key !== 'overcast') sky = 'A flat layer of cloud';
+  }
+  const shadows = settings.shadows === false ? 'shadows off'
+    : sun <= 0.05 || L.sunInt <= sun * 0.3 ? 'no hard shadows'
+    : L.shadowSoft >= 0.75 ? 'soft shadows' : L.shadowSoft >= 0.55 ? 'softer shadows' : 'crisp shadows';
+  return sky + ' · ' + shadows;
+}
+
 /* ---- the sky dome: gradient, clouds, sun glow and drift, painted by one shader ----
    A unit sphere drawn at the far plane around whichever camera renders it (rotation only), so it never clips,
    ignores where the camera stands and reads as background (depth 1) in the depth of field pass.

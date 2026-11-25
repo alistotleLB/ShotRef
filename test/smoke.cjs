@@ -6247,3 +6247,63 @@ check('sky: a preset sets cover and look but keeps drift, direction and seed', a
   const r = await p.evaluate(() => { __shotref.setClouds({ drift: 'fast', dir: 200, seed: 77, soft: 0.9 }); __shotref.pickEnv('overcast'); return __shotref.state.settings.clouds; });
   if (r.cover !== 1 || r.look !== 'flat' || r.drift !== 'fast' || r.dir !== 200 || r.seed !== 77 || r.soft !== 0.9) throw new Error(JSON.stringify(r));
 });
+check('sky: panel shows cloud chips and hides extras on clear', async ({ open }) => {
+  const p = await open();
+  const sky = p.locator('#props .sec').filter({ has: p.locator('h3', { hasText: /^Sky[?]?$/ }) });
+  await sky.getByRole('button', { name: 'Clear', exact: true }).click();
+  if (await sky.getByText('Shuffle clouds').count()) throw new Error('shuffle shown with clear sky');
+  await sky.getByRole('button', { name: 'Scattered', exact: true }).click();
+  const c = await p.evaluate(() => __shotref.state.settings.clouds.cover);
+  if (c !== 0.42) throw new Error('Scattered chip set cover ' + c);
+  if (!(await sky.getByText('Shuffle clouds').count())) throw new Error('shuffle missing');
+});
+check('sky: shuffle changes the seed and is undoable', async ({ open }) => {
+  const p = await open();
+  const before = await p.evaluate(() => __shotref.state.settings.clouds.seed);
+  await p.locator('#props').getByText('Shuffle clouds').click();
+  const shuffled = await p.evaluate(() => __shotref.state.settings.clouds.seed);
+  await p.keyboard.press('Control+z');
+  const undone = await p.evaluate(() => __shotref.state.settings.clouds.seed);
+  if (shuffled === before || undone !== before) throw new Error(JSON.stringify({ before, shuffled, undone }));
+});
+check('sky: simple mode has no cloud sliders', async ({ open }) => {
+  const p = await open();
+  await p.evaluate(() => __shotref.setSimple(true));
+  if (await p.locator('#props').getByText('Drift direction').count()) throw new Error('advanced slider in simple mode');
+});
+check('sky: the note names the sky and the shadows, and look and drift chips set the clouds', async ({ open }) => {
+  const p = await open();
+  const sky = p.locator('#props .sec').filter({ has: p.locator('h3', { hasText: /^Sky[?]?$/ }) });
+  await sky.getByRole('button', { name: 'Clear', exact: true }).click();
+  const clear = await sky.innerText();
+  if (!/Clear sky/.test(clear) || /Look|Drift/.test(clear)) throw new Error('clear sky panel: ' + clear);
+  await sky.getByRole('button', { name: 'Overcast', exact: true }).click();
+  if (!/Overcast/.test(await sky.innerText())) throw new Error('overcast note missing');
+  await sky.getByRole('button', { name: 'Wispy', exact: true }).click();
+  await sky.getByRole('button', { name: 'Breezy', exact: true }).click();
+  const c = await p.evaluate(() => __shotref.state.settings.clouds);
+  if (c.look !== 'wispy' || c.drift !== 'breezy' || c.cover !== 1) throw new Error(JSON.stringify(c));
+  const on = await sky.locator('button.on').allInnerTexts();
+  if (!['Overcast', 'Wispy', 'Breezy'].every(t => on.some(o => o.trim() === t))) throw new Error('active chips: ' + on);
+});
+check('sky: advanced adds amount, edges and direction, and one sky section holds the colours', async ({ open }) => {
+  const p = await open();
+  await p.evaluate(() => { __shotref.setSimple(false); __shotref.setClouds({ cover: 0.5, drift: 'slow' }); });
+  await p.waitForTimeout(300);
+  const sky = p.locator('#props .sec').filter({ has: p.locator('h3', { hasText: /^Sky[?]?$/ }) });
+  for (const t of ['Amount', 'Edges', 'Drift direction', 'Fog / haze', 'Show ground'])
+    if (!(await sky.getByText(t).count())) throw new Error('missing in Advanced: ' + t);
+  if (await p.locator('#props h3', { hasText: /^Sky & ground$/ }).count()) throw new Error('old Sky & ground section still there');
+  /* the chip for 50% is the nearest one, Scattered */
+  const on = await sky.locator('button.on').allInnerTexts();
+  if (!on.some(o => o.trim() === 'Scattered')) throw new Error('nearest chip not active: ' + on);
+  await p.evaluate(() => __shotref.setClouds({ drift: 'still' }));
+  await p.waitForTimeout(300);
+  if (await sky.getByText('Drift direction').count()) throw new Error('direction shown with Still');
+});
+check('sky: the Sun panel has the same Sky section', async ({ open }) => {
+  const p = await open();
+  await p.evaluate(() => __shotref.select('sun'));
+  const sky = p.locator('#props .sec').filter({ has: p.locator('h3', { hasText: /^Sky[?]?$/ }) });
+  if (!(await sky.getByRole('button', { name: 'Scattered', exact: true }).count())) throw new Error('no Sky section in the Sun panel');
+});

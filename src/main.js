@@ -6,7 +6,7 @@ import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
 import { normalizeProject, FORMAT_VERSION, describeChange } from './project.js';
 import * as K from './keys.js';
 import { platform } from './platform.js';
-import { CLOUDS_NEW, cleanClouds, cloudLight, makeSkyDome } from './sky.js';
+import { CLOUDS_NEW, COVER, DRIFTS, LOOKS, cleanClouds, cloudLight, makeSkyDome, nearestCover, skyWording } from './sky.js';
 import { runTour, tourActive, tourTick } from './tour.js';
 import { TOUR_COPY } from './tour-copy.js';
 
@@ -2226,19 +2226,13 @@ function propsScene(p) {
   const set = (k, v, c = true) => { s[k] = v; applyEnv(); changed(c); };
   p.append(sec('Scene', h('p', { class: 'note', style: 'margin:0 0 8px' }, 'Nothing selected. Click an object, or click Shot camera in the list or the timeline.'),
     h('div', { class: 'chips' }, Object.entries(ENV).map(([k, e]) => h('button', { class: s.env === k ? 'on' : '', onclick: () => pickEnv(k) }, e.label)))));
+  p.append(skySection(!simple));
   p.append(sec('Start from a set', h('p', { class: 'note', style: 'margin:0 0 6px' }, 'Ready-made layouts for common blocking situations.'),
     h('button', { class: 'primary', style: 'width:100%', onclick: () => openStarters() }, 'Browse starter sets…')));
   if (simple) {
     p.append(sec('Ground', check('Show ground', () => s.groundOn, v => set('groundOn', v)), check('Grid in editor', () => s.gridOn, v => { set('gridOn', v); syncTopUI(); }),
       h('p', { class: 'note' }, 'Sky colours and fog are in Advanced mode (gear menu, top right).')));
   }
-  if (!simple) p.append(sec('Sky & ground',
-    colorRow('Sky', () => s.sky, (v, c) => { s.env = 'custom'; set('sky', v, c); }),
-    check('Show ground', () => s.groundOn, v => set('groundOn', v)),
-    colorRow('Ground', () => s.groundColor, (v, c) => set('groundColor', v, c)),
-    check('Grid in editor', () => s.gridOn, v => { set('gridOn', v); syncTopUI(); }),
-    check('Fog / haze', () => s.fog, v => set('fog', v)),
-    slider('Fog amount', () => s.fogDensity, (v, c) => set('fogDensity', v, c), { min: 0.002, max: 0.08, step: 0.001, fmt: v => v.toFixed(3) })));
   p.append(sunSection(!simple));
   p.append(sec('Getting started', h('ol', { class: 'steps', style: 'font-size:12px;margin:0' },
     h('li', null, 'Add people and props from the left: click a tile, then click where it goes, or drag the tile onto the view.'),
@@ -2331,6 +2325,37 @@ function moveCard() {
     h('p', { class: 'note' }, ends.s && ends.e ? 'Reframe at either end and press Set start or Set end again to change it.' : 'Frame the opening shot → Set start. Frame the closing shot → Set end.')));
 }
 
+/* "Sky": how cloudy it is, what the clouds look like and how they drift. Advanced adds exact amounts and the sky, ground and fog colours */
+function skySection(adv) {
+  const s = state.settings, cl = () => s.clouds || CLOUDS_NEW, cover = cl().cover > 0;
+  const setC = (patch, c = true) => { s.clouds = cleanClouds({ ...cl(), ...patch }); applyEnv(); changed(c, c); if (c) { propsDirty = false; renderProps(); } }; /* rows come and go, so the panel is rebuilt now, not a frame later */
+  const set = (k, v, c = true) => { s[k] = v; applyEnv(); changed(c); };
+  const chips = (list, cur, pick, swatch) => h('div', { class: 'chips grow' + (swatch ? ' cover' : '') }, list.map(([k, l]) =>
+    h('button', { class: (cur === k ? 'on' : '') + (swatch ? ' cc' : ''), onclick: () => pick(k) }, swatch ? h('i', { class: 'csw ' + k }) : null, l)));
+  const row = (label, kid) => h('div', { class: 'row chiprow' }, h('label', null, label), kid);
+  const note = h('span', { class: 'note', style: 'margin:0' }), wording = () => putText(note, skyWording(cl(), s)); wording(); live.push(wording);
+  const nearest = nearestCover(cl().cover);
+  return sec('Sky',
+    h('div', { class: 'lbl', style: 'width:auto;margin:2px 0 4px' }, 'Clouds'),
+    chips(COVER.map(e => [e[0], e[2]]), nearest, k => setC({ cover: COVER.find(e => e[0] === k)[1] }), true),
+    cover ? row('Look', chips(LOOKS, cl().look, k => setC({ look: k }))) : null,
+    cover ? row('Drift', chips(DRIFTS, cl().drift, k => setC({ drift: k }))) : null,
+    cover ? h('button', { class: 'wide', style: 'width:100%;margin-top:4px', title: 'Try a different arrangement of clouds', onclick: () => {
+      let n; do n = 1 + Math.floor(Math.random() * 9999); while (n === cl().seed); setC({ seed: n });
+    } }, 'Shuffle clouds') : null,
+    h('div', { class: 'row' }, note),
+    adv ? slider('Amount', () => cl().cover, (v, c) => setC({ cover: v }, c), { min: 0, max: 1, step: 0.01, fmt: v => Math.round(v * 100) + '%' }) : null,
+    adv && cover ? slider('Edges', () => cl().soft, (v, c) => setC({ soft: v }, c), { min: 0, max: 1, step: 0.01, fmt: v => v < 0.25 ? 'crisp' : v < 0.65 ? 'medium' : 'soft' }) : null,
+    adv && cover && cl().drift !== 'still' ? slider('Drift direction', () => cl().dir, (v, c) => setC({ dir: v }, c), { min: 0, max: 360, step: 1, fmt: v => v.toFixed(0) + '°' }) : null,
+    adv ? h('hr', { class: 'div' }) : null,
+    adv ? colorRow('Sky colour', () => s.sky, (v, c) => { s.env = 'custom'; set('sky', v, c); }) : null,
+    adv ? check('Show ground', () => s.groundOn, v => set('groundOn', v)) : null,
+    adv ? colorRow('Ground', () => s.groundColor, (v, c) => set('groundColor', v, c)) : null,
+    adv ? check('Grid in editor', () => s.gridOn, v => { set('gridOn', v); syncTopUI(); }) : null,
+    adv ? check('Fog / haze', () => s.fog, v => set('fog', v)) : null,
+    adv ? slider('Fog amount', () => s.fogDensity, (v, c) => set('fogDensity', v, c), { min: 0.002, max: 0.08, step: 0.001, fmt: v => v.toFixed(3) }) : null,
+    h('p', { class: 'note' }, 'Clouds also soften the sun. Drift moves them during the shot; set Still for a frozen sky.'));
+}
 /* "Sun & shadows": light the shot from a side, time of day, direction and height, shadows on or off, softness and depth */
 function sunSection(adv) {
   const s = state.settings, set = (k, v, c = true) => { s[k] = v; applyEnv(); changed(c); };
@@ -2356,6 +2381,7 @@ function propsSun(p) {
   p.append(sunSection(true));
   p.append(sec('Environment', h('div', { class: 'chips' }, Object.entries(ENV).map(([k, e]) => h('button', { class: s.env === k ? 'on' : '', onclick: () => pickEnv(k) }, e.label))),
     h('p', { class: 'note' }, 'Presets change the sky, sun and fill light together.')));
+  p.append(skySection(!simple));
 }
 /* ---- the camera panel: Shot | Move | Lens | Photo | Output ---- */
 const CAM_TABS = [['shot', 'Shot'], ['move', 'Move'], ['lens', 'Lens'], ['photo', 'Photo'], ['output', 'Output']];
