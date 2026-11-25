@@ -28,6 +28,14 @@ export function cleanClouds(raw) {
   };
 }
 
+/* the light that cloud cover leaves: weaker sun, more fill, softer shadows. A layer over the saved settings, never written back;
+   at cover 0 it returns them unchanged */
+export function cloudLight(s) {
+  const c = s.clouds && typeof s.clouds.cover === 'number' ? s.clouds.cover : 0, c2 = c * c;
+  const soft = typeof s.shadowSoft === 'number' ? s.shadowSoft : 0.3;
+  return { sunInt: s.sunInt * (1 - 0.8 * c2), ambInt: s.ambInt + 0.6 * c2, shadowSoft: c ? Math.min(1, soft + 0.7 * c) : soft };
+}
+
 /* ---- the sky dome: gradient, clouds, sun glow and drift, painted by one shader ----
    A unit sphere drawn at the far plane around whichever camera renders it (rotation only), so it never clips,
    ignores where the camera stands and reads as background (depth 1) in the depth of field pass.

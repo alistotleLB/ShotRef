@@ -6,7 +6,7 @@ import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
 import { normalizeProject, FORMAT_VERSION, describeChange } from './project.js';
 import * as K from './keys.js';
 import { platform } from './platform.js';
-import { CLOUDS_NEW, cleanClouds, makeSkyDome } from './sky.js';
+import { CLOUDS_NEW, cleanClouds, cloudLight, makeSkyDome } from './sky.js';
 import { runTour, tourActive, tourTick } from './tour.js';
 import { TOUR_COPY } from './tour-copy.js';
 
@@ -139,15 +139,20 @@ const STYLES = [
   ['normal', 'Normals', 'Surface direction map', 'linear-gradient(135deg,#8080ff,#ff80c0 50%,#80ff80)'],
 ];
 const ENV = {
-  studio: { label: 'Studio', sky: '#3f434a', groundColor: '#5d6064', sunColor: '#ffffff', sunInt: 2.0, sunEl: 58, sunAz: 35, ambInt: 1.15, fog: false },
-  day: { label: 'Day', sky: '#9cc2ea', groundColor: '#8c9286', sunColor: '#fff3dc', sunInt: 2.6, sunEl: 52, sunAz: 40, ambInt: 0.9, fog: false },
-  overcast: { label: 'Overcast', sky: '#c3c8ce', groundColor: '#80867d', sunColor: '#ffffff', sunInt: 0.55, sunEl: 70, sunAz: 20, ambInt: 1.7, fog: true },
-  sunset: { label: 'Sunset', sky: '#e99f72', groundColor: '#6f6253', sunColor: '#ffb36b', sunInt: 2.5, sunEl: 8, sunAz: 250, ambInt: 0.6, fog: true },
-  night: { label: 'Night', sky: '#101a2e', groundColor: '#2c3139', sunColor: '#a8b9ff', sunInt: 0.75, sunEl: 40, sunAz: 300, ambInt: 0.38, fog: true },
+  studio: { label: 'Studio', sky: '#3f434a', groundColor: '#5d6064', sunColor: '#ffffff', sunInt: 2.0, sunEl: 58, sunAz: 35, ambInt: 1.15, fog: false, clouds: { cover: 0, look: 'fluffy' } },
+  day: { label: 'Day', sky: '#9cc2ea', groundColor: '#8c9286', sunColor: '#fff3dc', sunInt: 2.6, sunEl: 52, sunAz: 40, ambInt: 0.9, fog: false, clouds: { cover: 0.2, look: 'fluffy' } },
+  overcast: { label: 'Overcast', sky: '#c3c8ce', groundColor: '#80867d', sunColor: '#ffffff', sunInt: 2.75, sunEl: 70, sunAz: 20, ambInt: 1.1, fog: true, clouds: { cover: 1, look: 'flat' } },
+  sunset: { label: 'Sunset', sky: '#e99f72', groundColor: '#6f6253', sunColor: '#ffb36b', sunInt: 2.5, sunEl: 8, sunAz: 250, ambInt: 0.6, fog: true, clouds: { cover: 0.42, look: 'fluffy' } },
+  night: { label: 'Night', sky: '#101a2e', groundColor: '#2c3139', sunColor: '#a8b9ff', sunInt: 0.75, sunEl: 40, sunAz: 300, ambInt: 0.38, fog: true, clouds: { cover: 0.2, look: 'fluffy' } },
 };
+/* a preset's own fields without its cloud look: that is merged into settings.clouds (setEnv) so drift, direction and seed stay */
+const envFields = ({ clouds, ...rest }) => rest;
+/* put a preset into the settings (no redraw): its light and colours, plus cover and look for the clouds */
+function setEnv(s, k) { const e = ENV[k]; Object.assign(s, envFields(e), { env: k }); s.clouds = cleanClouds({ ...s.clouds, ...e.clouds }); }
+function pickEnv(k) { setEnv(state.settings, k); applyEnv(); changed(true, true); }
 const DEFAULT_SETTINGS = {
   duration: 5, fps: 24, aspect: '16:9', size: 1920, interp: 'smooth', loop: true,
-  env: 'day', ...ENV.day, groundOn: true, gridOn: true, fogDensity: 0.018,
+  env: 'day', ...envFields(ENV.day), groundOn: true, gridOn: true, fogDensity: 0.018,
   style: 'shaded', exportGrid: false, guides: 'thirds', depthAuto: true, depthNear: 0.5, depthFar: 25, shadowSoft: 0.3,
   clouds: { ...CLOUDS_NEW },
 };
@@ -669,16 +674,16 @@ scene.add(skyDome.mesh);
 /* the dome or the flat gradient behind the scene */
 function showDome(on) { skyDome.mesh.visible = on; scene.background = on ? null : skyTex && skyTex.tex; }
 function applyEnv() {
-  const s = state.settings;
+  const s = state.settings, L = cloudLight(s); /* cloud cover softens the light on top of the saved values */
   if (skyTex) skyTex.tex.dispose();
   skyTex = skyTexture(s.sky); /* still the fog colour (its horizon), and the top view's background */
   placeSun();
   skyDome.update({ sky: s.sky, clouds: s.clouds, sunDir: _sunDir, sunColor: s.sunColor, night: s.env === 'night' });
   showDome(view !== 'top');
   scene.fog = s.fog ? new THREE.FogExp2(skyTex.horizon, s.fogDensity) : null;
-  hemi.color.set(s.sky).lerp(new THREE.Color('#ffffff'), 0.35); hemi.groundColor.set(s.groundColor); hemi.intensity = s.ambInt;
-  sun.color.set(s.sunColor); sun.intensity = s.sunInt;
-  sun.castShadow = s.shadows !== false; sun.shadow.radius = 1 + (typeof s.shadowSoft === 'number' ? s.shadowSoft : 0.3) * 6; /* softness 0..1 */
+  hemi.color.set(s.sky).lerp(new THREE.Color('#ffffff'), 0.35); hemi.groundColor.set(s.groundColor); hemi.intensity = L.ambInt;
+  sun.color.set(s.sunColor); sun.intensity = L.sunInt;
+  sun.castShadow = s.shadows !== false; sun.shadow.radius = 1 + L.shadowSoft * 6; /* softness 0..1 */
   ground.material.color.set(s.groundColor); ground.visible = s.groundOn;
   grid.visible = s.gridOn;
 }
@@ -2220,7 +2225,7 @@ function propsScene(p) {
   const s = state.settings;
   const set = (k, v, c = true) => { s[k] = v; applyEnv(); changed(c); };
   p.append(sec('Scene', h('p', { class: 'note', style: 'margin:0 0 8px' }, 'Nothing selected. Click an object, or click Shot camera in the list or the timeline.'),
-    h('div', { class: 'chips' }, Object.entries(ENV).map(([k, e]) => h('button', { class: s.env === k ? 'on' : '', onclick: () => { Object.assign(s, e, { env: k }); applyEnv(); changed(true, true); } }, e.label)))));
+    h('div', { class: 'chips' }, Object.entries(ENV).map(([k, e]) => h('button', { class: s.env === k ? 'on' : '', onclick: () => pickEnv(k) }, e.label)))));
   p.append(sec('Start from a set', h('p', { class: 'note', style: 'margin:0 0 6px' }, 'Ready-made layouts for common blocking situations.'),
     h('button', { class: 'primary', style: 'width:100%', onclick: () => openStarters() }, 'Browse starter sets…')));
   if (simple) {
@@ -2349,7 +2354,7 @@ function propsSun(p) {
   const s = state.settings;
   p.append(sec('Sun', h('p', { class: 'note', style: 'margin:0' }, 'Drag the sun in the 3D view, or use the controls below. It lights the whole scene.')));
   p.append(sunSection(true));
-  p.append(sec('Environment', h('div', { class: 'chips' }, Object.entries(ENV).map(([k, e]) => h('button', { class: s.env === k ? 'on' : '', onclick: () => { Object.assign(s, e, { env: k }); applyEnv(); changed(true, true); } }, e.label))),
+  p.append(sec('Environment', h('div', { class: 'chips' }, Object.entries(ENV).map(([k, e]) => h('button', { class: s.env === k ? 'on' : '', onclick: () => pickEnv(k) }, e.label))),
     h('p', { class: 'note' }, 'Presets change the sky, sun and fill light together.')));
 }
 /* ---- the camera panel: Shot | Move | Lens | Photo | Output ---- */
@@ -3840,11 +3845,11 @@ function fillStarter(kind, selectId) {
       const A = add('person', [-0.4, 0, -5]), B = add('person', [0.4, 0, -5], { opts: { height: 1.68, hair: '#5a3a22' } });
       walk(A, [-0.4, 0, -5], [-0.4, 0, 2]); walk(B, [0.4, 0, -5], [0.4, 0, 2]);
       cam([0.4, 1.55, -1.7], [0, 1.3, -5], 32); state.camera.lookAtId = A.id; state.camera.follow = true;
-      state.settings.env = 'overcast'; Object.assign(state.settings, ENV.overcast);
+      setEnv(state.settings, 'overcast');
       break;
     }
     case 'room': {
-      Object.assign(state.settings, ENV.studio, { env: 'studio' });
+      setEnv(state.settings, 'studio');
       add('plane', [0, 0, -0.4], { s: [2, 1, 1.7], color: '#9b7a5a' });
       add('wall', [0, 0, -3.8], { s: [2, 1, 1] }); add('wall', [-4, 0, -0.4], { r: [0, 90, 0], s: [1.7, 1, 1] });
       add('sofa', [0, 0, -3.1]); add('table', [0, 0, -1.9], { s: [0.7, 0.55, 0.75], color: '#6b4a32' });
@@ -5842,7 +5847,7 @@ function boot() {
     get rebuilds() { return rebuilds; }, urlCacheIds: () => [...urlCache.keys()],
     /* batch H (takes) hooks for the smoke test */
     switchTake, newTake, snapPoolSize: () => snapLive, snapPruned: () => snapPruned,
-    normalize: raw => normalizeProject(raw, projectDefaults()), describeChange, setClouds: patch => { state.settings.clouds = cleanClouds({ ...state.settings.clouds, ...patch }); applyEnv(); changed(true, true); },
+    normalize: raw => normalizeProject(raw, projectDefaults()), describeChange, lights: () => ({ sun: sun.intensity, amb: hemi.intensity, radius: sun.shadow.radius }), pickEnv, setClouds: patch => { state.settings.clouds = cleanClouds({ ...state.settings.clouds, ...patch }); applyEnv(); changed(true, true); },
     sky: () => ({ visible: skyDome.mesh.visible, cover: skyDome.uniforms.uCover.value, time: skyDome.time }),
     get history() { return { at: hi, length: hist.length, bytes: hist[hi].length }; },
     /* batch F (camera UX and light) hooks for the smoke test */

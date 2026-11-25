@@ -3616,7 +3616,7 @@ check('shadows: Cast shadows and Softness change the sun in the scene and in the
   const p = await open(); await settle(p, 300);
   await p.evaluate(() => { const S = window.__shotref; S.select(null); S.state.settings.sunEl = 40; S.state.settings.sunAz = 60; S.changed(true, true); }); await settle(p, 300);
   ok(await p.evaluate(() => document.querySelector('#props').textContent.includes('Cast shadows')), 'Cast shadows is in the Scene panel');
-  ok((await sunInfo(p)).castShadow === true && Math.abs((await sunInfo(p)).radius - 2.8) < 0.01, 'default: shadows on, radius 1 + 0.3 x 6');
+  ok((await sunInfo(p)).castShadow === true && Math.abs((await sunInfo(p)).radius - 3.64) < 0.01, 'default: shadows on, radius 1 + (0.3 + 0.7 x 0.2 few clouds) x 6');
   await setRange(p, 'Softness', 1); await settle(p, 250);
   ok(Math.abs((await sunInfo(p)).radius - 7) < 0.01 && await p.evaluate(() => window.__shotref.state.settings.shadowSoft) === 1, 'softness 1 gives radius 7');
   const soft = await p.evaluate(() => Array.from(window.__shotref.shotPixels(0, 240)));
@@ -3771,7 +3771,7 @@ check('old files: no dof.strength opens at 1, in the file, in shots and in an au
 
 check('old files: no shadowSoft keeps the old shadow radius (2); a new scene uses the new default', async ({ open }) => {
   const p = await open(); await settle(p, 300);
-  ok(Math.abs((await sunInfo(p)).radius - 2.8) < 0.01, 'a new scene: 2.8');
+  ok(Math.abs((await sunInfo(p)).radius - 3.64) < 0.01, 'a new scene: 3.64 (0.3 softness, softened by few clouds)');
   await openFile(p, 'o5.shotref', fileWith({}, {}));
   ok(Math.abs((await sunInfo(p)).radius - 2) < 0.01, 'a file without shadowSoft: radius 2, was ' + (await sunInfo(p)).radius);
   await openFile(p, 'o6.shotref', fileWith({}, { shadowSoft: 0.5 }));
@@ -6204,8 +6204,8 @@ check('sky: still clouds do not move', async ({ open }) => {
 });
 check('sky: hidden in depth, clay and over the photo', async ({ open }) => {
   const p = await open();
-  /* compare the top row only: it is pure background in these styles (clay's lit surfaces change with the light coupling of Task 3, by design) */
-  const r = await p.evaluate(() => { const s = __shotref.state.settings, row = d => Array.from(d.slice(0, 240 * 4)); const out = {}; for (const st of ['depth', 'clay', 'normal']) { s.style = st; __shotref.setClouds({ cover: 0 }); const a = row(__shotref.shotPixels(1)); __shotref.setClouds({ cover: 1 }); const b = row(__shotref.shotPixels(1)); out[st] = a.every((v, i) => v === b[i]); } s.style = 'shaded'; return out; });
+  /* the pixels that are plain background (equal to the corner) must not change with cover; lit surfaces do, by design (light coupling) */
+  const r = await p.evaluate(() => { const s = __shotref.state.settings, out = {}; for (const st of ['depth', 'clay', 'normal']) { s.style = st; __shotref.setClouds({ cover: 0 }); const a = __shotref.shotPixels(1); __shotref.setClouds({ cover: 1 }); const b = __shotref.shotPixels(1); let bg = 0, bad = 0; for (let i = 0; i < a.length; i += 4) if (a[i] === a[0] && a[i + 1] === a[1] && a[i + 2] === a[2]) { bg++; if (b[i] !== a[i] || b[i + 1] !== a[i + 1] || b[i + 2] !== a[i + 2]) bad++; } out[st] = bg > 500 && bad === 0; } s.style = 'shaded'; return out; });
   if (!r.depth || !r.clay || !r.normal) throw new Error('cover changed a style background: ' + JSON.stringify(r));
 });
 check('sky: dof render has no NaN or black sky', async ({ open }) => {
@@ -6223,7 +6223,27 @@ check('sky: hidden behind the location photo', async ({ open, fixtures }) => {
   await p.setInputFiles('#fPlate', path.join(fixtures, 'location.jpg'));
   await p.waitForFunction(() => window.__shotref.state.plate && window.__shotref.state.plate.asset);
   await p.waitForFunction(() => { const i = document.querySelector('.plateImg'); return i && i.getAttribute('src'); });
-  /* top third only: pure photo there; lower down the shadow catcher reacts to the light coupling of Task 3 */
-  const same = await p.evaluate(() => { const top = d => Array.from(d.slice(0, Math.floor(d.length / 3))); __shotref.setClouds({ cover: 0 }); const a = top(__shotref.shotPixels(1)); __shotref.setClouds({ cover: 1 }); const b = top(__shotref.shotPixels(1)); return a.every((v, i) => v === b[i]); });
+  /* the top fifth (the end of the buffer, which reads from the bottom up) is pure photo; lower down, lit surfaces change with the light coupling */
+  const same = await p.evaluate(() => { const top = d => Array.from(d.slice(Math.floor(d.length * 0.8 / 4) * 4)); __shotref.setClouds({ cover: 0 }); const a = top(__shotref.shotPixels(1)); __shotref.setClouds({ cover: 1 }); const b = top(__shotref.shotPixels(1)); return a.every((v, i) => v === b[i]); });
   if (!same) throw new Error('clouds showed over the location photo');
+});
+check('sky: clear gives back the stored light', async ({ open }) => {
+  const p = await open();
+  const r = await p.evaluate(() => { const s = __shotref.state.settings; __shotref.setClouds({ cover: 1 }); __shotref.setClouds({ cover: 0 }); const L = __shotref.lights(); return { sun: L.sun, amb: L.amb, sSun: s.sunInt, sAmb: s.ambInt }; });
+  if (Math.abs(r.sun - r.sSun) > 1e-6 || Math.abs(r.amb - r.sAmb) > 1e-6) throw new Error(JSON.stringify(r));
+});
+check('sky: overcast preset matches the old overcast light', async ({ open }) => {
+  const p = await open();
+  const L = await p.evaluate(() => { __shotref.pickEnv('overcast'); return __shotref.lights(); });
+  if (Math.abs(L.sun - 0.55) > 0.01 || Math.abs(L.amb - 1.7) > 0.01) throw new Error(JSON.stringify(L));
+});
+check('sky: cover softens without saving', async ({ open }) => {
+  const p = await open();
+  const r = await p.evaluate(() => { const s = __shotref.state.settings, before = s.sunInt; __shotref.setClouds({ cover: 0.68 }); return { before, after: s.sunInt, live: __shotref.lights().sun }; });
+  if (r.before !== r.after || !(r.live < r.before)) throw new Error(JSON.stringify(r));
+});
+check('sky: a preset sets cover and look but keeps drift, direction and seed', async ({ open }) => {
+  const p = await open();
+  const r = await p.evaluate(() => { __shotref.setClouds({ drift: 'fast', dir: 200, seed: 77, soft: 0.9 }); __shotref.pickEnv('overcast'); return __shotref.state.settings.clouds; });
+  if (r.cover !== 1 || r.look !== 'flat' || r.drift !== 'fast' || r.dir !== 200 || r.seed !== 77 || r.soft !== 0.9) throw new Error(JSON.stringify(r));
 });
