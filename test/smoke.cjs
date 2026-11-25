@@ -6187,3 +6187,43 @@ check('sky: undo names and restores clouds', async ({ open }) => {
   const after = await p.evaluate(() => __shotref.state.settings.clouds.cover);
   if (r0.name !== 'clouds' || r0.steps !== 1 || after !== r0.before) throw new Error(JSON.stringify({ ...r0, after }));
 });
+check('sky: same frame, same clouds', async ({ open }) => {
+  const p = await open();
+  const same = await p.evaluate(() => { __shotref.setClouds({ cover: 0.68, drift: 'fast' }); const a = __shotref.shotPixels(2.0); __shotref.setT(0); __shotref.setT(4); const b = __shotref.shotPixels(2.0); return a.every((v, i) => v === b[i]); });
+  if (!same) throw new Error('two renders of t=2 differ');
+});
+check('sky: clouds drift over time', async ({ open }) => {
+  const p = await open();
+  const diff = await p.evaluate(() => { __shotref.setClouds({ cover: 0.68, drift: 'fast' }); const a = __shotref.shotPixels(0), b = __shotref.shotPixels(4); let n = 0; for (let i = 0; i < a.length; i += 4) if (Math.abs(a[i] - b[i]) > 8) n++; return n; });
+  if (diff < 50) throw new Error('clouds did not move, changed pixels: ' + diff);
+});
+check('sky: still clouds do not move', async ({ open }) => {
+  const p = await open();
+  const same = await p.evaluate(() => { __shotref.setClouds({ cover: 0.68, drift: 'still' }); const a = __shotref.shotPixels(0), b = __shotref.shotPixels(4); return a.every((v, i) => v === b[i]); });
+  if (!same) throw new Error('still clouds changed between t=0 and t=4');
+});
+check('sky: hidden in depth, clay and over the photo', async ({ open }) => {
+  const p = await open();
+  /* compare the top row only: it is pure background in these styles (clay's lit surfaces change with the light coupling of Task 3, by design) */
+  const r = await p.evaluate(() => { const s = __shotref.state.settings, row = d => Array.from(d.slice(0, 240 * 4)); const out = {}; for (const st of ['depth', 'clay', 'normal']) { s.style = st; __shotref.setClouds({ cover: 0 }); const a = row(__shotref.shotPixels(1)); __shotref.setClouds({ cover: 1 }); const b = row(__shotref.shotPixels(1)); out[st] = a.every((v, i) => v === b[i]); } s.style = 'shaded'; return out; });
+  if (!r.depth || !r.clay || !r.normal) throw new Error('cover changed a style background: ' + JSON.stringify(r));
+});
+check('sky: dof render has no NaN or black sky', async ({ open }) => {
+  const p = await open();
+  const dark = await p.evaluate(() => { __shotref.setClouds({ cover: 0.42 }); __shotref.state.camera.dof = { on: true, fstop: 1.4, auto: true, strength: 3 }; const d = __shotref.shotPixels(1); let n = 0; const w = 240; for (let x = 0; x < w; x++) { const i = x * 4; if (d[i] + d[i + 1] + d[i + 2] < 30) n++; } return n; });
+  if (dark > 24) throw new Error('top row of the DOF render is black in ' + dark + ' pixels');
+});
+check('sky: top view hides the dome', async ({ open }) => {
+  const p = await open();
+  const v = await p.evaluate(async () => { __shotref.setView('top'); await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); return __shotref.sky().visible; });
+  if (v) throw new Error('dome visible in the top view');
+});
+check('sky: hidden behind the location photo', async ({ open, fixtures }) => {
+  const p = await open();
+  await p.setInputFiles('#fPlate', path.join(fixtures, 'location.jpg'));
+  await p.waitForFunction(() => window.__shotref.state.plate && window.__shotref.state.plate.asset);
+  await p.waitForFunction(() => { const i = document.querySelector('.plateImg'); return i && i.getAttribute('src'); });
+  /* top third only: pure photo there; lower down the shadow catcher reacts to the light coupling of Task 3 */
+  const same = await p.evaluate(() => { const top = d => Array.from(d.slice(0, Math.floor(d.length / 3))); __shotref.setClouds({ cover: 0 }); const a = top(__shotref.shotPixels(1)); __shotref.setClouds({ cover: 1 }); const b = top(__shotref.shotPixels(1)); return a.every((v, i) => v === b[i]); });
+  if (!same) throw new Error('clouds showed over the location photo');
+});

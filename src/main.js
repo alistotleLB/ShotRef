@@ -6,7 +6,7 @@ import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
 import { normalizeProject, FORMAT_VERSION, describeChange } from './project.js';
 import * as K from './keys.js';
 import { platform } from './platform.js';
-import { CLOUDS_NEW, cleanClouds } from './sky.js';
+import { CLOUDS_NEW, cleanClouds, makeSkyDome } from './sky.js';
 import { runTour, tourActive, tourTick } from './tour.js';
 import { TOUR_COPY } from './tour-copy.js';
 
@@ -24,7 +24,8 @@ import { TOUR_COPY } from './tour-copy.js';
  * sizeWarned                     autosave size warning shown once: warnSize
  * autosaveReady, autosaveWaiting boot has loaded stored assets / a save is waiting for that: boot, writeAutosave
  * inlineTooBig, saveTimer        autosave fallback state and the debounce timer: writeAutosave, autosave, flushAutosave
- * topInit, skyTex                top view framed once: setView; sky texture: applyEnv
+ * topInit, skyTex                top view framed once: setView; sky texture (fog colour, top view and style backgrounds): applyEnv
+ *                                (the sky dome, skyDome, is a const: its look follows applyEnv and placeSun, its clock applyAll)
  * camState, pilotActive          shot camera at the playhead: applyAll; user is steering it: fly, camControls, records
  * pathRev                        editRev the walk paths were last drawn at: updatePaths, select
  * gizmoMode, snapOn, gizmoUsed   arrows mode: setGizmoMode; snap: #bSnapGrid; gizmo was used this click: gizmo, canvas
@@ -660,11 +661,20 @@ function skyTexture(hex) {
   return { tex: t, horizon: hor };
 }
 let skyTex = null;
+/* the world-anchored sky: gradient, clouds and sun glow. Shown behind the editor view and shaded shot renders;
+   the top view, clay, depth and normal styles and the location photo keep their flat backgrounds (draw, withShotStyle) */
+/* only the parts it uses: handing over the whole THREE namespace would stop the bundler dropping the rest of three.js (+130 KB) */
+const skyDome = makeSkyDome({ Color: THREE.Color, Vector2: THREE.Vector2, Vector3: THREE.Vector3, Mesh: THREE.Mesh, SphereGeometry: THREE.SphereGeometry, ShaderMaterial: THREE.ShaderMaterial, BackSide: THREE.BackSide });
+scene.add(skyDome.mesh);
+/* the dome or the flat gradient behind the scene */
+function showDome(on) { skyDome.mesh.visible = on; scene.background = on ? null : skyTex && skyTex.tex; }
 function applyEnv() {
   const s = state.settings;
   if (skyTex) skyTex.tex.dispose();
-  skyTex = skyTexture(s.sky);
-  scene.background = skyTex.tex;
+  skyTex = skyTexture(s.sky); /* still the fog colour (its horizon), and the top view's background */
+  placeSun();
+  skyDome.update({ sky: s.sky, clouds: s.clouds, sunDir: _sunDir, sunColor: s.sunColor, night: s.env === 'night' });
+  showDome(view !== 'top');
   scene.fog = s.fog ? new THREE.FogExp2(skyTex.horizon, s.fogDensity) : null;
   hemi.color.set(s.sky).lerp(new THREE.Color('#ffffff'), 0.35); hemi.groundColor.set(s.groundColor); hemi.intensity = s.ambInt;
   sun.color.set(s.sunColor); sun.intensity = s.sunInt;
@@ -1305,6 +1315,7 @@ function applyAll(t) {
     camState = { p: shotCam.position.toArray(), tg: camControls.target.toArray(), f: rec ? rec.f : c.f, roll: c.roll, fd: c.fd };
   }
   shotCam.aspect = arOf(state.settings.aspect); shotCam.filmGauge = 36; shotCam.setFocalLength(camState.f);
+  skyDome.setTime(t); /* cloud drift follows shot time, so every render of a frame shows the same clouds */
 }
 /* the wheels roll with the distance driven; the front ones steer into a curve (how fast the heading changes per metre) */
 function updateWheels(v, o, t, info) {
@@ -1483,6 +1494,7 @@ function placeSun() {
   _sunDir.set(Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az));
   sun.position.copy(c).addScaledVector(_sunDir, 60);
   sun.updateMatrixWorld(); sun.target.updateMatrixWorld();
+  skyDome.update({ sunDir: _sunDir });
 }
 const camPointsOn = () => view !== 'camera' && state.camera.keys.length >= 2 && getPref('camPoints', true) !== false && camPath.line.visible;
 function updateCamPoints() {
@@ -1735,21 +1747,22 @@ function fitPlate() {
   plateTex.updateMatrix();
 }
 function withShotStyle(style, fn) {
-  const bg = scene.background, fog = scene.fog, gv = gizmoHelper.visible;
+  const bg = scene.background, fog = scene.fog, gv = gizmoHelper.visible, dv = skyDome.mesh.visible;
   helpers.visible = false; gizmoHelper.visible = false;
+  showDome(style === 'shaded'); /* clay, depth and normal keep their flat backgrounds (set below) */
   const marks = [...views.values()].filter(v => v.isMark && v.group.visible); marks.forEach(v => { v.group.visible = false; }); grid.visible = state.settings.exportGrid;
   if (style === 'clay') { scene.overrideMaterial = clayMat; scene.background = clayBg; scene.fog = null; }
   else if (style === 'depth') { const r = depthRange(); depthMat.uniforms.uNear.value = r.near; depthMat.uniforms.uFar.value = r.far; scene.overrideMaterial = depthMat; scene.background = black; scene.fog = null; }
   else if (style === 'normal') { scene.overrideMaterial = normalMat; scene.background = normalBg; scene.fog = null; }
   const usePlate = plateActive(style), gMat = ground.material, gVis = ground.visible;
   if (usePlate) {
-    fitPlate(); scene.background = plateTex; scene.fog = null;
+    fitPlate(); skyDome.mesh.visible = false; scene.background = plateTex; scene.fog = null;
     const gm = state.plate.ground || 'shadow';
     if (gm === 'shadow') { ground.material = shadowMat; ground.visible = true; } else if (gm === 'hide') ground.visible = false;
   }
   try { fn(); } finally {
     ground.material = gMat; ground.visible = gVis;
-    scene.overrideMaterial = null; scene.background = bg; scene.fog = fog;
+    scene.overrideMaterial = null; scene.background = bg; scene.fog = fog; skyDome.mesh.visible = dv;
     marks.forEach(v => { v.group.visible = true; });
     helpers.visible = true; gizmoHelper.visible = gv; grid.visible = state.settings.gridOn;
   }
@@ -1779,6 +1792,7 @@ function draw() {
   const o = R.work, wy = hh - o.y - o.h;
   renderer.setViewport(o.x, wy, o.w, o.h);
   if (sp) { renderer.setScissor(o.x, wy, o.w, o.h); renderer.setScissorTest(true); }
+  showDome(view !== 'top'); /* the top view keeps the flat gradient */
   if (view === 'editor') {
     edCam.aspect = o.w / o.h; edCam.updateProjectionMatrix();
     camRig.visible = true;
@@ -5829,6 +5843,7 @@ function boot() {
     /* batch H (takes) hooks for the smoke test */
     switchTake, newTake, snapPoolSize: () => snapLive, snapPruned: () => snapPruned,
     normalize: raw => normalizeProject(raw, projectDefaults()), describeChange, setClouds: patch => { state.settings.clouds = cleanClouds({ ...state.settings.clouds, ...patch }); applyEnv(); changed(true, true); },
+    sky: () => ({ visible: skyDome.mesh.visible, cover: skyDome.uniforms.uCover.value, time: skyDome.time }),
     get history() { return { at: hi, length: hist.length, bytes: hist[hi].length }; },
     /* batch F (camera UX and light) hooks for the smoke test */
     editCamPos: () => edCam.position.toArray(), detectMove, describeShot, camToWorld, pointsVisible: () => ckPts.some(m => m.visible),
