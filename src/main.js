@@ -24,7 +24,7 @@ import { TOUR_COPY } from './tour-copy.js';
  * sizeWarned                     autosave size warning shown once: warnSize
  * autosaveReady, autosaveWaiting boot has loaded stored assets / a save is waiting for that: boot, writeAutosave
  * inlineTooBig, saveTimer        autosave fallback state and the debounce timer: writeAutosave, autosave, flushAutosave
- * topInit, skyTex                top view framed once: setView; sky texture (fog colour, top view and style backgrounds): applyEnv
+ * topInit, skyTex                top view framed once: setView; flat sky gradient (fog colour and the backdrop where the dome is hidden): applyEnv
  *                                (the sky dome, skyDome, is a const: its look follows applyEnv and placeSun, its clock applyAll)
  * camState, pilotActive          shot camera at the playhead: applyAll; user is steering it: fly, camControls, records
  * pathRev                        editRev the walk paths were last drawn at: updatePaths, select
@@ -654,6 +654,7 @@ const grid = new THREE.GridHelper(60, 60, 0x4b4f56, 0x3a3d43);
 grid.position.y = 0.002; grid.material.transparent = true; grid.material.opacity = 0.55;
 scene.add(grid);
 
+/* the old flat gradient, kept for what the dome can't be: the fog colour (its horizon), the top view's background and the clay/depth/normal and photo renders' backdrop */
 function skyTexture(hex) {
   const c = document.createElement('canvas'); c.width = 4; c.height = 256;
   const g = c.getContext('2d');
@@ -794,6 +795,7 @@ function shotPass(rd, pxW, pxH) {
   if (!dofActive()) { withShotStyle(style, () => rd.render(scene, renderCam)); return; }
   pxW = Math.max(2, Math.round(pxW)); pxH = Math.max(2, Math.round(pxH));
   const rt = dofTarget(rd, pxW, pxH);
+  /* the sky dome is part of this pass and tone-mapped by the post shader like the old gradient background was (the same parity, on purpose) */
   withShotStyle(style, () => { rd.setRenderTarget(rt); rd.clear(); rd.render(scene, renderCam); rd.setRenderTarget(null); });
   const d = ensureDof(), f = camState.f, N = Math.max(0.7, d.fstop), S = focusDist(camState), Smm = Math.max(S * 1000, f * 1.05);
   const longPx = Math.max(pxW, pxH);
@@ -1797,7 +1799,7 @@ function draw() {
   const o = R.work, wy = hh - o.y - o.h;
   renderer.setViewport(o.x, wy, o.w, o.h);
   if (sp) { renderer.setScissor(o.x, wy, o.w, o.h); renderer.setScissorTest(true); }
-  showDome(view !== 'top'); /* the top view keeps the flat gradient */
+  showDome(view !== 'top'); /* the top view keeps the flat gradient (skyTex) */
   if (view === 'editor') {
     edCam.aspect = o.w / o.h; edCam.updateProjectionMatrix();
     camRig.visible = true;
@@ -2327,7 +2329,7 @@ function moveCard() {
 
 /* "Sky": how cloudy it is, what the clouds look like and how they drift. Advanced adds exact amounts and the sky, ground and fog colours */
 function skySection(adv) {
-  const s = state.settings, cl = () => s.clouds || CLOUDS_NEW, cover = cl().cover > 0;
+  const s = state.settings, cl = () => cleanClouds(s.clouds), cover = nearestCover(cl().cover) !== 'clear'; /* 3% reads Clear everywhere: chip, wording, rows, prompt */
   const setC = (patch, c = true) => { s.clouds = cleanClouds({ ...cl(), ...patch }); applyEnv(); changed(c, c); if (c) { propsDirty = false; renderProps(); } }; /* rows come and go, so the panel is rebuilt now, not a frame later */
   const set = (k, v, c = true) => { s[k] = v; applyEnv(); changed(c); };
   const chips = (list, cur, pick, swatch) => h('div', { class: 'chips grow' + (swatch ? ' cover' : '') }, list.map(([k, l]) =>
@@ -2346,7 +2348,7 @@ function skySection(adv) {
     h('div', { class: 'row' }, note),
     adv ? slider('Amount', () => cl().cover, (v, c) => setC({ cover: v }, c), { min: 0, max: 1, step: 0.01, fmt: v => Math.round(v * 100) + '%' }) : null,
     adv && cover ? slider('Edges', () => cl().soft, (v, c) => setC({ soft: v }, c), { min: 0, max: 1, step: 0.01, fmt: v => v < 0.25 ? 'crisp' : v < 0.65 ? 'medium' : 'soft' }) : null,
-    adv && cover && cl().drift !== 'still' ? slider('Drift direction', () => cl().dir, (v, c) => setC({ dir: v }, c), { min: 0, max: 360, step: 1, fmt: v => v.toFixed(0) + '°' }) : null,
+    adv && cover && cl().drift !== 'still' ? slider('Wind', () => cl().dir, (v, c) => setC({ dir: v }, c), { min: 0, max: 360, step: 1, fmt: v => v.toFixed(0) + '°' }) : null,
     adv ? h('hr', { class: 'div' }) : null,
     adv ? colorRow('Sky colour', () => s.sky, (v, c) => { s.env = 'custom'; set('sky', v, c); }) : null,
     adv ? check('Show ground', () => s.groundOn, v => set('groundOn', v)) : null,
