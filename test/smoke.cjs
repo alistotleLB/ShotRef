@@ -6528,8 +6528,8 @@ check('picture tiles: the Scene presets and Light the shot from show 10 pictures
   await p.waitForFunction(() => window.__shotref.tiles().n === 10, null, { timeout: 15000 });
   await settle(p, 200);
   const r = await p.evaluate(() => ({ rows: [...document.querySelectorAll('#props .pictiles:not(.skytiles)')].map(row => [...row.querySelectorAll('button')].map(b => b.textContent.trim()).join()),
-    srcs: [...document.querySelectorAll('#props .pictiles img[data-tile]')].map(i => i.getAttribute('src') || ''),
-    on: [...document.querySelectorAll('#props .pictiles button.on')].map(b => b.textContent.trim()), env: window.__shotref.state.settings.env }));
+    srcs: [...document.querySelectorAll('#props .pictiles:not(.skytiles) img[data-tile]')].map(i => i.getAttribute('src') || ''),
+    on: [...document.querySelectorAll('#props .pictiles:not(.skytiles) button.on')].map(b => b.textContent.trim()), env: window.__shotref.state.settings.env }));
   ok(r.rows.join('|') === 'Studio,Day,Overcast,Sunset,Night|Front,Left,Right,Back,Top', 'tile rows: ' + r.rows.join('|'));
   ok(r.srcs.length === 10 && r.srcs.every(s => /^data:image\/webp;base64,.{200}/.test(s)), 'tile pictures: ' + r.srcs.map(s => s.slice(0, 30)).join());
   ok(r.on.length === 1 && r.on[0].toLowerCase() === r.env, 'selected preset tile: ' + r.on + ' / ' + r.env);
@@ -6540,7 +6540,7 @@ check('picture tiles: the Scene presets and Light the shot from show 10 pictures
   ok(px['light:back'].mid[0] + 40 < px['light:front'].mid[0], 'Back face should be darker than Front: ' + px['light:back'].mid + ' / ' + px['light:front'].mid);
   /* a rebuilt panel shows the pictures straight away; picking a tile keeps working */
   await p.locator('#props .pictiles').getByRole('button', { name: 'Night', exact: true }).click(); await settle(p, 200);
-  const after = await p.evaluate(() => ({ env: window.__shotref.state.settings.env, srcs: [...document.querySelectorAll('#props .pictiles img[data-tile]')].map(i => (i.getAttribute('src') || '').slice(0, 22)) }));
+  const after = await p.evaluate(() => ({ env: window.__shotref.state.settings.env, srcs: [...document.querySelectorAll('#props .pictiles:not(.skytiles) img[data-tile]')].map(i => (i.getAttribute('src') || '').slice(0, 22)) }));
   ok(after.env === 'night' && after.srcs.every(s => s === 'data:image/webp;base64'), 'after picking Night: ' + JSON.stringify(after));
   await p.evaluate(() => window.__shotref.select('sun')); await settle(p, 200);
   ok((await p.locator('#props .pictiles img[src^="data:image/webp"]').count()) === 5, 'sun panel tiles');
@@ -6552,7 +6552,7 @@ check('picture tiles: shown under the claude.ai CSP (app.html) with no console e
   await p.evaluate(() => window.__shotref.select(null));
   await p.waitForFunction(() => window.__shotref.tiles().n === 10, null, { timeout: 15000 });
   await settle(p, 300);
-  const r = await p.evaluate(async () => { const ims = [...document.querySelectorAll('#props .pictiles img[data-tile]')]; await Promise.all(ims.map(i => i.decode().catch(() => null))); return ims.map(i => (i.getAttribute('src') || '').slice(0, 22) + ':' + i.naturalWidth); });
+  const r = await p.evaluate(async () => { const ims = [...document.querySelectorAll('#props .pictiles:not(.skytiles) img[data-tile]')]; await Promise.all(ims.map(i => i.decode().catch(() => null))); return ims.map(i => (i.getAttribute('src') || '').slice(0, 22) + ':' + i.naturalWidth); });
   ok(r.length === 5 + 5 && r.every(s => s === 'data:image/webp;base64:128'), 'CSP tiles: ' + r.join());
   noErrors(p, 'CSP page');
 });
