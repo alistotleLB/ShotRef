@@ -6,6 +6,7 @@
     "build": "node build.mjs",
     "build:debug": "node build.mjs --debug",
     "test": "node test/smoke.cjs",
+    "visual": "node test/visual.cjs",
     "dev": "node build.mjs && echo Open dist/ShotRef.html in Chrome or Edge",
     "desktop": "node build.mjs && electron .",
     "dist:win": "node build.mjs && electron-builder --win --publish never",

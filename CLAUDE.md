@@ -20,6 +20,7 @@ ShotRef is a "very dumbed-down Blender" for **blocking and camera moves only**. 
 - While working, run `npm run build` and only the checks that cover what you changed (`node test/smoke.cjs --only <name>`). Before finishing a task, run the full `npm run build && npm test` once, and `npm run test:desktop` too when you touched `src/platform.js`, `electron/` or anything that differs on the desktop. Never finish with a failing test.
 - `node test/smoke.cjs --only <part of a check name>` runs single checks. To add one, append a `check('what it proves', async ({ open }) => …)` at the end; the header of the file explains the helpers.
 - Browser: `SHOTREF_BROWSER`, else the system Edge, else Chrome. The test file uses LF line endings only.
+- `npm run visual` (`test/visual.cjs`, about 30 s) saves 8 fixed screenshots of the built page to `dist/visual/`. After a visible change, look at them with the `visual-check` skill before calling it done.
 - `node test/perf.cjs` prints performance numbers by hand. It isn't part of `npm test`.
 - `npm run test:desktop` (`test/desktop.cjs`, playwright-core `_electron`, about 20 s) checks the Electron shell against the built page with stubbed native dialogs. Run `npm run build` first. Dirty apps ask before closing, so tests end them by killing the whole Electron process tree. After a run, `tasklist | grep -ci electron` should print 0.
 - Ask the owner before adding another test framework.
