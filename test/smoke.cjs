@@ -2258,12 +2258,12 @@ check('multi-select: Shift-click adds and removes, Ctrl+A selects all, Esc clear
 
 check('Shift-drag on empty space draws a selection box and selects what it covers', async ({ open }) => {
   const p = await open(); await p.waitForTimeout(500);
+  await p.evaluate(() => window.__shotref.setEditCam([7, 5, 10], [0, 1, 0])); await p.waitForTimeout(300); /* the view this check was laid out in */
   const xy = await starterXY(p), person = await idOfType(p, 'person'), box = await idOfType(p, 'box'), tree = await idOfType(p, 'tree');
   const x0 = Math.min(xy.person[0], xy.box[0]) - 50, y0 = Math.min(xy.person[1], xy.box[1]) - 90, x1 = Math.max(xy.person[0], xy.box[0]) + 50, y1 = Math.max(xy.person[1], xy.box[1]) + 90;
   ok(xy.tree[0] < x0 || xy.tree[0] > x1 || xy.tree[1] < y0 || xy.tree[1] > y1, 'test set-up: the tree must be outside the box ' + JSON.stringify({ x0, y0, x1, y1, tree: xy.tree }));
   await p.keyboard.down('Shift');
-  /* from the lower right corner (open floor; the framed view puts the tree near the upper left one) */
-  await p.mouse.move(x1, y1); await p.mouse.down(); await p.mouse.move((x0 + x1) / 2, (y0 + y1) / 2, { steps: 4 }); await p.mouse.move(x0, y0, { steps: 4 });
+  await p.mouse.move(x0, y0); await p.mouse.down(); await p.mouse.move((x0 + x1) / 2, (y0 + y1) / 2, { steps: 4 }); await p.mouse.move(x1, y1, { steps: 4 });
   const shown = await p.evaluate(() => { const b = document.querySelector('#boxSel'); return b && getComputedStyle(b).display !== 'none' && b.getBoundingClientRect().width > 50; });
   ok(shown, 'the dashed selection box should show while dragging');
   await p.mouse.up(); await p.keyboard.up('Shift');
@@ -7157,7 +7157,7 @@ check('guidance: the Start window lists seven sets in order, each with its pictu
 check('guidance: opening and closing the Start window leaves the scene, undo, autosave and Recent projects alone', async ({ open }) => {
   const p = await open(); await settle(p, 400);
   await p.evaluate(() => { const S = window.__shotref; S.addObject('car'); S.changed(true, true); }); await settle(p, 1800);
-  const snap = () => p.evaluate(() => { const S = window.__shotref; let a = null; try { a = localStorage.getItem('shotref.autosave'); } catch (e) { } return { st: JSON.stringify(S.stateForSave()), hist: S.history.length, at: S.history.at, auto: a, writes: S.recentStats.writes, views: S.state.objects.map(o => S.viewOf(o.id).p.join() + ':' + S.viewOf(o.id).size.join()).join('|'), ed: S.editCamPos().join() }; });
+  const snap = () => p.evaluate(() => { const S = window.__shotref; let a = null; try { a = localStorage.getItem('shotref.autosave'); } catch (e) { } return { lights: JSON.stringify(S.lights()), sky: JSON.stringify(S.sky()), sun: JSON.stringify(S.sunInfo()), st: JSON.stringify(S.stateForSave()), hist: S.history.length, at: S.history.at, auto: a, writes: S.recentStats.writes, views: S.state.objects.map(o => S.viewOf(o.id).p.join() + ':' + S.viewOf(o.id).size.join()).join('|'), ed: S.editCamPos().join() }; });
   const a = await snap();
   await fileCmd(p, 'new'); await p.waitForSelector('#mStart:not(.hidden)');
   await p.waitForFunction(() => document.querySelectorAll('#startGrid .pic img').length === 6, null, { timeout: 3000 });
@@ -7182,5 +7182,36 @@ check('guidance: Quick start has two tabs, seven steps, and Shortcuts holds the 
   await p.keyboard.press('Escape'); await settle(p, 200);
   await p.keyboard.press('?'); await settle(p, 200);
   ok(await isOpen(p, 'mHelp') && await p.evaluate(() => !document.querySelector('#helpQuick').hidden && document.querySelector('#helpKeys').hidden), '? did not open it on the Quick start tab');
+  noErrors(p);
+});
+check('guidance: switching between takes or shots never re-frames the editor view', async ({ open }) => {
+  const p = await open(); await settle(p, 400);
+  const ed = () => p.evaluate(() => window.__shotref.editCamPos().map(v => v.toFixed(3)).join());
+  await p.evaluate(() => { const S = window.__shotref; S.newTake(); }); await settle(p, 300);
+  await p.evaluate(() => { const S = window.__shotref, e = S.editCamPos(); S.setEditCam([e[0] + 1.5, e[1] + 1, e[2] - 1]); }); await settle(p, 400);
+  const a = await ed();
+  const takes = await p.evaluate(() => window.__shotref.state.takes.map(t => t.id));
+  ok(takes.length === 2, 'need two takes, got ' + takes.length);
+  for (const id of [takes[0], takes[1]]) { await p.evaluate(i => window.__shotref.switchTake(i), id); await settle(p, 300); ok(await ed() === a, 'switching takes moved the editor view'); }
+  await p.evaluate(() => window.__shotref.newShot()); await settle(p, 300);
+  const shots = await p.evaluate(() => (window.__shotref.state.shots || []).map(s => s.id));
+  ok(shots.length === 2, 'need two shots, got ' + shots.length);
+  for (const id of [shots[0], shots[1]]) { await p.evaluate(i => window.__shotref.switchShot(i), id); await settle(p, 300); ok(await ed() === a, 'switching shots moved the editor view'); }
+  noErrors(p);
+});
+check('guidance: framing a scene whose people are hidden from every side stays quick and leaves a sane view', async ({ open }) => {
+  const p = await open(); await settle(p, 400);
+  await p.evaluate(() => {
+    const S = window.__shotref; S.state.objects.length = 0; S.addObject('person', null, false, [0, 0, 0]);
+    /* tall walls on four sides and a lid: no viewpoint outside reaches the person */
+    for (const [x, z, r] of [[0, -1.5, 0], [0, 1.5, 0], [-1.5, 0, 90], [1.5, 0, 90]]) { const w = S.addObject('wall', null, false, [x, 0, z]); w.base.r = [0, r, 0]; w.base.s = [1, 4, 1]; w.opts.free = true; }
+    const lid = S.addObject('box', null, false, [0, 12, 0]); lid.base.s = [4, 0.3, 4]; lid.opts.free = true;
+    for (let i = 0; i < 60; i++) { const b = S.addObject('building', null, false, [((i % 10) - 5) * 14, 0, (Math.floor(i / 10) - 3) * 14 - 40]); b.opts.free = true; }
+    S.changed(true, true);
+  }); await settle(p, 500);
+  const r = await p.evaluate(() => { const S = window.__shotref, t0 = performance.now(); S.frameEditorView(); return { ms: performance.now() - t0, stats: { ...S.frameStats }, ed: S.editCamPos(), tg: S.editTarget() }; });
+  ok(r.ms < 500, 'framing took ' + Math.round(r.ms) + ' ms');
+  ok(!r.stats.clear, 'test set-up: the person should be hidden from every side');
+  ok(r.ed.concat(r.tg).every(Number.isFinite) && Math.hypot(r.ed[0] - r.tg[0], r.ed[1] - r.tg[1], r.ed[2] - r.tg[2]) <= 60.5, 'the view is not sane: ' + JSON.stringify(r));
   noErrors(p);
 });

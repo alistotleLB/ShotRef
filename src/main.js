@@ -1116,7 +1116,7 @@ function buildPerson(o) {
   };
   const [lSh, lEl] = arm(1), [rSh, rEl] = arm(-1);
   const [lHip, lKnee, lAnk, lh, lt] = leg(1), [rHip, rKnee, rAnk, rh, rt] = leg(-1);
-  const P = { root, pelvis, spine, neck, head, lSh, lEl, rSh, rEl, lHip, lKnee, lAnk, rHip, rKnee, rAnk, soles: [lh, lt, rh, rt], H };
+  const P = { root, pelvis, spine, torso: tor, neck, head, lSh, lEl, rSh, rEl, lHip, lKnee, lAnk, rHip, rKnee, rAnk, soles: [lh, lt, rh, rt], H };
   return { root, person: P, aimY: 0.82 * H };
 }
 
@@ -4339,7 +4339,8 @@ function frameEditorSoon() { resetEditorCam(); edFramePending = true; }
    When every try is blocked, swing round 20 degrees at a time, then look down more steeply.
    An empty stage keeps the default view. The top view centres on the same middle. Returns the middle, or null. */
 /* a person's middle is the middle of the torso (always on the body, even seated); anything else: the middle of its box */
-const midPoint = v => v.person ? v.person.spine.children[0].getWorldPosition(new THREE.Vector3()) : new THREE.Box3().setFromObject(v.group).getCenter(new THREE.Vector3());
+const midPoint = v => v.person ? v.person.torso.getWorldPosition(new THREE.Vector3()) : new THREE.Box3().setFromObject(v.group).getCenter(new THREE.Vector3());
+const frameStats = { ms: 0, clear: false }; /* for the smoke test */
 function frameEditorView() {
   const vis = state.objects.map(o => [o, views.get(o.id)]).filter(([o, v]) => v && v.group.visible && o.visible !== false);
   if (!vis.length) { resetEditorCam(); return null; }
@@ -4360,9 +4361,13 @@ function frameEditorView() {
   const aim = eye => { edCam.position.copy(eye); edCam.up.set(0, 1, 0); edCam.lookAt(M); edCam.updateMatrixWorld(true); };
   const fits = () => pts.every(p => { const v = p.clone().project(edCam); return v.z > -1 && v.z < 1 && Math.abs(v.x) <= 0.8 && Math.abs(v.y) <= 0.8; });
   const rc = new THREE.Raycaster();
+  const startAt0 = () => { const s = cp.clone().addScaledVector(back, 8); s.y += 5; return s; };
+  /* the search never stalls the app: after about 50 ms it stops and keeps the plain first try */
+  const t0 = performance.now(), late = () => performance.now() - t0 > 50;
+  /* what can hide a person: the items, the camera icon and the sun (placed once, for the first try) */
+  aim(startAt0()); updateSunGizmo(); sunGrp.updateMatrixWorld(true);
+  const targets = vis.map(([, v]) => v.group); targets.push(camBody); if (sunGrp.visible) targets.push(sunBall);
   const hidden = eye => {
-    updateSunGizmo(); sunGrp.updateMatrixWorld(true);
-    const targets = vis.map(([, v]) => v.group); targets.push(camBody); if (sunGrp.visible) targets.push(sunBall);
     return ppl.some(x => {
       const mid = x.mid, dist = eye.distanceTo(mid);
       rc.set(eye, mid.clone().sub(eye).normalize()); rc.far = dist + 0.5;
@@ -4380,16 +4385,17 @@ function frameEditorView() {
     for (;;) { eye = M.clone().addScaledVector(u, d); aim(eye); if (fits() || d >= 60) return eye; d = Math.min(60, d + 0.25); }
   };
   const ladder = dir => {
-    for (let tr = 0; tr < 8; tr++) { const eye = fitFrom(startAt(dir, tr)); if (clear(eye)) return eye; }
+    for (let tr = 0; tr < 8 && !late(); tr++) { const eye = fitFrom(startAt(dir, tr)); if (clear(eye)) return eye; }
     return null;
   };
   const clear = eye => !items.some(x => x.box.containsPoint(eye)) && !hidden(eye);
   /* straight behind first; when buildings block every try (a camera looking across a street), swing round a little at a time */
   let eye = null;
-  for (const deg of [0, -20, 20, -40, 40, -60, 60, -90, 90]) { eye = ladder(back.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), deg * D2R)); if (eye) break; }
+  for (const deg of [0, -20, 20, -40, 40, -60, 60, -90, 90]) { if (late()) break; eye = ladder(back.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), deg * D2R)); if (eye) break; }
   /* still blocked (a person standing close beside a car): look down more steeply, from over the camera's side */
-  for (const up of [15, 25, 40]) { if (eye) break; const s = M.clone().addScaledVector(back, 8); s.y += up; const e = fitFrom(s); if (clear(e)) eye = e; }
-  if (!eye) fitFrom(startAt(back, 0)); /* nothing clear from anywhere: the plain start, pulled back to fit */
+  for (const up of [15, 25, 40]) { if (eye || late()) break; const s = M.clone().addScaledVector(back, 8); s.y += up; const e = fitFrom(s); if (clear(e)) eye = e; }
+  if (!eye) fitFrom(startAt0()); /* nothing clear from anywhere (or out of time): the plain start, pulled back to fit */
+  frameStats.ms = performance.now() - t0; frameStats.clear = !!eye;
   edControls.target.copy(M); edControls.update();
   topInit = true; topControls.target.set(M.x, 0, M.z); topCam.position.set(M.x, 120, M.z); topCam.zoom = 1; topCam.updateProjectionMatrix();
   updateSunGizmo(); requestRender();
@@ -6376,7 +6382,7 @@ function boot() {
     get history() { return { at: hi, length: hist.length, bytes: hist[hi].length }; },
     /* batch F (camera UX and light) hooks for the smoke test */
     midOf: id => { const v = views.get(id); if (!v) return null; v.group.updateMatrixWorld(true); return midPoint(v).toArray(); },
-    frameEditorView, loadStarter, setEditCam: q => { edCam.position.fromArray(q); edControls.update(); requestRender(); }, editTarget: () => edControls.target.toArray(), topTarget: () => topControls.target.toArray(), starterPics: () => Object.fromEntries(starterPics),
+    frameEditorView, frameStats, newShot, switchShot, loadStarter, setEditCam: (q, tg) => { edCam.position.fromArray(q); if (tg) edControls.target.fromArray(tg); edControls.update(); requestRender(); }, editTarget: () => edControls.target.toArray(), topTarget: () => topControls.target.toArray(), starterPics: () => Object.fromEntries(starterPics),
     editCamPos: () => edCam.position.toArray(), detectMove, describeShot, camToWorld, pointsVisible: () => ckPts.some(m => m.visible),
     sunInfo: () => ({ castShadow: sun.castShadow, radius: sun.shadow.radius, intensity: sun.intensity, color: '#' + sun.color.getHexString(), gizmo: { visible: sunGrp.visible, pos: sunGrp.position.toArray() } }),
     shotPixels: (t, w = 240) => { const hh = Math.max(2, Math.round(w / arOf(state.settings.aspect))), r = getExportRenderer(w, hh); renderExportFrame(r, t, w, hh); const c = document.createElement('canvas'); c.width = w; c.height = hh; const g = c.getContext('2d'); g.drawImage(r.domElement, 0, 0); const d = g.getImageData(0, 0, w, hh).data; applyAll(T); return d; },
