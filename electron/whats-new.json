@@ -1,5 +1,13 @@
 [
   {
+    "version": "1.7.0",
+    "items": [
+      "See before you click: hover a camera move, a motion feel, a lens, a shot size or a pose, and a small moving preview shows what it will do to your shot.",
+      "The Items list sorts your scene into groups (People, Vehicles, Buildings, Furniture and more). Click a group's name to fold it, or use its eye to hide the whole group.",
+      "Double-click an item's name in the Items list to rename it."
+    ]
+  },
+  {
     "version": "1.6.0",
     "items": [
       "A calmer, clearer look: each section sits on its own card with a clear heading, and a chosen option always has the same orange outline.",
