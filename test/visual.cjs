@@ -43,6 +43,21 @@ const SCREENS = [
     await p.hover('#props .movegrid button:has-text("Orbit left")');
     await p.waitForFunction(() => { const k = window.__shotref.peek(); return k.open && k.frames > 20; }, null, { timeout: 10000 });
   } },
+  { name: '10-pose-preview', note: 'person selected, hovering Wave (pose preview)', run: async p => {
+    await p.evaluate(() => { const S = window.__shotref, o = S.state.objects.find(q => q.type === 'person') || S.addObject('person'); S.select(o.id, 'single'); }); await p.waitForTimeout(400);
+    await p.hover('#props .posegrid button:has-text("Wave")');
+    await p.waitForFunction(() => { const k = window.__shotref.peek(); return k.open && k.src === 'pose' && k.frames > 20; }, null, { timeout: 10000 });
+  } },
+  { name: '11-shot-preview', note: 'camera Shot tab, hovering Close-up (shot size preview, held)', run: async p => {
+    await p.evaluate(() => { window.__shotref.select('camera', 'single'); }); await p.waitForTimeout(400);
+    await p.locator('#props button', { hasText: /^Shot$/ }).first().click(); await p.waitForTimeout(400);
+    await p.hover('#props .posegrid button:has-text("Close-up")');
+    await p.waitForFunction(() => { const k = window.__shotref.peek(); return k.open && k.src === 'shot' && k.frames > 40; }, null, { timeout: 10000 });
+  } },
+  { name: '12-items', note: 'Items tab grouped by category, Buildings folded, a car selected', run: async p => {
+    await p.evaluate(() => { const S = window.__shotref; for (let i = 0; i < 3; i++) S.addObject('building'); S.addObject('lamp'); S.addObject('sofa'); S.addObject('tree'); const c = S.addObject('car'); c.keys.push({ t: 0, p: [0, 0, 0], r: [0, 0, 0], s: [1, 1, 1] }); S.setPref('olClosed', { Buildings: true }); S.select(c.id, 'single'); S.changed(true, true); });
+    await p.click('#leftTabs [data-lt=scene]'); await p.waitForTimeout(400);
+  } },
 ];
 
 async function main() {

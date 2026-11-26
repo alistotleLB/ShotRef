@@ -72,6 +72,19 @@ aside{background:var(--panel);overflow:auto}
 .ol .eye:hover{opacity:1}
 .ol.hid .nm{opacity:.45}
 .ol svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.6;flex:none}
+.olh{display:flex;align-items:center;gap:7px;height:26px;margin-top:10px;padding:0 8px;font-size:13px;font-weight:600;color:var(--mute);cursor:pointer;border-radius:6px}
+.olh:hover{color:var(--ink2);background:var(--panel2)}
+.olh .cn{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.olh .cc{font-weight:400;opacity:.7;margin-left:4px}
+.olh .kd{color:var(--acc);font-size:11.5px}
+.olh .ar svg{width:12px;height:12px;stroke:currentColor;fill:none;stroke-width:2;display:block;transition:transform .12s}
+.olh.shut .ar svg{transform:rotate(-90deg)}
+.olh .eye{opacity:0;padding:0 3px;border:0;background:none;color:inherit;display:flex}
+.olh .eye svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.6}
+.olh:hover .eye,.olh .eye:focus-visible,.olh .eye.off{opacity:.8}
+.olh:focus-visible{outline:2px solid var(--ink);outline-offset:-2px}
+.olh ~ .ol{padding-left:27px}
+.olsep{height:1px;background:var(--line);margin:6px 8px 0}
 #vp{grid-area:vp;position:relative;overflow:hidden;background:#0e0f11}
 #c{position:absolute;inset:0;width:100%;height:100%;display:block;outline:none}
 .ov{position:absolute;pointer-events:none}
@@ -535,7 +548,7 @@ button.on,.shotchip.on,button.on:hover{background:var(--sel);box-shadow:var(--ri
       <label class="adv">FPS <select id="inFps"><option>24</option><option>25</option><option>30</option><option>50</option><option>60</option></select></label>
       </div>
       <div class="tlc">
-      <div class="seg feelbar" id="feelBar" title="Camera motion feel: how the move starts and stops">
+      <div class="seg feelbar" id="feelBar">
         <button data-feel="constant">Constant</button><button data-feel="gentle">Gentle</button><button data-feel="strong">Strong</button>
       </div>
       <button id="bLoop" title="Loop playback">⟲ Loop</button>

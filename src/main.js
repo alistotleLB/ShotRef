@@ -38,8 +38,8 @@ import { TOUR_COPY } from './tour-copy.js';
  * lastNow                        time of the previous animation frame: frame
  * needsRender...wasExporting     render on demand: requestRender, pokeRender, frame
  * moveAmt                        one-click move strength: propsCamera
- * peekRT, peekBuf, peekImg,      the move preview's offscreen target, read-back pixels and example scene (built once): peekDraw, demoScene
- *   peekDemo                     (its open/kind/plan live in the const `peek`: peekShow, peekHide, peekTick)
+ * peekRT, peekBuf, peekImg,      the hover preview's offscreen target, read-back pixels, example scene and pose stage (built once):
+ *   peekDemo, peekPose           peekDraw, demoScene, posePeekStage (its open/src/arg/source state live in the const `peek`: peekShow, peekHide, peekTick; sources: PEEK_SRC)
  * simple                         Simple/Advanced mode: setSimple (gear menu)
  * tracksMode                      timeline tracks opened or closed by hand (null = open only while something is keyed): #bTracks
  * placing, pathMode, pathFit, rec  click-to-place, path drawing, path fit option, live recording: their start/commit/cancel functions
@@ -1974,12 +1974,20 @@ function applyMove(kind) {
   toast((MOVES.find(m => m[0] === kind) || [, , kind])[2] + ' added. Press Space to play.');
 }
 
-/* ---- move preview (#movePeek): hovering a move button loops that move on the user's own shot (or a small example scene).
-   The main renderer draws it into an offscreen target at the end of frame(); state is never written: the planned keys are swapped
-   in and put back inside the same call, then the scene is posed at the playhead again. ---- */
+/* ---- hover previews (#movePeek): hovering a move or a motion feel (later also a lens chip or a pose) loops what it would do in a
+   small box. The main renderer draws it into an offscreen target at the end of frame(); state is never written: anything swapped in
+   (planned keys, a feel) is put back inside the same call, and the scene is posed at the playhead again.
+   Sources (PEEK_SRC): a hover names one and its argument, peekSoon(src, arg, btn) or peekShow(src, arg, btn); peekHover(btn, src, arg)
+   wires a button. Each source is { setup(arg), draw(s, ms, rt), close?(s) }:
+   - setup(arg) runs once when the box opens and returns null (nothing to show) or s = { label, note (string or null), demo (the
+     picture is not the user's shot), ...whatever draw needs }. It must leave state and the scene as it found them.
+   - draw(s, ms, rt) renders one frame into the render target rt (ms since the box opened; rt.width x rt.height is the picture).
+     It must leave the main scene posed at T again; peekDraw then resets the render target and copies rt's pixels to the canvas.
+   - close(s), if given, frees what setup built, when the box closes or another preview replaces it. ---- */
 const PEEK_W = 220, PEEK_MOVE = 2500, PEEK_HOLD = 400, PEEK_FROM = { p: [0, 1.6, 5], tg: [0, 1.1, 0], f: 35, roll: 0, fd: 5 };
-const peek = { kind: null, btn: null, open: false, demo: false, frames: 0, t0: 0, last: 0, plan: null, endPose: null, timer: 0, failed: false };
-let peekRT = null, peekBuf = null, peekImg = null, peekDemo = null;
+const PEEK_DEMO_NOTE = 'Example. Add people or props to preview it on your shot.';
+const peek = { src: null, arg: null, btn: null, s: null, open: false, frames: 0, t0: 0, last: 0, timer: 0, failed: false };
+let peekRT = null, peekBuf = null, peekImg = null, peekDemo = null, peekPose = null;
 canvas.addEventListener('webglcontextrestored', () => { peek.failed = false; });
 /* the mouse can leave without a pointerleave: the window loses focus, Escape, or the panel scrolls under a still cursor */
 window.addEventListener('blur', () => peekHide());
@@ -1988,6 +1996,12 @@ document.addEventListener('scroll', e => { if (peek.open && e.target instanceof 
 const peekOff = () => exporting || playing || !!rec || pilotActive || tourActive() || openModals().length > 0 || peek.failed || renderer.getContext().isContextLost();
 /* runs fn with the plan as the camera's keys and base, then puts the real ones back */
 function withPlan(plan, fn) { const c = state.camera, k = c.keys, b = c.base; c.keys = plan.keys; c.base = plan.base; try { return fn(); } finally { c.keys = k; c.base = b; } }
+/* runs fn with another motion feel (none given: the shot's own), then puts the real one back, leaving no `feel` field if there was none */
+function withFeel(feel, fn) {
+  const c = state.camera; if (!feel) return fn();
+  const had = Object.prototype.hasOwnProperty.call(c, 'feel'), f0 = c.feel; c.feel = feel;
+  try { return fn(); } finally { if (had) c.feel = f0; else delete c.feel; }
+}
 /* is anything (not a floor mark) in frame at the start or the end of the planned move? */
 function peekHasSubject(plan) {
   const objs = state.objects.filter(o => o.type !== 'mark' && o.visible !== false && views.has(o.id));
@@ -1999,46 +2013,200 @@ function peekHasSubject(plan) {
   };
   try { return withPlan(plan, () => seen(0) || seen(lastT())); } finally { applyAll(T); prepRenderCam(T); }
 }
-/* the example: floor grid, one mannequin and two boxes, built once */
-function demoScene() {
-  if (peekDemo) return peekDemo;
+/* the previews' own stage: background, lights, a floor and its grid */
+function peekStage() {
   const s = new THREE.Scene(); s.background = new THREE.Color('#3a3f47');
   s.add(new THREE.HemisphereLight(0xe6eeff, 0x4a4540, 1.3));
   const dl = new THREE.DirectionalLight(0xffffff, 2.2); dl.position.set(4, 8, 6); s.add(dl);
   const floor = mk(new THREE.PlaneGeometry(60, 60), M('#6d727a', { r: 1 })); floor.rotation.x = -Math.PI / 2; s.add(floor);
   const g = new THREE.GridHelper(60, 60, 0x8a9099, 0x80868f); g.position.y = 0.003; s.add(g);
+  const cam = new THREE.PerspectiveCamera(40, 16 / 9, 0.05, 500); cam.filmGauge = 36;
+  return { scene: s, cam };
+}
+/* the example: floor grid, one mannequin and two boxes, built once */
+function demoScene() {
+  if (peekDemo) return peekDemo;
+  const { scene: s, cam } = peekStage();
   const o = makeObject('person', [0, 0, 0], { color: SHIRTS[0] }), b = buildPerson(o);
   posePerson(b.person, o, 0, { yaw: null, speed: 0, dist: null, moving: false }, null); s.add(b.root);
   s.add(mk(BOX(1, 1, 1), M('#c9a227'), -1.5, 0.5, -1.5), mk(BOX(0.8, 0.8, 0.8), M('#c0392b'), 1.6, 0.4, -2.5));
-  const cam = new THREE.PerspectiveCamera(40, 16 / 9, 0.05, 500); cam.filmGauge = 36;
   return (peekDemo = { scene: s, cam });
 }
-function peekSoon(kind, btn) { clearTimeout(peek.timer); peek.timer = setTimeout(() => peekShow(kind, btn), 150); }
-function peekShow(kind, btn) {
+/* the pose preview's empty stage (built once; the person and stool on it are the open preview's own) */
+const posePeekStage = () => peekPose || (peekPose = peekStage());
+/* shot time for a looping move: a hold on the first frame, the move over PEEK_MOVE ms, a hold on the last frame */
+const peekLoopT = ms => clamp((ms % (PEEK_MOVE + 2 * PEEK_HOLD) - PEEK_HOLD) / PEEK_MOVE, 0, 1) * lastT();
+/* one frame of a camera move at shot time t: s.plan (keys and base to swap in, or null for the shot's own) with s.feel (or null),
+   on the example scene when s.demo, otherwise on the user's shot */
+function peekCamFrame(s, t, rt) {
+  const rd = renderer, run = fn => withFeel(s.feel, () => s.plan ? withPlan(s.plan, fn) : fn());
+  if (s.demo) {
+    const d = demoScene(), c = run(() => evalCamRaw(t));
+    d.cam.position.fromArray(c.p); d.cam.up.set(0, 1, 0); d.cam.lookAt(c.tg[0], c.tg[1], c.tg[2]); d.cam.rotateZ((c.roll || 0) * D2R);
+    d.cam.aspect = rt.width / rt.height; d.cam.setFocalLength(c.f); d.cam.updateMatrixWorld(true);
+    rd.setRenderTarget(rt); rd.clear(); rd.render(d.scene, d.cam);
+    return;
+  }
+  try {
+    run(() => { applyAll(t); prepRenderCam(t); placeSun(); });
+    rd.shadowMap.needsUpdate = true; /* the next main draw renews the shadows for the playhead again */
+    rd.setRenderTarget(rt); rd.clear();
+    withShotStyle(state.settings.style, () => rd.render(scene, renderCam)); /* no depth of field in the preview */
+  } finally { applyAll(T); prepRenderCam(T); placeSun(); }
+}
+const FEELS = [['constant', 'Constant'], ['gentle', 'Gentle ease'], ['strong', 'Strong ease']];
+const PEEK_SRC = {
+  /* arg: a MOVES kind. The move planned from the current framing, or from PEEK_FROM on the example when nothing would be in frame */
+  move: {
+    setup(kind) {
+      const real = planMove(kind, moveAmt); if (!real) return null;
+      const demo = !peekHasSubject(real), plan = demo ? planMove(kind, moveAmt, PEEK_FROM) : real;
+      const end = demo ? withPlan(plan, () => evalCamRaw(lastT())) : withPlan(plan, () => evalCam(lastT()));
+      return { label: (MOVES.find(m => m[0] === kind) || [, , kind])[2], note: demo ? PEEK_DEMO_NOTE : null, demo, plan, feel: null,
+        endPose: { p: end.p.slice(), tg: end.tg.slice(), f: end.f, t: lastT() } };
+    },
+    draw: (s, ms, rt) => peekCamFrame(s, peekLoopT(ms), rt),
+  },
+  /* arg: a FEEL key. The shot's own move with that feel; a static camera shows a dolly in (on the example if nothing is in frame) */
+  feel: {
+    setup(feel) {
+      if (!FEEL[feel]) return null;
+      const label = (FEELS.find(f => f[0] === feel) || [, feel])[1];
+      if (state.camera.keys.length >= 2) return { label, note: null, demo: false, plan: null, feel };
+      const real = planMove('dollyIn', 1), demo = !peekHasSubject(real);
+      return { label, note: 'Shown on a dolly in. Your camera doesn\'t move yet.', demo, plan: demo ? planMove('dollyIn', 1, PEEK_FROM) : real, feel };
+    },
+    draw: (s, ms, rt) => peekCamFrame(s, peekLoopT(ms), rt),
+  },
+  /* arg: a focal length in mm. The shot at the playhead zooms from its current lens to that one, holds, and loops; objects stay put */
+  lens: {
+    setup(to) {
+      const from = camState.f, word = f => f < 24 ? 'Ultra wide' : f < 35 ? 'Wide' : f < 60 ? 'Normal' : 'Telephoto';
+      const still = Math.abs(to - from) < 0.5, a = Math.round(from);
+      return { label: still ? a + 'mm · ' + word(from) : a + 'mm → ' + to + 'mm · ' + word(to), note: null, demo: false, from, to: still ? from : to };
+    },
+    draw(s, ms, rt) {
+      const rd = renderer, u = clamp((ms % 2500) / 1000, 0, 1), e = u * u * (3 - 2 * u);
+      try {
+        prepRenderCam(T);
+        renderCam.setFocalLength(s.from + (s.to - s.from) * e); renderCam.updateProjectionMatrix();
+        rd.setRenderTarget(rt); rd.clear();
+        withShotStyle(state.settings.style, () => rd.render(scene, renderCam)); /* no depth of field in the preview */
+      } finally { prepRenderCam(T); }
+    },
+  },
+  /* arg: a SHOTS key; the person is read at hover time (the Shot tab's Person). The user's shot at the playhead eases from the
+     current framing to that shot size over 1 s, then holds. Without a second person, a two-shot or over-shoulder shows the
+     current framing with the reason as the note */
+  shot: {
+    setup(kind) {
+      const pid = shotPerson && getObj(shotPerson) ? shotPerson : defaultShotPerson(), r = planShot(kind, pid);
+      const label = (SHOTS.find(x => x[0] === kind) || [, kind])[1], p0 = camState.p.slice(), t0 = camState.tg.slice();
+      return { label, note: r.err ? r.err + '.' : null, demo: false, p0, t0, p1: r.err ? p0 : r.p, t1: r.err ? t0 : r.tg };
+    },
+    draw(s, ms, rt) {
+      const rd = renderer, u = clamp((ms % 2500) / 1000, 0, 1), e = u * u * (3 - 2 * u), mix = (a, b) => a.map((v, i) => v + (b[i] - v) * e);
+      const tg = mix(s.t0, s.t1);
+      try {
+        prepRenderCam(T);
+        renderCam.position.fromArray(mix(s.p0, s.p1)); renderCam.up.set(0, 1, 0); renderCam.lookAt(tg[0], tg[1], tg[2]);
+        renderCam.rotateZ((camState.roll || 0) * D2R); renderCam.updateMatrixWorld(true);
+        rd.setRenderTarget(rt); rd.clear();
+        withShotStyle(state.settings.style, () => rd.render(scene, renderCam)); /* no depth of field in the preview */
+      } finally { prepRenderCam(T); }
+    },
+  },
+  /* arg: a POSES key. The selected person alone on the stage doing that pose, from a fixed three-quarter front camera. The figure
+     is a throwaway copy (never in state.objects): same body, height and colours, no keys, actions, seat or eyeline. With no keys
+     and no actions posePerson runs every animated pose by time, so walk and run step on the spot */
+  pose: {
+    setup(key) {
+      const src = getObj(selected), def = POSES[key];
+      if (!def || !src || src.type !== 'person') return null;
+      const opts = clone(src.opts); opts.pose = key; delete opts.seated; delete opts.lookAt;
+      const o = { ...makeObject('person', [0, 0, 0]), color: src.color, opts }, b = buildPerson(o), P = b.person, H = P.H;
+      const { scene: sc } = posePeekStage(), info = { yaw: null, speed: 0, dist: null, moving: false };
+      posePerson(P, o, 0, info, null);
+      let stool = null;
+      if (key === 'sit') { /* a stool under the seat: as high as the hips (about 0.45 m for an adult), from behind them to mid-thigh */
+        P.root.updateMatrixWorld(true);
+        const hip = P.pelvis.getWorldPosition(new THREE.Vector3()), knee = P.lKnee.getWorldPosition(new THREE.Vector3());
+        const top = Math.max(0.15, hip.y - 0.06 * H), z0 = hip.z - 0.13 * H, z1 = hip.z + 0.6 * (knee.z - hip.z);
+        stool = mk(BOX(0.24 * H, top, z1 - z0), M('#8a6a4c', { r: 0.8 }), 0, top / 2, (z0 + z1) / 2);
+        sc.add(stool);
+      }
+      sc.add(b.root);
+      return { label: def.label, note: null, demo: false, o, P, root: b.root, stool, info, H, still: !def.anim };
+    },
+    draw(s, ms, rt) {
+      const rd = renderer, { scene: sc, cam } = posePeekStage(), H = s.H;
+      if (!s.still || !s.posed) { posePerson(s.P, s.o, ms / 1000, s.info, null); s.posed = true; }
+      /* three-quarter front (characters face +Z), seen from their right, far enough that the floor to raised hands (about
+         1.45 x their height) fits up and down and 1.2 x across */
+      cam.aspect = rt.width / rt.height; cam.setFocalLength(35);
+      const vt = Math.tan(cam.getEffectiveFOV() * D2R / 2), ht = vt * cam.aspect;
+      const d = Math.max(0.73 * H / vt, 0.6 * H / ht), a = -35 * D2R, aimY = 0.58 * H;
+      cam.position.set(Math.sin(a) * d, aimY + 0.08 * H, Math.cos(a) * d); cam.up.set(0, 1, 0); cam.lookAt(0, aimY, 0); cam.updateMatrixWorld(true);
+      rd.setRenderTarget(rt); rd.clear(); rd.render(sc, cam);
+    },
+    close(s) {
+      const sc = peekPose && peekPose.scene;
+      for (const m of [s.root, s.stool]) if (m) { if (sc) sc.remove(m); disposeTree(m); }
+    },
+  },
+};
+/* hover (not touch) or keyboard focus opens the preview after the delay; leaving, blur or a click closes it. arg may be a function,
+   read when the hover starts. Call it once per button, since the listeners add up. Give the button no title: a tooltip would cover the box. */
+function peekHover(btn, src, arg) {
+  const a = () => typeof arg === 'function' ? arg() : arg;
+  btn.addEventListener('pointerenter', e => { if (e.pointerType !== 'touch') peekSoon(src, a(), btn); });
+  btn.addEventListener('focus', () => { if (btn.matches(':focus-visible')) peekSoon(src, a(), btn); });
+  btn.addEventListener('pointerleave', () => { peekQuiet = null; peekHide(); }); btn.addEventListener('blur', peekHide);
+  /* after a click the panel often rebuilds under the still mouse: stay closed for that button until the mouse leaves it */
+  btn.addEventListener('click', () => { peekQuiet = src + ':' + a(); peekHide(); });
+  return btn;
+}
+let peekQuiet = null;
+function peekSoon(src, arg, btn) { clearTimeout(peek.timer); if (peekQuiet === src + ':' + arg) return; peek.timer = setTimeout(() => peekShow(src, arg, btn), 150); }
+function peekShow(src, arg, btn) {
   clearTimeout(peek.timer); peek.timer = 0;
-  if (peekOff() || !btn || !btn.isConnected) return;
-  const real = planMove(kind, moveAmt); if (!real) return;
-  const demo = !peekHasSubject(real), plan = demo ? planMove(kind, moveAmt, PEEK_FROM) : real;
-  const end = demo ? withPlan(plan, () => evalCamRaw(lastT())) : withPlan(plan, () => evalCam(lastT()));
-  Object.assign(peek, { kind, btn, plan, demo, open: true, frames: 0, t0: performance.now(), last: 0, endPose: { p: end.p.slice(), tg: end.tg.slice(), f: end.f, t: lastT() } });
+  const S = PEEK_SRC[src];
+  if (!S || peekOff() || !btn || !btn.isConnected) return;
+  let s = null;
+  try { s = S.setup(arg); } catch (e) { console.error('Hover preview failed', e); return; }
+  if (!s) return;
+  peekRelease();
+  Object.assign(peek, { src, arg, btn, s, open: true, frames: 0, t0: performance.now(), last: 0 });
   const el = $('#movePeek'), cv = $('canvas', el), ar = arOf(state.settings.aspect), dpr = Math.min(window.devicePixelRatio || 1, 2);
   const cw = ar >= 1 ? PEEK_W : Math.round(PEEK_W * ar), ch = Math.round(cw / ar); /* the long side is PEEK_W */
   cv.style.width = cw + 'px'; cv.style.height = ch + 'px';
   const pw = Math.max(2, Math.round(cw * dpr)), ph = Math.max(2, Math.round(ch * dpr));
   if (cv.width !== pw || cv.height !== ph) { cv.width = pw; cv.height = ph; }
   el.style.width = (cw + 12) + 'px';
-  $('.lab', el).textContent = (MOVES.find(m => m[0] === kind) || [, , kind])[2];
-  $('.note', el).style.display = demo ? '' : 'none';
+  $('.lab', el).textContent = s.label;
+  const nt = $('.note', el); nt.textContent = s.note || ''; nt.style.display = s.note ? '' : 'none';
   el.style.display = 'block';
-  const r = btn.getBoundingClientRect(), side = $('#right'), edge = side && side.offsetWidth ? side.getBoundingClientRect().left : r.left;
-  const w = el.offsetWidth, hh = el.offsetHeight, G = 8;
-  el.style.left = clamp(edge - w - G, G, Math.max(G, innerWidth - w - G)) + 'px';
-  el.style.top = clamp(r.top + r.height / 2 - hh / 2, G, Math.max(G, innerHeight - hh - G)) + 'px';
+  const r = btn.getBoundingClientRect(), w = el.offsetWidth, hh = el.offsetHeight, G = 8;
+  if (btn.closest('#tlBar')) { /* the bottom bar: above the control, centred on it */
+    el.style.left = clamp(r.left + r.width / 2 - w / 2, G, Math.max(G, innerWidth - w - G)) + 'px';
+    el.style.top = clamp(r.top - hh - G, G, Math.max(G, innerHeight - hh - G)) + 'px';
+  } else { /* the right panel: to its left, level with the control */
+    const side = $('#right'), edge = side && side.offsetWidth ? side.getBoundingClientRect().left : r.left;
+    el.style.left = clamp(edge - w - G, G, Math.max(G, innerWidth - w - G)) + 'px';
+    el.style.top = clamp(r.top + r.height / 2 - hh / 2, G, Math.max(G, innerHeight - hh - G)) + 'px';
+  }
+}
+/* frees what the open source built (its close hook) */
+function peekRelease() {
+  const S = peek.s && PEEK_SRC[peek.src];
+  if (S && S.close) try { S.close(peek.s); } catch (e) { console.error('Preview close failed', e); }
+  peek.s = null;
 }
 function peekHide() {
   clearTimeout(peek.timer); peek.timer = 0;
   if (!peek.open) return;
-  peek.open = false; peek.kind = null; peek.btn = null; peek.plan = null;
+  peekRelease();
+  peek.open = false; peek.src = null; peek.arg = null; peek.btn = null;
   const el = $('#movePeek'); if (el) el.style.display = 'none';
 }
 /* called at the end of frame(): never asks for a main redraw and never touches editRev */
@@ -2048,13 +2216,12 @@ function peekTick(now) {
   if (now - peek.last < 32) return; /* about 30 fps */
   peek.last = now;
   try { peekDraw(now); peek.frames++; } catch (e) {
-    if (!peek.failed) console.error('Move preview failed', e);
+    if (!peek.failed) console.error('Hover preview failed', e);
     peek.failed = true; peekHide();
   }
 }
 function peekDraw(now) {
   const cv = $('#movePeek canvas'), w = cv.width, hh = cv.height, rd = renderer;
-  const ph = (now - peek.t0) % (PEEK_MOVE + 2 * PEEK_HOLD), t = clamp((ph - PEEK_HOLD) / PEEK_MOVE, 0, 1) * lastT();
   if (!peekRT) {
     /* flagged like an XR target so three.js tone-maps and sRGB-encodes into it exactly as on screen; stored as plain RGBA8,
        so the pixels read back are the ones the main view would show */
@@ -2063,23 +2230,10 @@ function peekDraw(now) {
   }
   if (peekRT.width !== w || peekRT.height !== hh) peekRT.setSize(w, hh);
   try {
-    if (peek.demo) {
-      const d = demoScene(), c = withPlan(peek.plan, () => evalCamRaw(t));
-      d.cam.position.fromArray(c.p); d.cam.up.set(0, 1, 0); d.cam.lookAt(c.tg[0], c.tg[1], c.tg[2]); d.cam.rotateZ((c.roll || 0) * D2R);
-      d.cam.aspect = w / hh; d.cam.setFocalLength(c.f); d.cam.updateMatrixWorld(true);
-      rd.setRenderTarget(peekRT); rd.clear(); rd.render(d.scene, d.cam);
-    } else {
-      withPlan(peek.plan, () => { applyAll(t); prepRenderCam(t); placeSun(); });
-      rd.shadowMap.needsUpdate = true; /* the next main draw renews the shadows for the playhead again */
-      rd.setRenderTarget(peekRT); rd.clear();
-      withShotStyle(state.settings.style, () => rd.render(scene, renderCam)); /* no depth of field in the preview */
-    }
+    PEEK_SRC[peek.src].draw(peek.s, now - peek.t0, peekRT);
     if (!peekBuf || peekBuf.length !== w * hh * 4) { peekBuf = new Uint8Array(w * hh * 4); peekImg = new ImageData(w, hh); }
     rd.readRenderTargetPixels(peekRT, 0, 0, w, hh, peekBuf);
-  } finally {
-    rd.setRenderTarget(null);
-    if (!peek.demo) { applyAll(T); prepRenderCam(T); placeSun(); }
-  }
+  } finally { rd.setRenderTarget(null); }
   const row = w * 4, dst = peekImg.data; /* WebGL rows run bottom-up */
   for (let y = 0; y < hh; y++) dst.set(peekBuf.subarray((hh - 1 - y) * row, (hh - y) * row), y * row);
   for (let i = 3; i < dst.length; i += 4) dst[i] = 255;
@@ -2150,11 +2304,17 @@ function buildAddPanel() {
     h('button', { class: 'tile', title: 'Import a 3D model (.glb)', onclick: () => pickImport('#fModel', importModel, MODEL_FILTER) }, h('span', { html: svgI('model') }), 'Model .glb'),
   ));
 }
+/* the Items list sorts objects under these headings, in this order (empty ones are not shown) */
+const OL_CATS = ['People', 'Vehicles', 'Buildings', 'Street lamps', 'Furniture', 'Nature', 'Shapes', 'Floor marks', 'Imported'];
+const OL_TYPE = { person: 'People', car: 'Vehicles', building: 'Buildings', house: 'Buildings', lamp: 'Street lamps', table: 'Furniture', chair: 'Furniture', sofa: 'Furniture', bed: 'Furniture', tree: 'Nature', cactus: 'Nature', rock: 'Nature', mark: 'Floor marks', image: 'Imported', model: 'Imported' };
+const olCat = o => OL_TYPE[o.type] || 'Shapes';
 function iconFor(o) { return svgI(o.type === 'person' ? (bodyOf(o) === 'man' ? 'person' : bodyOf(o)) : o.type); }
 /* Shift/Ctrl-click toggles a row in the selection; Alt-click picks one inside a group */
 const rowClick = id => e => select(id, id === 'camera' || id === 'sun' ? undefined : e.shiftKey || e.ctrlKey || e.metaKey ? 'toggle' : e.altKey ? 'single' : undefined);
 function renderOutliner() {
-  const el = $('#outliner'), fid = focusedRowId(el); el.innerHTML = '';
+  const el = $('#outliner'), ae = document.activeElement;
+  if (ae && ae.tagName === 'INPUT' && el.contains(ae)) return; /* a rename is being typed: its blur redraws the list */
+  const fid = focusedRowId(el); el.innerHTML = '';
   const row = (id, icon, name, nk, hidden, onEye, o) => h('div', { class: 'ol' + (selected === id || selIds.includes(id) ? ' sel' : '') + (hidden ? ' hid' : '') + (o && o.grp ? ' ingrp' : ''), tabindex: 0, 'data-id': id, onclick: rowClick(id), onkeydown: rowKeys(id), ondblclick: () => { if (id !== 'camera') renameObj(id); } },
     h('span', { html: icon }), h('span', { class: 'nm' }, name),
     o && o.grp ? h('span', { class: 'gtag', title: 'In ' + groupName(o.grp) }, groupName(o.grp)) : null,
@@ -2164,7 +2324,20 @@ function renderOutliner() {
     onEye ? h('button', { class: 'eye', title: hidden ? 'Show' : 'Hide', onclick: e => { e.stopPropagation(); onEye(); } }, hidden ? '◌' : '●') : null);
   el.append(row('camera', svgI('camera'), 'Shot camera', state.camera.keys.length));
   el.append(row('sun', svgI('sun'), 'Sun', 0));
-  for (const o of state.objects) el.append(row(o.id, iconFor(o), o.name, o.keys.length, o.visible === false, () => { o.visible = o.visible === false; syncScene(); updateGizmo(); changed(true); }, o));
+  if (state.objects.length) el.append(h('div', { class: 'olsep' }));
+  const closed = { ...(getPref('olClosed', {}) || {}) }, so = getObj(selected);
+  /* selecting an item in a folded category opens it (once per new selection, so it can be folded again) */
+  if (selected !== renderOutliner.openedFor) { renderOutliner.openedFor = selected; if (so && closed[olCat(so)]) { delete closed[olCat(so)]; setPref('olClosed', closed); } }
+  for (const cat of OL_CATS) {
+    const list = state.objects.filter(o => olCat(o) === cat); if (!list.length) continue;
+    const shut = !!closed[cat], allHid = list.every(o => o.visible === false), keyed = list.some(o => o.keys.length);
+    const fold = () => { const now = { ...(getPref('olClosed', {}) || {}) }; if (shut) delete now[cat]; else now[cat] = true; setPref('olClosed', now); renderOutliner(); const hd = $('#outliner .olh[data-cat="' + cat + '"]'); if (hd) hd.focus(); };
+    el.append(h('div', { class: 'olh' + (shut ? ' shut' : ''), tabindex: 0, role: 'button', 'aria-expanded': String(!shut), 'data-cat': cat, title: shut ? 'Show the ' + cat.toLowerCase() : 'Fold the ' + cat.toLowerCase(), onclick: fold, onkeydown: e => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); e.stopPropagation(); fold(); } } },
+      h('span', { class: 'ar', html: '<svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>' }), h('span', { class: 'cn' }, cat, h('span', { class: 'cc' }, String(list.length))),
+      shut && keyed ? h('span', { class: 'kd', title: 'Has keys' }, '◆') : null,
+      h('button', { class: 'eye' + (allHid ? ' off' : ''), html: '<svg viewBox="0 0 24 24">' + IC.eye + (allHid ? '<path d="M4 4l16 16"/>' : '') + '</svg>', title: allHid ? 'Show every item in ' + cat : 'Hide every item in ' + cat, 'aria-label': (allHid ? 'Show ' : 'Hide ') + cat, onclick: e => { e.stopPropagation(); for (const o of list) o.visible = allHid; syncScene(); updateGizmo(); changed(true); } })));
+    if (!shut) for (const o of list) el.append(row(o.id, iconFor(o), o.name, o.keys.length, o.visible === false, () => { o.visible = o.visible === false; syncScene(); updateGizmo(); changed(true); }, o));
+  }
   if (!state.objects.length) el.append(h('div', { class: 'note', style: 'padding:6px 8px' }, 'Nothing here yet. Add a person or an object from the Add tab.'));
   putText($('#sceneCnt'), state.objects.length ? String(state.objects.length) : '');
   refocusRow(el, fid);
@@ -2175,7 +2348,7 @@ function focusedRowId(el) { const a = document.activeElement; return a && a !== 
 function refocusRow(el, id) { if (!id) return; const r = [...el.querySelectorAll('[data-id]')].find(x => x.dataset.id === id); if (r) r.focus(); }
 function renameObj(id) {
   const o = getObj(id); if (!o) return;
-  const rows = $$('#outliner .ol'); const idx = state.objects.indexOf(o) + 1; const r = rows[idx]; if (!r) return;
+  const r = [...$$('#outliner .ol')].find(x => x.dataset.id === id); if (!r) return;
   const nm = r.querySelector('.nm');
   const inp = h('input', { type: 'text', value: o.name, style: 'width:100%;padding:1px 4px' });
   nm.replaceWith(inp); inp.focus(); inp.select();
@@ -2562,11 +2735,7 @@ function propsCamera(p) {
     p.append(moveCard());
     const mg = h('div', { class: 'movegrid' }, MOVES.map(([k, ic, l]) => {
       const b = h('button', { onclick: () => { peekHide(); applyMove(k); } }, h('b', null, ic), l);
-      if (k !== 'static') { /* hover or keyboard focus loops a preview of the move (#movePeek); no title, so no tooltip covers it */
-        b.addEventListener('pointerenter', e => { if (e.pointerType !== 'touch') peekSoon(k, b); });
-        b.addEventListener('focus', () => { if (b.matches(':focus-visible')) peekSoon(k, b); });
-        b.addEventListener('pointerleave', peekHide); b.addEventListener('blur', peekHide);
-      }
+      if (k !== 'static') peekHover(b, 'move', k); /* hover or keyboard focus loops a preview of the move (#movePeek) */
       return b;
     }));
     p.append(sec('Camera moves',
@@ -2580,7 +2749,7 @@ function propsCamera(p) {
   } else if (tab === 'lens') {
     const fr = slider('Focal length', () => camState.f, (v, cm) => writeCam({ f: v }, cm), { min: 10, max: 200, step: 1, fmt: v => v.toFixed(0) + ' mm' });
     p.append(sec('Lens', fr,
-      h('div', { class: 'chips' }, [14, 18, 24, 35, 50, 85, 135].map(f => h('button', { onclick: () => writeCam({ f }, true), title: f < 24 ? 'Ultra wide' : f < 35 ? 'Wide' : f < 60 ? 'Normal' : 'Telephoto' }, f + 'mm'))),
+      h('div', { class: 'chips' }, [14, 18, 24, 35, 50, 85, 135].map(f => peekHover(h('button', { onclick: () => writeCam({ f }, true) }, f + 'mm'), 'lens', f))),
       simple ? null : slider('Dutch roll', () => camState.roll || 0, (v, cm) => writeCam({ roll: v }, cm), { min: -45, max: 45, step: 0.5, fmt: v => v.toFixed(1) + '°' }),
       slider('Handheld', () => c.shake || 0, (v, cm) => { c.shake = v; changed(cm); }, { min: 0, max: 2, step: 0.05, fmt: v => v ? v.toFixed(2) : 'off' })));
     const fstops = [1.4, 2, 2.8, 4, 5.6, 8, 11, 16];
@@ -2614,11 +2783,11 @@ function propsCamera(p) {
       c.lookAtId ? null : vecRow('Aims at', () => camState.tg, (v, cm) => writeCam({ tg: v }, cm), { step: 0.02 })));
   }
 }
-function shotGrid(pid) { return h('div', { class: 'posegrid' }, SHOTS.map(([k, l]) => h('button', { onclick: () => frameShot(k, pid()) }, l))); }
+function shotGrid(pid) { return h('div', { class: 'posegrid' }, SHOTS.map(([k, l]) => peekHover(h('button', { onclick: () => frameShot(k, pid()) }, l), 'shot', k))); }
 function feelSeg() {
   const c = state.camera;
-  return h('div', { class: 'seg feel' }, [['constant', 'Constant'], ['gentle', 'Gentle ease'], ['strong', 'Strong ease']].map(([k, l]) =>
-    h('button', { class: (c.feel || 'gentle') === k ? 'on' : '', onclick: () => { c.feel = k; changed(true, true); syncTopUI(); } }, l)));
+  return h('div', { class: 'seg feel' }, FEELS.map(([k, l]) =>
+    peekHover(h('button', { class: (c.feel || 'gentle') === k ? 'on' : '', onclick: () => { c.feel = k; changed(true, true); syncTopUI(); } }, l), 'feel', k)));
 }
 /* the panel for two or more selected things: what they are, and the group / lock / duplicate / delete actions */
 function propsMulti(p) {
@@ -2666,7 +2835,7 @@ function propsObject(p, o) {
   }
   if (o.type === 'person') {
     const cur = poseAt(o, T), atStart = snapT(T) < 0.5 / state.settings.fps;
-    const pg = h('div', { class: 'posegrid' }, Object.entries(POSES).map(([k, d]) => h('button', { class: cur === k ? 'on' : '', onclick: () => setPoseAt(o, k, T) }, d.label, d.anim ? h('i', null, d.loco ? 'moves' : 'animated') : null)));
+    const pg = h('div', { class: 'posegrid' }, Object.entries(POSES).map(([k, d]) => peekHover(h('button', { class: cur === k ? 'on' : '', onclick: () => setPoseAt(o, k, T) }, d.label, d.anim ? h('i', null, d.loco ? 'moves' : 'animated') : null), 'pose', k))); /* hover: the pose preview */
     const def = POSES[cur] || POSES.stand;
     p.append(sec('Pose', h('div', { class: 'keyline' }, h('span', { class: 'kdia', style: 'color:#6fc3ea' }, '●'), atStart ? (o.acts ? 'Starting pose (at 0 s)' : 'Pose for the whole shot') : 'Pose from ' + snapT(T).toFixed(2) + ' s'), pg,
       def.anim && !(def.loco && o.keys.length > 1) ? slider('Action speed', () => o.opts.speed || 1, (v, cm) => { o.opts.speed = v; changed(cm); }, { min: 0.2, max: 3, step: 0.05, fmt: v => v.toFixed(2) + '×' }) : null,
@@ -3674,8 +3843,9 @@ function defaultShotPerson() {
   const p = persons()[0]; return p ? p.id : null;
 }
 let shotPerson = null;
-function frameShot(kind, pid) {
-  const o = pid && getObj(pid); if (!o) { toast('Add a person first'); return; }
+/* Pure: where the camera would go for this shot size on that person (world p and tg at the playhead), or {err} with the reason */
+function planShot(kind, pid) {
+  const o = pid && getObj(pid); if (!o) return { err: 'Add a person first' };
   const g = personGeom(o), He = g.top - g.P.y;
   const f = camState.f, ar = arOf(state.settings.aspect), sv = ar >= 1 ? 36 / ar : 36;
   const vfov = 2 * Math.atan(sv / (2 * f)), hfov = 2 * Math.atan(Math.tan(vfov / 2) * ar);
@@ -3700,7 +3870,7 @@ function frameShot(kind, pid) {
   if (S[kind]) { const [vh, aim, cy] = S[kind]; tg = at(aim); p = g.P.clone().addScaledVector(dir, dist(vh * He)); p.y = g.P.y + cy * He; }
   else if (kind === 'top') { tg = at(0.3); p = tg.clone(); p.y += dist(1.5 * He); p.addScaledVector(new THREE.Vector3(Math.sin(g.yaw), 0, Math.cos(g.yaw)), 0.03); }
   else {
-    const other = nearestOther(o); if (!other) { toast('Add a second person for this shot'); return; }
+    const other = nearestOther(o); if (!other) return { err: 'Add a second person for this shot' };
     const g2 = personGeom(other);
     if (kind === 'ots') {
       const fwd = new THREE.Vector3(g.P.x - g2.P.x, 0, g.P.z - g2.P.z).normalize(), right = new THREE.Vector3(-fwd.z, 0, fwd.x);
@@ -3715,7 +3885,12 @@ function frameShot(kind, pid) {
       tg = new THREE.Vector3(mid.x, mid.y + 0.62 * He2, mid.z);
     }
   }
-  writeCam({ p: p.toArray(), tg: tg.toArray() }, true);
+  return { o, p: p.toArray(), tg: tg.toArray() };
+}
+function frameShot(kind, pid) {
+  const r = planShot(kind, pid); if (r.err) { toast(r.err); return; }
+  const o = r.o;
+  writeCam({ p: r.p, tg: r.tg }, true);
   propsDirty = true;
   toast((SHOTS.find(x => x[0] === kind) || [, kind])[1] + ' on ' + o.name + (state.camera.keys.length ? ' (keyed at ' + snapT(T).toFixed(2) + ' s)' : ''));
 }
@@ -5540,7 +5715,7 @@ function wire() {
     state.meta.name = v; changed(true); pn.value = v;
   });
   $$('#lenSet [data-len]').forEach(b => b.onclick = () => setDuration(+b.dataset.len));
-  $$('#feelBar button').forEach(b => b.onclick = () => { state.camera.feel = b.dataset.feel; changed(true, true); syncTopUI(); });
+  $$('#feelBar button').forEach(b => { b.onclick = () => { state.camera.feel = b.dataset.feel; changed(true, true); syncTopUI(); }; peekHover(b, 'feel', b.dataset.feel); });
   $('#cbStart').onclick = () => setShotEnd('start'); $('#cbEnd').onclick = () => setShotEnd('end'); $('#cbRec').onclick = startRecord;
   $('#bUndo').onclick = undo; $('#bRedo').onclick = redo;
   $$('#viewSeg button').forEach(b => b.onclick = () => setView(b.dataset.v));
@@ -6036,7 +6211,7 @@ function boot() {
   });
   window.addEventListener('pagehide', () => { flushAutosave(); recentFlush(); });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') recentFlush(); });
-  window.__shotref = { practice: { enter: () => enterPractice(), enterEarly: () => enterPractice(true), leave: leavePractice, active: () => !!practicing }, practicing: () => !!practicing, stateForSave, docInfo: () => ({ dirty: platform.isDirty(), name: platform.currentName(), path: platform.currentPath(), doc: platform.getDoc() }), tour: { run: runStops, active: tourActive, end: r => tourHandle && tourHandle.end(r), current: () => tourHandle }, startTour, setHandsTour, handsTourOn, setSimple, promptText, ensureDof, get selection() { return selIds; }, layout: () => layout, gizmoNdc: (x, y) => { const q = gizmo._getPointer({ clientX: x, clientY: y, button: 0 }); return { x: q.x, y: q.y }; }, arrowsVisible: () => [...arrows.values()].some(a => a.visible), videoBitrate, snapValue: snapWith, rotSnapDeg: () => pref('rotSnap'), controlSpeeds: () => ({ orbit: edControls.rotateSpeed, zoom: edControls.zoomSpeed, cam: camControls.rotateSpeed }), flySpeedNow, walkSpeedNow: () => pathSpeedOf({ type: 'person', opts: { pose: 'stand' } }), buildAddPanel: () => buildAddPanel(), saveRecentNow, recentFlush, recentStats, recentBusy, selectMany: ids => { selIds = ids.slice(); selected = selIds[selIds.length - 1] || null; updateGizmo(); uiDirty = true; propsDirty = true; requestRender(); }, pickAtScreen: (x, y) => { const rc = rayFromEvent({ clientX: x, clientY: y }); const h = rc && pickAt(rc); return h ? h.id : null; }, settleTime: () => { const t0 = performance.now(); solveGround(); return performance.now() - t0; }, groundMigrate: () => groundMigrate.size, liftKnob: () => { if (!liftGrp.visible) return null; const q = liftPick.getWorldPosition(new THREE.Vector3()); return window.__shotref.project(q.x, q.y, q.z); }, attachTo, setMount, writeCam, shownObj: (id, t) => shownObj(getObj(id), t), viewOf: id => { const v = views.get(id); if (!v) return null; v.group.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(v.group), sz = bb.getSize(new THREE.Vector3()); return { p: v.group.position.toArray(), yaw: v.group.rotation.y * R2D, s: v.group.scale.toArray(), size: sz.toArray(), wheels: v.wheels ? v.wheels.list.map(w => ({ spin: w.spin.rotation.x, steer: w.piv.rotation.y, front: w.front })) : null }; }, ringKnob: () => ringGrp.visible ? ringKnob.getWorldPosition(new THREE.Vector3()).toArray() : null, getPref, setPref, showMenu, menuButton, hideMenu, project: (x, y, z) => { const r = canvas.getBoundingClientRect(), R = viewRects(r.width, r.height); let cam = view === 'top' ? topCam : edCam, rr = R.work || { x: 0, y: 0, w: r.width, h: r.height }; if (camPane() && R.frame) { cam = renderCam; rr = R.frame; } const v = new THREE.Vector3(x, y, z).project(cam); return [r.left + rr.x + (v.x * 0.5 + 0.5) * rr.w, r.top + rr.y + (-v.y * 0.5 + 0.5) * rr.h]; }, get view() { return view; }, get placing() { return placing; }, get playing() { return playing; }, get step() { return currentStep(); }, get selected() { return selected; }, get state() { return state; }, get assets() { return assets; }, setT: t => setTime(t, false), applyMove, planMove, peek: () => ({ open: peek.open, kind: peek.kind, demo: peek.demo, frames: peek.frames, endPose: peek.endPose }), addObject, select, setView, evalCam, exportVideo, exportPNG, pickCodec, _exportCanvas: () => exRenderer ? exRenderer.domElement : null, changed, writeObj, evalObj, setKey, get T() { return T; },
+  window.__shotref = { practice: { enter: () => enterPractice(), enterEarly: () => enterPractice(true), leave: leavePractice, active: () => !!practicing }, practicing: () => !!practicing, stateForSave, docInfo: () => ({ dirty: platform.isDirty(), name: platform.currentName(), path: platform.currentPath(), doc: platform.getDoc() }), tour: { run: runStops, active: tourActive, end: r => tourHandle && tourHandle.end(r), current: () => tourHandle }, startTour, setHandsTour, handsTourOn, setSimple, promptText, ensureDof, get selection() { return selIds; }, layout: () => layout, gizmoNdc: (x, y) => { const q = gizmo._getPointer({ clientX: x, clientY: y, button: 0 }); return { x: q.x, y: q.y }; }, arrowsVisible: () => [...arrows.values()].some(a => a.visible), videoBitrate, snapValue: snapWith, rotSnapDeg: () => pref('rotSnap'), controlSpeeds: () => ({ orbit: edControls.rotateSpeed, zoom: edControls.zoomSpeed, cam: camControls.rotateSpeed }), flySpeedNow, walkSpeedNow: () => pathSpeedOf({ type: 'person', opts: { pose: 'stand' } }), buildAddPanel: () => buildAddPanel(), saveRecentNow, recentFlush, recentStats, recentBusy, selectMany: ids => { selIds = ids.slice(); selected = selIds[selIds.length - 1] || null; updateGizmo(); uiDirty = true; propsDirty = true; requestRender(); }, pickAtScreen: (x, y) => { const rc = rayFromEvent({ clientX: x, clientY: y }); const h = rc && pickAt(rc); return h ? h.id : null; }, settleTime: () => { const t0 = performance.now(); solveGround(); return performance.now() - t0; }, groundMigrate: () => groundMigrate.size, liftKnob: () => { if (!liftGrp.visible) return null; const q = liftPick.getWorldPosition(new THREE.Vector3()); return window.__shotref.project(q.x, q.y, q.z); }, attachTo, setMount, writeCam, shownObj: (id, t) => shownObj(getObj(id), t), viewOf: id => { const v = views.get(id); if (!v) return null; v.group.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(v.group), sz = bb.getSize(new THREE.Vector3()); return { p: v.group.position.toArray(), yaw: v.group.rotation.y * R2D, s: v.group.scale.toArray(), size: sz.toArray(), wheels: v.wheels ? v.wheels.list.map(w => ({ spin: w.spin.rotation.x, steer: w.piv.rotation.y, front: w.front })) : null }; }, ringKnob: () => ringGrp.visible ? ringKnob.getWorldPosition(new THREE.Vector3()).toArray() : null, getPref, setPref, showMenu, menuButton, hideMenu, project: (x, y, z) => { const r = canvas.getBoundingClientRect(), R = viewRects(r.width, r.height); let cam = view === 'top' ? topCam : edCam, rr = R.work || { x: 0, y: 0, w: r.width, h: r.height }; if (camPane() && R.frame) { cam = renderCam; rr = R.frame; } const v = new THREE.Vector3(x, y, z).project(cam); return [r.left + rr.x + (v.x * 0.5 + 0.5) * rr.w, r.top + rr.y + (-v.y * 0.5 + 0.5) * rr.h]; }, get view() { return view; }, get placing() { return placing; }, get playing() { return playing; }, get step() { return currentStep(); }, get selected() { return selected; }, get state() { return state; }, get assets() { return assets; }, setT: t => setTime(t, false), applyMove, planMove, peek: () => ({ open: peek.open, src: peek.src, arg: peek.arg, kind: peek.src === 'move' ? peek.arg : null, demo: !!(peek.s && peek.s.demo), frames: peek.frames, endPose: (peek.s && peek.s.endPose) || null, poseRoot: peek.s && peek.s.P ? peek.s.P.pelvis.getWorldPosition(new THREE.Vector3()).toArray() : null }), addObject, select, setView, evalCam, exportVideo, exportPNG, pickCodec, _exportCanvas: () => exRenderer ? exRenderer.domElement : null, changed, writeObj, evalObj, setKey, get T() { return T; },
     get rebuilds() { return rebuilds; }, urlCacheIds: () => [...urlCache.keys()],
     /* batch H (takes) hooks for the smoke test */
     switchTake, newTake, snapPoolSize: () => snapLive, snapPruned: () => snapPruned,
