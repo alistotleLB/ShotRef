@@ -1,5 +1,16 @@
 [
   {
+    "version": "1.6.0",
+    "items": [
+      "A calmer, clearer look: each section sits on its own card with a clear heading, and a chosen option always has the same orange outline.",
+      "Less on screen: panels show what you use most, and rarely used sections start folded. Nothing was removed: every control is still there.",
+      "Scene presets, clouds and \"Light the shot from\" are now picture tiles, so you can see the look before you pick it.",
+      "Shorter labels, with one name for each thing (for example \"Aim camera at this\" and \"Clear move\").",
+      "Skies with clouds: pick the cover, the look and how fast they drift. Clouds soften the sun and are named in the prompt.",
+      "Drag people and props from the Add panel straight onto the view."
+    ]
+  },
+  {
     "version": "1.5.0",
     "items": [
       "After an update, this box lists what changed since the version you had.",

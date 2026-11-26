@@ -1,0 +1,6 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "sandbox", "runtimeExecutable": "python", "runtimeArgs": ["sandbox/serve.py", "sandbox"], "port": 8765 }
+  ]
+}
