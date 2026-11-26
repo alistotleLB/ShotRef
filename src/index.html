@@ -152,6 +152,10 @@ hr.div{border:0;border-top:1px solid var(--line);margin:8px 0 4px}
 .movegrid{display:grid;grid-template-columns:1fr 1fr;gap:4px}
 .movegrid button{text-align:left;padding:5px 7px;font-size:13px;display:flex;gap:6px;align-items:center}
 .movegrid button b{color:var(--acc2);font-weight:600;width:14px;text-align:center}
+#movePeek{position:fixed;display:none;z-index:45;pointer-events:none;background:#1f2125;border:1px solid var(--line2);border-radius:9px;padding:5px;box-shadow:0 14px 40px rgba(0,0,0,.55)}
+#movePeek canvas{display:block;border-radius:5px;background:var(--field)}
+#movePeek .lab{padding:5px 3px 1px;color:var(--ink)}
+#movePeek .note{margin:2px 3px 2px}
 .btns{display:flex;flex-wrap:wrap;gap:6px}
 .btns button{flex:1 1 auto}
 .note{font-size:11.5px;color:var(--mute);margin:8px 0 0}
@@ -247,7 +251,7 @@ hr.div{border:0;border-top:1px solid var(--line);margin:8px 0 4px}
 #toast.top{top:16px;bottom:auto}
 #ctxMenu{position:fixed;display:none;z-index:70;min-width:220px;background:#1f2125;border:1px solid var(--line2);border-radius:9px;padding:5px;box-shadow:0 14px 40px rgba(0,0,0,.55)}
 #ctxMenu:focus{outline:none}
-/* tour: dimmed screen, viewfinder corners and a bubble (src/tour.js). Layers: .modal 50, #tour 55, #toast 60, #ctxMenu 70 */
+/* tour: dimmed screen, viewfinder corners and a bubble (src/tour.js). Layers: #movePeek 45, .modal 50, #tour 55, #toast 60, #ctxMenu 70 */
 #tour{position:fixed;inset:0;z-index:55;pointer-events:none}
 .tour-hit{position:fixed;pointer-events:auto}
 .tour-dim,.tour-corners{position:fixed;pointer-events:none;transition:left .35s ease-in-out,top .35s ease-in-out,width .35s ease-in-out,height .35s ease-in-out}
@@ -701,6 +705,7 @@ button.on,.shotchip.on,button.on:hover{background:var(--sel);box-shadow:var(--ri
 </div></div>
 
 <div id="ctxMenu" role="menu" tabindex="-1"></div>
+<div id="movePeek" aria-hidden="true"><canvas></canvas><div class="lab"></div><p class="note">Example. Add people or props to preview it on your shot.</p></div>
 <div id="toast"></div>
 <script>/*APP*/</script>
 </body>

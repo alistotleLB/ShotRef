@@ -37,6 +37,12 @@ const SCREENS = [
     await p.evaluate(() => { if (window.__shotref.state.objects.length) throw new Error('objects left after Delete'); });
   } },
   { name: '08-narrow', note: 'small window 1100 x 700, object selected', viewport: { width: 1100, height: 700 }, run: S(() => { const o = window.__shotref.state.objects[0]; window.__shotref.select(o.id, 'single'); }) },
+  { name: '09-move-preview', note: 'camera Move tab, hovering Orbit left (move preview)', run: async p => {
+    await p.evaluate(() => { window.__shotref.select('camera', 'single'); }); await p.waitForTimeout(400);
+    await p.locator('#props button', { hasText: /^Move$/ }).first().click(); await p.waitForTimeout(400);
+    await p.hover('#props .movegrid button:has-text("Orbit left")');
+    await p.waitForFunction(() => { const k = window.__shotref.peek(); return k.open && k.frames > 20; }, null, { timeout: 10000 });
+  } },
 ];
 
 async function main() {

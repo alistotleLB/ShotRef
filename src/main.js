@@ -38,6 +38,8 @@ import { TOUR_COPY } from './tour-copy.js';
  * lastNow                        time of the previous animation frame: frame
  * needsRender...wasExporting     render on demand: requestRender, pokeRender, frame
  * moveAmt                        one-click move strength: propsCamera
+ * peekRT, peekBuf, peekImg,      the move preview's offscreen target, read-back pixels and example scene (built once): peekDraw, demoScene
+ *   peekDemo                     (its open/kind/plan live in the const `peek`: peekShow, peekHide, peekTick)
  * simple                         Simple/Advanced mode: setSimple (gear menu)
  * tracksMode                      timeline tracks opened or closed by hand (null = open only while something is keyed): #bTracks
  * placing, pathMode, pathFit, rec  click-to-place, path drawing, path fit option, live recording: their start/commit/cancel functions
@@ -1877,7 +1879,7 @@ function frameSig() {
 function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.1, (now - lastNow) / 1000); lastNow = now;
-  if (exporting) { wasExporting = true; return; } // the export owns the scene and the renderers until it finishes
+  if (exporting) { wasExporting = true; peekHide(); return; } // the export owns the scene and the renderers until it finishes
   if (wasExporting) { wasExporting = false; needsRender = true; }
   if (tourActive()) tourTick();
   if (rec && rec.phase === 'count') { const left = Math.ceil((rec.until - now) / 1000); $('#countdown').textContent = left > 0 ? left : ''; if (now >= rec.until) { rec.phase = 'rec'; setTime(0, false); setPlaying(true); $('#countdown').textContent = ''; recSample(); showModeBar('● Recording. Steer the camera until the shot ends.', [['Cancel', cancelRecord]]); } }
@@ -1905,6 +1907,7 @@ function frame(now) {
   if (uiDirty) { uiDirty = false; rebuilds++; renderOutliner(); renderTimeline(); renderShotBar(); }
   if (propsDirty) { propsDirty = false; renderProps(); }
   if (go) tickUI();
+  peekTick(now); /* the move preview draws after the main view, offscreen */
 }
 
 /* ============================== camera moves ============================== */
@@ -1915,10 +1918,12 @@ const MOVES = [
   ['zoomIn', '⊕', 'Zoom in'], ['dollyZoom', '◎', 'Dolly zoom'], ['arcPush', '↗', 'Arc + push'], ['droneRise', '✈', 'Drone rise'], ['reveal', '◐', 'Reveal'],
 ];
 let moveAmt = 1;
-function applyMove(kind) {
-  const a = moveAmt, c = state.camera, start = clone(evalCamRaw(T));
-  const off = followOffset(T);
-  const P = new THREE.Vector3().fromArray(start.p), G = new THREE.Vector3().fromArray(subject() ? aimPoint(subject(), T).map((v, i) => v - off[i]) : start.tg);
+/* Pure: works out the move without touching state. `from` (world-space pose) replaces the shot's own start and ignores subject, follow and mount. */
+function planMove(kind, amt, from) {
+  const a = amt, start = from ? clone(from) : clone(evalCamRaw(T));
+  const subj = from ? null : subject();
+  const off = from ? [0, 0, 0] : followOffset(T);
+  const P = new THREE.Vector3().fromArray(start.p), G = new THREE.Vector3().fromArray(subj ? aimPoint(subj, T).map((v, i) => v - off[i]) : start.tg);
   const up = new THREE.Vector3(0, 1, 0);
   const D = Math.max(0.3, P.distanceTo(G));
   const fwd = G.clone().sub(P).normalize(), right = new THREE.Vector3().crossVectors(fwd, up).normalize();
@@ -1943,25 +1948,142 @@ function applyMove(kind) {
     case 'droneRise': P2.y += 6 * a; P2.addScaledVector(fwd, -3 * a); break;
     case 'reveal': P2.addScaledVector(fwd, -D * 1.2 * a); P2.y += 1.2 * a; break;
   }
-  c.keys = [];
-  if (kind === 'static') { c.base = start; changed(true, true); toast('Camera is now static'); return; }
-  const tgStore = subject() ? start.tg : null;
+  if (kind === 'static') return null;
+  const tgStore = subj ? start.tg : null;
   const k0 = { p: P.toArray().map(r4), tg: (tgStore || G.toArray()).map(r4), f: r4(start.f), roll: start.roll || 0, fd: r4(start.fd) };
   const k1 = { p: P2.toArray().map(r4), tg: (tgStore || G2.toArray()).map(r4), f: r4(f2), roll: start.roll || 0, fd: r4(start.fd) };
+  let keys;
   const arcs = { orbitL: ['p', G, up, -55], orbitR: ['p', G, up, 55], panL: ['tg', P, up, 35], panR: ['tg', P, up, -35], tiltUp: ['tg', P, right, 22], tiltDown: ['tg', P, right, -22] };
   if (arcs[kind] || kind === 'arcPush') {
-    const N = 5, ease = x => x; c.keys = [];
+    const N = 5, ease = x => x; keys = [];
     for (let i = 0; i < N; i++) {
       const u = ease(i / (N - 1)), k = clone(k0);
       if (kind === 'arcPush') { const q = rotAround(P, G, up, 30 * D2R * a * u); q.add(G.clone().sub(q).multiplyScalar(0.3 * Math.min(a, 2) * u)); k.p = q.toArray().map(r4); }
       else { const [fld, ctr, ax, deg] = arcs[kind]; const src = fld === 'p' ? P : G; k[fld] = rotAround(src, ctr, ax, deg * D2R * a * u).toArray().map(r4); if (fld === 'tg' && tgStore) k.tg = tgStore.map(r4); }
-      c.keys.push({ t: snapT(i / (N - 1) * lastT()), ...k });
+      keys.push({ t: snapT(i / (N - 1) * lastT()), ...k });
     }
-  } else c.keys = [{ t: 0, ...k0 }, { t: snapT(lastT()), ...k1 }];
-  c.base = clone(k0);
+  } else keys = [{ t: 0, ...k0 }, { t: snapT(lastT()), ...k1 }];
+  return { base: clone(k0), keys };
+}
+function applyMove(kind) {
+  const c = state.camera, plan = planMove(kind, moveAmt);
+  if (!plan) { c.keys = []; c.base = clone(evalCamRaw(T)); changed(true, true); toast('Camera is now static'); return; }
+  c.keys = plan.keys; c.base = plan.base;
   setTime(0);
   changed(true, true);
   toast((MOVES.find(m => m[0] === kind) || [, , kind])[2] + ' added. Press Space to play.');
+}
+
+/* ---- move preview (#movePeek): hovering a move button loops that move on the user's own shot (or a small example scene).
+   The main renderer draws it into an offscreen target at the end of frame(); state is never written: the planned keys are swapped
+   in and put back inside the same call, then the scene is posed at the playhead again. ---- */
+const PEEK_W = 220, PEEK_MOVE = 2500, PEEK_HOLD = 400, PEEK_FROM = { p: [0, 1.6, 5], tg: [0, 1.1, 0], f: 35, roll: 0, fd: 5 };
+const peek = { kind: null, btn: null, open: false, demo: false, frames: 0, t0: 0, last: 0, plan: null, endPose: null, timer: 0, failed: false };
+let peekRT = null, peekBuf = null, peekImg = null, peekDemo = null;
+canvas.addEventListener('webglcontextrestored', () => { peek.failed = false; });
+/* the mouse can leave without a pointerleave: the window loses focus, Escape, or the panel scrolls under a still cursor */
+window.addEventListener('blur', () => peekHide());
+document.addEventListener('keydown', e => { if (e.key === 'Escape') peekHide(); }, true);
+document.addEventListener('scroll', e => { if (peek.open && e.target instanceof Element && e.target.closest('#right')) peekHide(); }, true);
+const peekOff = () => exporting || playing || !!rec || pilotActive || tourActive() || openModals().length > 0 || peek.failed || renderer.getContext().isContextLost();
+/* runs fn with the plan as the camera's keys and base, then puts the real ones back */
+function withPlan(plan, fn) { const c = state.camera, k = c.keys, b = c.base; c.keys = plan.keys; c.base = plan.base; try { return fn(); } finally { c.keys = k; c.base = b; } }
+/* is anything (not a floor mark) in frame at the start or the end of the planned move? */
+function peekHasSubject(plan) {
+  const objs = state.objects.filter(o => o.type !== 'mark' && o.visible !== false && views.has(o.id));
+  if (!objs.length) return false;
+  const fr = new THREE.Frustum(), m = new THREE.Matrix4(), bb = new THREE.Box3();
+  const seen = t => {
+    applyAll(t); prepRenderCam(t); fr.setFromProjectionMatrix(m.multiplyMatrices(renderCam.projectionMatrix, renderCam.matrixWorldInverse));
+    return objs.some(o => { const g = views.get(o.id).group; g.updateMatrixWorld(true); bb.setFromObject(g); return !bb.isEmpty() && fr.intersectsBox(bb); });
+  };
+  try { return withPlan(plan, () => seen(0) || seen(lastT())); } finally { applyAll(T); prepRenderCam(T); }
+}
+/* the example: floor grid, one mannequin and two boxes, built once */
+function demoScene() {
+  if (peekDemo) return peekDemo;
+  const s = new THREE.Scene(); s.background = new THREE.Color('#3a3f47');
+  s.add(new THREE.HemisphereLight(0xe6eeff, 0x4a4540, 1.3));
+  const dl = new THREE.DirectionalLight(0xffffff, 2.2); dl.position.set(4, 8, 6); s.add(dl);
+  const floor = mk(new THREE.PlaneGeometry(60, 60), M('#6d727a', { r: 1 })); floor.rotation.x = -Math.PI / 2; s.add(floor);
+  const g = new THREE.GridHelper(60, 60, 0x8a9099, 0x80868f); g.position.y = 0.003; s.add(g);
+  const o = makeObject('person', [0, 0, 0], { color: SHIRTS[0] }), b = buildPerson(o);
+  posePerson(b.person, o, 0, { yaw: null, speed: 0, dist: null, moving: false }, null); s.add(b.root);
+  s.add(mk(BOX(1, 1, 1), M('#c9a227'), -1.5, 0.5, -1.5), mk(BOX(0.8, 0.8, 0.8), M('#c0392b'), 1.6, 0.4, -2.5));
+  const cam = new THREE.PerspectiveCamera(40, 16 / 9, 0.05, 500); cam.filmGauge = 36;
+  return (peekDemo = { scene: s, cam });
+}
+function peekSoon(kind, btn) { clearTimeout(peek.timer); peek.timer = setTimeout(() => peekShow(kind, btn), 150); }
+function peekShow(kind, btn) {
+  clearTimeout(peek.timer); peek.timer = 0;
+  if (peekOff() || !btn || !btn.isConnected) return;
+  const real = planMove(kind, moveAmt); if (!real) return;
+  const demo = !peekHasSubject(real), plan = demo ? planMove(kind, moveAmt, PEEK_FROM) : real;
+  const end = demo ? withPlan(plan, () => evalCamRaw(lastT())) : withPlan(plan, () => evalCam(lastT()));
+  Object.assign(peek, { kind, btn, plan, demo, open: true, frames: 0, t0: performance.now(), last: 0, endPose: { p: end.p.slice(), tg: end.tg.slice(), f: end.f, t: lastT() } });
+  const el = $('#movePeek'), cv = $('canvas', el), ar = arOf(state.settings.aspect), dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const cw = ar >= 1 ? PEEK_W : Math.round(PEEK_W * ar), ch = Math.round(cw / ar); /* the long side is PEEK_W */
+  cv.style.width = cw + 'px'; cv.style.height = ch + 'px';
+  const pw = Math.max(2, Math.round(cw * dpr)), ph = Math.max(2, Math.round(ch * dpr));
+  if (cv.width !== pw || cv.height !== ph) { cv.width = pw; cv.height = ph; }
+  el.style.width = (cw + 12) + 'px';
+  $('.lab', el).textContent = (MOVES.find(m => m[0] === kind) || [, , kind])[2];
+  $('.note', el).style.display = demo ? '' : 'none';
+  el.style.display = 'block';
+  const r = btn.getBoundingClientRect(), side = $('#right'), edge = side && side.offsetWidth ? side.getBoundingClientRect().left : r.left;
+  const w = el.offsetWidth, hh = el.offsetHeight, G = 8;
+  el.style.left = clamp(edge - w - G, G, Math.max(G, innerWidth - w - G)) + 'px';
+  el.style.top = clamp(r.top + r.height / 2 - hh / 2, G, Math.max(G, innerHeight - hh - G)) + 'px';
+}
+function peekHide() {
+  clearTimeout(peek.timer); peek.timer = 0;
+  if (!peek.open) return;
+  peek.open = false; peek.kind = null; peek.btn = null; peek.plan = null;
+  const el = $('#movePeek'); if (el) el.style.display = 'none';
+}
+/* called at the end of frame(): never asks for a main redraw and never touches editRev */
+function peekTick(now) {
+  if (!peek.open) return;
+  if (peekOff() || !peek.btn.isConnected) { peekHide(); return; }
+  if (now - peek.last < 32) return; /* about 30 fps */
+  peek.last = now;
+  try { peekDraw(now); peek.frames++; } catch (e) {
+    if (!peek.failed) console.error('Move preview failed', e);
+    peek.failed = true; peekHide();
+  }
+}
+function peekDraw(now) {
+  const cv = $('#movePeek canvas'), w = cv.width, hh = cv.height, rd = renderer;
+  const ph = (now - peek.t0) % (PEEK_MOVE + 2 * PEEK_HOLD), t = clamp((ph - PEEK_HOLD) / PEEK_MOVE, 0, 1) * lastT();
+  if (!peekRT) {
+    /* flagged like an XR target so three.js tone-maps and sRGB-encodes into it exactly as on screen; stored as plain RGBA8,
+       so the pixels read back are the ones the main view would show */
+    peekRT = new THREE.WebGLRenderTarget(w, hh, { samples: 4 });
+    peekRT.texture.colorSpace = THREE.SRGBColorSpace; peekRT.texture.internalFormat = 'RGBA8'; peekRT.isXRRenderTarget = true;
+  }
+  if (peekRT.width !== w || peekRT.height !== hh) peekRT.setSize(w, hh);
+  try {
+    if (peek.demo) {
+      const d = demoScene(), c = withPlan(peek.plan, () => evalCamRaw(t));
+      d.cam.position.fromArray(c.p); d.cam.up.set(0, 1, 0); d.cam.lookAt(c.tg[0], c.tg[1], c.tg[2]); d.cam.rotateZ((c.roll || 0) * D2R);
+      d.cam.aspect = w / hh; d.cam.setFocalLength(c.f); d.cam.updateMatrixWorld(true);
+      rd.setRenderTarget(peekRT); rd.clear(); rd.render(d.scene, d.cam);
+    } else {
+      withPlan(peek.plan, () => { applyAll(t); prepRenderCam(t); placeSun(); });
+      rd.shadowMap.needsUpdate = true; /* the next main draw renews the shadows for the playhead again */
+      rd.setRenderTarget(peekRT); rd.clear();
+      withShotStyle(state.settings.style, () => rd.render(scene, renderCam)); /* no depth of field in the preview */
+    }
+    if (!peekBuf || peekBuf.length !== w * hh * 4) { peekBuf = new Uint8Array(w * hh * 4); peekImg = new ImageData(w, hh); }
+    rd.readRenderTargetPixels(peekRT, 0, 0, w, hh, peekBuf);
+  } finally {
+    rd.setRenderTarget(null);
+    if (!peek.demo) { applyAll(T); prepRenderCam(T); placeSun(); }
+  }
+  const row = w * 4, dst = peekImg.data; /* WebGL rows run bottom-up */
+  for (let y = 0; y < hh; y++) dst.set(peekBuf.subarray((hh - 1 - y) * row, (hh - y) * row), y * row);
+  for (let i = 3; i < dst.length; i += 4) dst[i] = 255;
+  cv.getContext('2d').putImageData(peekImg, 0, 0);
 }
 
 /* ============================== UI: add panel & outliner ============================== */
@@ -2223,6 +2345,7 @@ function decorateSections(root) {
   }
 }
 function renderProps() {
+  peekHide();
   renderPropsInner();
   decorateSections($('#props'));
 }
@@ -2437,7 +2560,15 @@ function propsCamera(p) {
     p.append(msec);
   } else if (tab === 'move') {
     p.append(moveCard());
-    const mg = h('div', { class: 'movegrid' }, MOVES.map(([k, ic, l]) => h('button', { onclick: () => applyMove(k), title: 'Animate the camera: ' + l.toLowerCase() + ', from the current framing' }, h('b', null, ic), l)));
+    const mg = h('div', { class: 'movegrid' }, MOVES.map(([k, ic, l]) => {
+      const b = h('button', { onclick: () => { peekHide(); applyMove(k); } }, h('b', null, ic), l);
+      if (k !== 'static') { /* hover or keyboard focus loops a preview of the move (#movePeek); no title, so no tooltip covers it */
+        b.addEventListener('pointerenter', e => { if (e.pointerType !== 'touch') peekSoon(k, b); });
+        b.addEventListener('focus', () => { if (b.matches(':focus-visible')) peekSoon(k, b); });
+        b.addEventListener('pointerleave', peekHide); b.addEventListener('blur', peekHide);
+      }
+      return b;
+    }));
     p.append(sec('Camera moves',
       slider('Strength', () => moveAmt, v => { moveAmt = v; }, { min: 0.25, max: 2.5, step: 0.05, fmt: v => v.toFixed(2) + '×' }),
       mg, h('p', { class: 'note' }, 'Starts from the current framing and runs for the whole shot.')));
@@ -3707,6 +3838,7 @@ function finishFocusPick(rc) {
 }
 let lastWorkView = 'editor';
 function setView(v) {
+  peekHide();
   if (v === 'top' && !topInit) {
     topInit = true; topControls.target.set(edControls.target.x, 0, edControls.target.z);
     topCam.position.set(topControls.target.x, 120, topControls.target.z); topCam.zoom = 1; topCam.updateProjectionMatrix();
@@ -5904,7 +6036,7 @@ function boot() {
   });
   window.addEventListener('pagehide', () => { flushAutosave(); recentFlush(); });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') recentFlush(); });
-  window.__shotref = { practice: { enter: () => enterPractice(), enterEarly: () => enterPractice(true), leave: leavePractice, active: () => !!practicing }, practicing: () => !!practicing, stateForSave, docInfo: () => ({ dirty: platform.isDirty(), name: platform.currentName(), path: platform.currentPath(), doc: platform.getDoc() }), tour: { run: runStops, active: tourActive, end: r => tourHandle && tourHandle.end(r), current: () => tourHandle }, startTour, setHandsTour, handsTourOn, setSimple, promptText, ensureDof, get selection() { return selIds; }, layout: () => layout, gizmoNdc: (x, y) => { const q = gizmo._getPointer({ clientX: x, clientY: y, button: 0 }); return { x: q.x, y: q.y }; }, arrowsVisible: () => [...arrows.values()].some(a => a.visible), videoBitrate, snapValue: snapWith, rotSnapDeg: () => pref('rotSnap'), controlSpeeds: () => ({ orbit: edControls.rotateSpeed, zoom: edControls.zoomSpeed, cam: camControls.rotateSpeed }), flySpeedNow, walkSpeedNow: () => pathSpeedOf({ type: 'person', opts: { pose: 'stand' } }), buildAddPanel: () => buildAddPanel(), saveRecentNow, recentFlush, recentStats, recentBusy, selectMany: ids => { selIds = ids.slice(); selected = selIds[selIds.length - 1] || null; updateGizmo(); uiDirty = true; propsDirty = true; requestRender(); }, pickAtScreen: (x, y) => { const rc = rayFromEvent({ clientX: x, clientY: y }); const h = rc && pickAt(rc); return h ? h.id : null; }, settleTime: () => { const t0 = performance.now(); solveGround(); return performance.now() - t0; }, groundMigrate: () => groundMigrate.size, liftKnob: () => { if (!liftGrp.visible) return null; const q = liftPick.getWorldPosition(new THREE.Vector3()); return window.__shotref.project(q.x, q.y, q.z); }, attachTo, setMount, writeCam, shownObj: (id, t) => shownObj(getObj(id), t), viewOf: id => { const v = views.get(id); if (!v) return null; v.group.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(v.group), sz = bb.getSize(new THREE.Vector3()); return { p: v.group.position.toArray(), yaw: v.group.rotation.y * R2D, s: v.group.scale.toArray(), size: sz.toArray(), wheels: v.wheels ? v.wheels.list.map(w => ({ spin: w.spin.rotation.x, steer: w.piv.rotation.y, front: w.front })) : null }; }, ringKnob: () => ringGrp.visible ? ringKnob.getWorldPosition(new THREE.Vector3()).toArray() : null, getPref, setPref, showMenu, menuButton, hideMenu, project: (x, y, z) => { const r = canvas.getBoundingClientRect(), R = viewRects(r.width, r.height); let cam = view === 'top' ? topCam : edCam, rr = R.work || { x: 0, y: 0, w: r.width, h: r.height }; if (camPane() && R.frame) { cam = renderCam; rr = R.frame; } const v = new THREE.Vector3(x, y, z).project(cam); return [r.left + rr.x + (v.x * 0.5 + 0.5) * rr.w, r.top + rr.y + (-v.y * 0.5 + 0.5) * rr.h]; }, get view() { return view; }, get placing() { return placing; }, get playing() { return playing; }, get step() { return currentStep(); }, get selected() { return selected; }, get state() { return state; }, get assets() { return assets; }, setT: t => setTime(t, false), applyMove, addObject, select, setView, evalCam, exportVideo, exportPNG, pickCodec, _exportCanvas: () => exRenderer ? exRenderer.domElement : null, changed, writeObj, evalObj, setKey, get T() { return T; },
+  window.__shotref = { practice: { enter: () => enterPractice(), enterEarly: () => enterPractice(true), leave: leavePractice, active: () => !!practicing }, practicing: () => !!practicing, stateForSave, docInfo: () => ({ dirty: platform.isDirty(), name: platform.currentName(), path: platform.currentPath(), doc: platform.getDoc() }), tour: { run: runStops, active: tourActive, end: r => tourHandle && tourHandle.end(r), current: () => tourHandle }, startTour, setHandsTour, handsTourOn, setSimple, promptText, ensureDof, get selection() { return selIds; }, layout: () => layout, gizmoNdc: (x, y) => { const q = gizmo._getPointer({ clientX: x, clientY: y, button: 0 }); return { x: q.x, y: q.y }; }, arrowsVisible: () => [...arrows.values()].some(a => a.visible), videoBitrate, snapValue: snapWith, rotSnapDeg: () => pref('rotSnap'), controlSpeeds: () => ({ orbit: edControls.rotateSpeed, zoom: edControls.zoomSpeed, cam: camControls.rotateSpeed }), flySpeedNow, walkSpeedNow: () => pathSpeedOf({ type: 'person', opts: { pose: 'stand' } }), buildAddPanel: () => buildAddPanel(), saveRecentNow, recentFlush, recentStats, recentBusy, selectMany: ids => { selIds = ids.slice(); selected = selIds[selIds.length - 1] || null; updateGizmo(); uiDirty = true; propsDirty = true; requestRender(); }, pickAtScreen: (x, y) => { const rc = rayFromEvent({ clientX: x, clientY: y }); const h = rc && pickAt(rc); return h ? h.id : null; }, settleTime: () => { const t0 = performance.now(); solveGround(); return performance.now() - t0; }, groundMigrate: () => groundMigrate.size, liftKnob: () => { if (!liftGrp.visible) return null; const q = liftPick.getWorldPosition(new THREE.Vector3()); return window.__shotref.project(q.x, q.y, q.z); }, attachTo, setMount, writeCam, shownObj: (id, t) => shownObj(getObj(id), t), viewOf: id => { const v = views.get(id); if (!v) return null; v.group.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(v.group), sz = bb.getSize(new THREE.Vector3()); return { p: v.group.position.toArray(), yaw: v.group.rotation.y * R2D, s: v.group.scale.toArray(), size: sz.toArray(), wheels: v.wheels ? v.wheels.list.map(w => ({ spin: w.spin.rotation.x, steer: w.piv.rotation.y, front: w.front })) : null }; }, ringKnob: () => ringGrp.visible ? ringKnob.getWorldPosition(new THREE.Vector3()).toArray() : null, getPref, setPref, showMenu, menuButton, hideMenu, project: (x, y, z) => { const r = canvas.getBoundingClientRect(), R = viewRects(r.width, r.height); let cam = view === 'top' ? topCam : edCam, rr = R.work || { x: 0, y: 0, w: r.width, h: r.height }; if (camPane() && R.frame) { cam = renderCam; rr = R.frame; } const v = new THREE.Vector3(x, y, z).project(cam); return [r.left + rr.x + (v.x * 0.5 + 0.5) * rr.w, r.top + rr.y + (-v.y * 0.5 + 0.5) * rr.h]; }, get view() { return view; }, get placing() { return placing; }, get playing() { return playing; }, get step() { return currentStep(); }, get selected() { return selected; }, get state() { return state; }, get assets() { return assets; }, setT: t => setTime(t, false), applyMove, planMove, peek: () => ({ open: peek.open, kind: peek.kind, demo: peek.demo, frames: peek.frames, endPose: peek.endPose }), addObject, select, setView, evalCam, exportVideo, exportPNG, pickCodec, _exportCanvas: () => exRenderer ? exRenderer.domElement : null, changed, writeObj, evalObj, setKey, get T() { return T; },
     get rebuilds() { return rebuilds; }, urlCacheIds: () => [...urlCache.keys()],
     /* batch H (takes) hooks for the smoke test */
     switchTake, newTake, snapPoolSize: () => snapLive, snapPruned: () => snapPruned,

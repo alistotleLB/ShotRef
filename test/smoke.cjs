@@ -6556,3 +6556,111 @@ check('picture tiles: shown under the claude.ai CSP (app.html) with no console e
   ok(r.length === 5 + 5 && r.every(s => s === 'data:image/webp;base64:128'), 'CSP tiles: ' + r.join());
   noErrors(p, 'CSP page');
 });
+
+check('planMove is pure and matches applyMove', async ({ open }) => {
+  const p = await open();
+  const r = await p.evaluate(() => {
+    const S = window.__shotref, out = [];
+    const pid = S.addObject('person');
+    S.state.camera.lookAtId = (pid && pid.id) || pid || S.state.objects[S.state.objects.length - 1].id;
+    S.changed(true, true);
+    if (S.planMove('static', 1) !== null) out.push('static is not null');
+    for (const k of ['dollyIn', 'orbitL', 'panR', 'arcPush', 'dollyZoom']) {
+      for (const amt of [1, 2.5]) {
+        const s0 = JSON.stringify(S.state), h0 = S.history.length;
+        const plan = S.planMove(k, amt);
+        if (!plan || !plan.base || !plan.keys || plan.keys.length < 2) out.push(k + ' ' + amt + ': bad plan');
+        if (JSON.stringify(S.state) !== s0) out.push(k + ' ' + amt + ': planMove changed state');
+        if (S.history.length !== h0) out.push(k + ' ' + amt + ': planMove changed history');
+      }
+      const plan = S.planMove(k, 1), cam0 = JSON.stringify(S.state.camera);
+      S.applyMove(k);
+      if (JSON.stringify(S.state.camera.keys) !== JSON.stringify(plan.keys)) out.push(k + ': applyMove keys differ from planMove');
+      if (JSON.stringify(S.state.camera.base) !== JSON.stringify(plan.base)) out.push(k + ': applyMove base differs from planMove');
+      S.state.camera = JSON.parse(cam0); S.changed(true, true);
+    }
+    return out;
+  });
+  ok(r.length === 0, r.join('; '));
+  noErrors(p, 'planMove page');
+});
+
+/* ---------------- camera move hover preview (#movePeek) ---------------- */
+const peekOf = p => p.evaluate(() => window.__shotref.peek());
+const moveBtn = name => '#props .movegrid button:has-text("' + name + '")';
+check('move preview: hover shows a moving picture and leaves the scene untouched', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => { window.__shotref.addObject('person'); }); await settle(p, 600);
+  await camTab(p, 'Move');
+  const poseNow = () => p.evaluate(() => { const S = window.__shotref, id = S.state.objects[0].id; return JSON.stringify([S.evalCam(S.T), S.viewOf(id)]); });
+  const pose0 = await poseNow();
+  const before = await p.evaluate(() => ({ s: JSON.stringify(window.__shotref.state), h: window.__shotref.history.length, d: window.__shotref.docInfo().dirty }));
+  await p.hover(moveBtn('Orbit left'));
+  await p.waitForFunction(() => { const k = window.__shotref.peek(); return k.open && k.frames > 10; }, null, { timeout: 8000 });
+  ok((await peekOf(p)).demo === false, 'used the example although the shot has things in frame');
+  const draws0 = await p.evaluate(() => window.__shotref.renderStats().draws);
+  const a = await p.evaluate(() => document.querySelector('#movePeek canvas').toDataURL());
+  await sleep(500);
+  const b = await p.evaluate(() => document.querySelector('#movePeek canvas').toDataURL());
+  const draws1 = await p.evaluate(() => window.__shotref.renderStats().draws);
+  ok(a !== b, 'the preview picture did not change over 500 ms');
+  ok(draws1 - draws0 <= 3, 'the main view kept redrawing while the preview ran: ' + (draws1 - draws0) + ' draws');
+  const after = await p.evaluate(() => ({ s: JSON.stringify(window.__shotref.state), h: window.__shotref.history.length, d: window.__shotref.docInfo().dirty }));
+  ok(after.s === before.s, 'the preview changed the state');
+  ok(after.h === before.h, 'the preview changed the undo history: ' + before.h + ' -> ' + after.h);
+  ok(after.d === before.d, 'the preview changed the unsaved mark');
+  ok(await poseNow() === pose0, 'the preview left the camera or the person posed differently');
+  await p.mouse.move(700, 450); await settle(p, 100);
+  ok((await peekOf(p)).open === false, 'the preview stayed open after the mouse left');
+  const f0 = (await peekOf(p)).frames; await sleep(300); const f1 = (await peekOf(p)).frames;
+  ok(f1 === f0, 'the preview kept drawing after closing: ' + f0 + ' -> ' + f1);
+  noErrors(p);
+});
+check('move preview: empty scene shows the example', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await clearScene(p); await settle(p, 300);
+  await camTab(p, 'Move');
+  await p.hover(moveBtn('Dolly in'));
+  await p.waitForFunction(() => { const k = window.__shotref.peek(); return k.open && k.frames > 3; }, null, { timeout: 8000 });
+  ok((await peekOf(p)).demo === true, 'an empty scene did not use the example');
+  ok(await p.isVisible('#movePeek .note'), 'the example note is hidden');
+  ok((await p.textContent('#movePeek .note')).trim() === 'Example. Add people or props to preview it on your shot.', 'note text: ' + await p.textContent('#movePeek .note'));
+  noErrors(p);
+});
+check('move preview: closes on panel rebuild and stays on screen', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await camTab(p, 'Move');
+  const last = p.locator('#props .movegrid button').last();
+  await last.hover();
+  await p.waitForFunction(() => window.__shotref.peek().open, null, { timeout: 8000 });
+  const bb = await p.locator('#movePeek').boundingBox(), vp = p.viewportSize();
+  ok(bb && bb.x >= 0 && bb.y >= 0 && bb.x + bb.width <= vp.width && bb.y + bb.height <= vp.height, 'the preview is off screen: ' + JSON.stringify(bb));
+  /* the rebuilt panel's new button under the still mouse may open it again after the hover delay, so look straight after the rebuild */
+  const shut = await p.evaluate(() => new Promise(r => { window.__shotref.changed(true, true); requestAnimationFrame(() => requestAnimationFrame(() => r({ open: window.__shotref.peek().open, shown: getComputedStyle(document.querySelector('#movePeek')).display !== 'none' }))); }));
+  ok(!shut.open && !shut.shown, 'the preview stayed open after the panel rebuilt');
+  noErrors(p);
+});
+check('move preview: matches the click with a look-at subject', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => { const S = window.__shotref, o = S.addObject('person'); S.state.camera.lookAtId = o.id; S.changed(true, true); }); await settle(p, 600);
+  await camTab(p, 'Move');
+  await p.hover(moveBtn('Orbit left'));
+  await p.waitForFunction(() => { const k = window.__shotref.peek(); return k.open && k.frames > 2; }, null, { timeout: 8000 });
+  const end = (await peekOf(p)).endPose;
+  ok(end && Array.isArray(end.p), 'no end pose: ' + JSON.stringify(end));
+  await p.click(moveBtn('Orbit left')); await settle(p, 300);
+  const got = await p.evaluate(t => window.__shotref.evalCam(t).p, end.t);
+  const d = Math.hypot(got[0] - end.p[0], got[1] - end.p[1], got[2] - end.p[2]);
+  ok(d < 1e-3, 'the preview ends somewhere else than the click: ' + d.toFixed(4) + ' m');
+  noErrors(p);
+});
+check('move preview: works under the claude.ai CSP (app.html)', async ({ open }) => {
+  const p = await open('app.html'); await settle(p, 300);
+  await camTab(p, 'Move');
+  await p.hover(moveBtn('Dolly in'));
+  await p.waitForFunction(() => { const k = window.__shotref.peek(); return k.open && k.frames > 5; }, null, { timeout: 8000 });
+  /* a real picture has many pixels far from the top-left (sky or background) colour */
+  const spread = await p.evaluate(() => { const c = document.querySelector('#movePeek canvas'), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 0; i < d.length; i += 4) if (Math.abs(d[i] - d[0]) + Math.abs(d[i + 1] - d[1]) + Math.abs(d[i + 2] - d[2]) > 60) n++; return n / (d.length / 4); });
+  ok(spread > 0.1, 'the preview looks blank: only ' + (spread * 100).toFixed(1) + '% of pixels differ from the corner');
+  noErrors(p, 'CSP page');
+});
