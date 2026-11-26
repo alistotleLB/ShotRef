@@ -1799,11 +1799,11 @@ check('prefs store survives broken storage and remembers values', async ({ open 
 check('undo and redo buttons name the step', async ({ open }) => {
   const p = await open();
   await p.waitForTimeout(400);
-  ok(/nothing to undo/i.test(await p.getAttribute('#bUndo', 'title')), 'idle undo title: ' + await p.getAttribute('#bUndo', 'title'));
+  ok(/nothing to undo/i.test(await p.getAttribute('#bUndo', 'data-tip')), 'idle undo title: ' + await p.getAttribute('#bUndo', 'data-tip'));
   await p.evaluate(() => { window.__shotref.addObject('box'); });
-  await p.waitForFunction(() => /Undo: add Box/i.test(document.querySelector('#bUndo').title));
+  await p.waitForFunction(() => /Undo: add Box/i.test(document.querySelector('#bUndo').dataset.tip));
   await p.keyboard.press('Control+Z');
-  await p.waitForFunction(() => /Redo: add Box/i.test(document.querySelector('#bRedo').title));
+  await p.waitForFunction(() => /Redo: add Box/i.test(document.querySelector('#bRedo').dataset.tip));
 });
 
 /* right-click on the 3D view */
@@ -2164,7 +2164,7 @@ check('viewport has one icon toolbar with tooltips; Simple hides the arrows', as
   ok(info.length === 8 && info.every(i => i.tip), 'expected 8 icon buttons with tooltips: ' + JSON.stringify(info));
   ok(info.filter(i => i.shown).map(i => i.id).join() === 'bSnapGrid,bFocus,bGrid,bPip,bCamHere', 'Simple should show Snap, Zoom to, Grid, Preview, Camera here: ' + info.filter(i => i.shown).map(i => i.id));
   await p.hover('#bFocus');
-  const tip = await p.evaluate(() => getComputedStyle(document.querySelector('#bFocus'), '::after').content);
+  const tip = await p.evaluate(() => { const t = document.querySelector('#tip'); return t.classList.contains('show') ? t.textContent : 'none'; });
   ok(/Zoom to the selection/.test(tip), 'no tooltip on hover: ' + tip);
   await goAdvanced(p);
   ok(await p.evaluate(() => [...document.querySelectorAll('#vpRight [data-g]')].every(b => b.getClientRects().length > 0)), 'Advanced should show Move, Rotate, Scale');
@@ -2229,7 +2229,7 @@ const selIdsOf = p => p.evaluate(() => window.__shotref.selection.slice());
 const idOfType = (p, type) => p.evaluate(t => window.__shotref.state.objects.find(o => o.type === t).id, type);
 const objOf = (p, id) => p.evaluate(i => JSON.parse(JSON.stringify(window.__shotref.state.objects.find(o => o.id === i) || null)), id);
 const shiftClick = async (p, x, y) => { await p.keyboard.down('Shift'); await p.mouse.click(x, y); await p.keyboard.up('Shift'); };
-const undoTitle = p => p.evaluate(() => document.querySelector('#bUndo').title);
+const undoTitle = p => p.evaluate(() => document.querySelector('#bUndo').dataset.tip);
 /* the three starter objects on screen: person (0,0,0), box (2.2,0,-1.5), tree (-3.5,0,-4) */
 async function starterXY(p) {
   const [pe, bo, tr] = await Promise.all([proj3(p, 0, 0.9, 0), proj3(p, 2.2, 0.4, -1.5), proj3(p, -3.5, 1.5, -4)]);
@@ -4335,7 +4335,7 @@ check('takes: an artifact-made file with takes opens with all of them; the stale
   ok(await nObj(p) === 4 && await takeBtnText(p) === 'Alt', 'Alt not loaded');
   await takeCmd(p, 'take:ta'); await settle(p, 200);
   ok(await nObj(p) === 2, 'switching back gives ' + await nObj(p));
-  const lab = await p.evaluate(() => document.querySelector('#bUndo').title);
+  const lab = await p.evaluate(() => document.querySelector('#bUndo').dataset.tip);
   ok(/switch to Hero/i.test(lab), 'undo title: ' + lab);
   noErrors(p);
 });
@@ -5177,9 +5177,9 @@ check('tour engine: Esc, End tour leave nothing behind', async ({ open }) => {
     ok(await p.evaluate(h => window.__reason === h, how), how + ': onEnd got the wrong reason');
     /* no leftover key handler: Space plays again */
     await p.evaluate(() => document.activeElement.blur());
-    const before = await p.evaluate(() => document.querySelector('#bPlay').textContent);
+    const before = await p.evaluate(() => document.querySelector('#bPlay').innerHTML);
     await p.keyboard.press(' '); await settle(p, 150);
-    const after = await p.evaluate(() => document.querySelector('#bPlay').textContent);
+    const after = await p.evaluate(() => document.querySelector('#bPlay').innerHTML);
     ok(before !== after, how + ': Space no longer toggles playback');
     await p.keyboard.press(' '); await settle(p, 100);
   }
@@ -6299,14 +6299,14 @@ check('sky: the note names the sky and the shadows, and look and drift chips set
   await sky.getByRole('button', { name: 'Clear', exact: true }).click();
   const clear = await sky.innerText();
   if (!/Clear sky/.test(clear) || /Look|Drift/.test(clear)) throw new Error('clear sky panel: ' + clear);
-  await sky.getByRole('button', { name: 'Overcast', exact: true }).click();
+  await sky.getByRole('button', { name: 'Full cover', exact: true }).click();
   if (!/Overcast/.test(await sky.innerText())) throw new Error('overcast note missing');
   await sky.getByRole('button', { name: 'Wispy', exact: true }).click();
   await sky.getByRole('button', { name: 'Breezy', exact: true }).click();
   const c = await p.evaluate(() => __shotref.state.settings.clouds);
   if (c.look !== 'wispy' || c.drift !== 'breezy' || c.cover !== 1) throw new Error(JSON.stringify(c));
   const on = await sky.locator('button.on').allInnerTexts();
-  if (!['Overcast', 'Wispy', 'Breezy'].every(t => on.some(o => o.trim() === t))) throw new Error('active chips: ' + on);
+  if (!['Full cover', 'Wispy', 'Breezy'].every(t => on.some(o => o.trim() === t))) throw new Error('active chips: ' + on);
 });
 check('sky: advanced adds amount, edges and direction, and one sky section holds the colours', async ({ open }) => {
   const p = await open();
@@ -6456,7 +6456,7 @@ check('declutter: Frame with camera selects the camera with that person picked',
   await p.evaluate(id => { __shotref.select(id); }, ids[1]); await settle(p, 300);
   await p.click('#props [data-role="frame-cam"]'); await settle(p, 300);
   ok(await p.evaluate(() => __shotref.selected) === 'camera', 'camera not selected');
-  const v = await p.evaluate(() => { const s = [...document.querySelectorAll('#props select')].find(x => [...x.options].some(o => o.text.includes('Person'))); return s && s.value; });
+  const v = await p.evaluate(() => { const s = [...document.querySelectorAll('#props select')].find(x => [...x.options].some(o => /^(Man|Woman|Child) [0-9]/.test(o.text))); return s && s.value; });
   ok(v === ids[1], 'the person was not picked: ' + v);
   ok((await p.innerText('#props')).includes('Shot size'), 'Shot tab not open');
 });
@@ -6673,12 +6673,12 @@ check('feel preview: hover replays the shot move with that feel', async ({ open 
   await p.evaluate(() => { const S = window.__shotref; S.addObject('person'); S.applyMove('orbitL'); S.state.camera.feel = 'gentle'; S.changed(true, true); }); await settle(p, 600);
   await camTab(p, 'Move');
   const before = await p.evaluate(() => ({ s: JSON.stringify(window.__shotref.state), h: window.__shotref.history.length, d: window.__shotref.docInfo().dirty }));
-  await p.hover('#props .seg.feel button:has-text("Strong ease")');
+  await p.hover('#props .seg.feel button:has-text("Strong")');
   await p.waitForFunction(() => { const k = window.__shotref.peek(); return k.open && k.frames > 10; }, null, { timeout: 8000 });
   const k = await peekOf(p);
   ok(k.src === 'feel' && k.arg === 'strong', 'wrong source: ' + JSON.stringify(k));
   ok(k.demo === false, 'used the example although the shot moves and has things in frame');
-  ok((await p.textContent('#movePeek .lab')).trim() === 'Strong ease', 'label: ' + await p.textContent('#movePeek .lab'));
+  ok((await p.textContent('#movePeek .lab')).trim() === 'Strong', 'label: ' + await p.textContent('#movePeek .lab'));
   ok(!(await p.isVisible('#movePeek .note')), 'a note shows although the shot has its own move');
   const a = await p.evaluate(() => document.querySelector('#movePeek canvas').toDataURL());
   await sleep(500);
@@ -6704,7 +6704,7 @@ check('feel preview: static camera falls back to a dolly in, bottom bar opens ab
   const k = await peekOf(p);
   ok(k.src === 'feel' && k.arg === 'strong', 'wrong source: ' + JSON.stringify(k));
   ok(k.demo === false, 'used the example although a person is in frame');
-  ok((await p.textContent('#movePeek .lab')).trim() === 'Strong ease', 'label: ' + await p.textContent('#movePeek .lab'));
+  ok((await p.textContent('#movePeek .lab')).trim() === 'Strong', 'label: ' + await p.textContent('#movePeek .lab'));
   ok(await p.isVisible('#movePeek .note'), 'the static camera note is hidden');
   const note = (await p.textContent('#movePeek .note')).trim();
   ok(note === 'Shown on a dolly in. Your camera doesn\'t move yet.', 'note text: ' + note);
@@ -7213,5 +7213,104 @@ check('guidance: framing a scene whose people are hidden from every side stays q
   ok(r.ms < 500, 'framing took ' + Math.round(r.ms) + ' ms');
   ok(!r.stats.clear, 'test set-up: the person should be hidden from every side');
   ok(r.ed.concat(r.tg).every(Number.isFinite) && Math.hypot(r.ed[0] - r.tg[0], r.ed[1] - r.tg[1], r.ed[2] - r.tg[2]) <= 60.5, 'the view is not sane: ' + JSON.stringify(r));
+  noErrors(p);
+});
+check('messages: a bad message has the red edge and stays past 5 s, an ok one has the tick', async ({ open }) => {
+  const p = await open(); await settle(p, 400);
+  await p.evaluate(() => window.__shotref.toast('Could not do that', null, 'bad')); await settle(p, 300);
+  const bad = await p.evaluate(() => { const t = document.querySelector('#toast'), c = getComputedStyle(t); return { show: t.classList.contains('show'), edge: c.borderLeftWidth, col: c.borderLeftColor }; });
+  ok(bad.show && bad.edge === '3px' && bad.col === 'rgb(255, 122, 122)', 'the bad message has no red edge: ' + JSON.stringify(bad));
+  await settle(p, 5200);
+  ok(await p.evaluate(() => document.querySelector('#toast').classList.contains('show')), 'the bad message was gone after 5 s');
+  await p.evaluate(() => document.querySelector('#toast').click()); await settle(p, 100);
+  ok(await p.evaluate(() => !document.querySelector('#toast').classList.contains('show')), 'clicking the bad message did not dismiss it');
+  await p.evaluate(() => window.__shotref.toast('Saved it', null, 'ok')); await settle(p, 300);
+  const okm = await p.evaluate(() => { const t = document.querySelector('#toast'), c = getComputedStyle(t, '::before'); return { cls: t.classList.contains('ok'), content: c.content, col: c.color }; });
+  ok(okm.cls && okm.content !== 'none' && okm.content !== 'normal' && okm.content.length > 2 && okm.col === 'rgb(89, 209, 138)', 'the ok message has no green tick: ' + JSON.stringify(okm));
+  await p.evaluate(() => window.__shotref.toast('Plain note')); await settle(p, 200);
+  ok(await p.evaluate(() => { const t = document.querySelector('#toast'); return !t.classList.contains('ok') && !t.classList.contains('bad') && getComputedStyle(t).borderLeftWidth === '1px'; }), 'an info message changed look');
+  noErrors(p);
+});
+check('messages: a 75-character message is still showing at 5 s and gone by 6.5 s', async ({ open }) => {
+  const p = await open(); await settle(p, 400);
+  await p.evaluate(() => window.__shotref.toast('x'.repeat(75))); await settle(p, 5000);
+  ok(await p.evaluate(() => document.querySelector('#toast').classList.contains('show')), 'gone before 5 s');
+  await settle(p, 1500);
+  ok(await p.evaluate(() => !document.querySelector('#toast').classList.contains('show')), 'still showing at 6.5 s');
+  noErrors(p);
+});
+check('messages: loading the Living room starter shows no "Can float" message', async ({ open }) => {
+  const p = await open(); await settle(p, 400);
+  await p.evaluate(() => { window.__seen = []; new MutationObserver(() => window.__seen.push(document.querySelector('#toast').textContent)).observe(document.querySelector('#toast'), { childList: true, characterData: true, subtree: true }); });
+  await p.evaluate(() => window.__shotref.loadStarter('room')); await settle(p, 1500);
+  const msgs = await p.evaluate(() => window.__seen);
+  ok(!msgs.some(m => /Can float/.test(m)), 'a "Can float" message showed: ' + JSON.stringify(msgs));
+  noErrors(p);
+});
+check('names: Render style, Constant/Gentle/Strong, Full cover, and people named by what they are', async ({ open }) => {
+  const p = await open(); await settle(p, 400);
+  const text = () => p.evaluate(() => document.body.innerText);
+  const bad = t => /View style|Gentle ease|Strong ease/.test(t);
+  for (const tab of ['Shot', 'Move', 'Lens', 'Photo', 'Output']) { await camTab(p, tab); ok(!bad(await text()), 'old name on the ' + tab + ' tab'); }
+  await camTab(p, 'Move');
+  const feels = await p.evaluate(() => [...document.querySelectorAll('#feelBar button, #props .seg.feel button')].map(b => b.textContent.trim()).join());
+  ok(/Constant,Gentle,Strong/.test(feels), 'motion feel names: ' + feels);
+  await camTab(p, 'Output');
+  ok(/Render style/.test(await text()), 'Render style is missing');
+  await p.evaluate(() => window.__shotref.select(null)); await settle(p, 300);
+  const tiles = await p.evaluate(() => [...document.querySelectorAll('#props .skytiles button')].map(b => b.textContent.trim()));
+  ok(tiles.join() === 'Clear,Few,Scattered,Cloudy,Full cover', 'cloud tiles: ' + tiles.join());
+  await p.evaluate(() => window.__shotref.loadStarter('dialogue')); await settle(p, 500);
+  const names = await p.evaluate(() => window.__shotref.state.objects.filter(o => o.type === 'person').map(o => o.name));
+  ok(names.join() === 'Man 1,Woman 1', 'dialogue names: ' + names.join());
+  await p.evaluate(() => window.__shotref.addPerson('child')); await settle(p, 200);
+  await p.evaluate(() => window.__shotref.addPerson('man')); await settle(p, 200);
+  const n2 = await p.evaluate(() => window.__shotref.state.objects.filter(o => o.type === 'person').map(o => o.name));
+  ok(n2.join() === 'Man 1,Woman 1,Child 1,Man 2', 'numbered per kind: ' + n2.join());
+  ok(!/Person [0-9]/.test(await text()), 'a person is still called "Person n"');
+  noErrors(p);
+});
+check('tooltips: no button under #app keeps a title, every one has data-tip, and a timeline tip opens above and stays inside the window', async ({ open }) => {
+  const p = await open(); await p.setViewportSize({ width: 1100, height: 700 }); await settle(p, 500);
+  const r = await p.evaluate(() => {
+    const all = [...document.querySelectorAll('#app button')];
+    return { titled: all.filter(b => b.hasAttribute('title')).map(b => b.id || b.textContent.trim()).slice(0, 5), tips: all.filter(b => b.dataset.tip).length };
+  });
+  ok(!r.titled.length, 'buttons still have a title: ' + r.titled.join());
+  ok(r.tips > 10, 'few buttons have data-tip: ' + r.tips);
+  for (const id of ['#bFile', '#bUndo', '#bStart', '#bKey', '#bLoop', '#bEnd']) ok(await p.evaluate(s => !!document.querySelector(s).dataset.tip, id), id + ' has no data-tip');
+  for (const id of ['#bKey', '#bEnd', '#bStart', '#bLoop', '#bFile', '#bUndo', '#bSplit', '#bMenu']) {
+    const el = await p.$(id); if (!el || !(await el.isVisible())) continue;
+    await el.hover(); await settle(p, 150);
+    const t = await p.evaluate(s => { const tip = document.querySelector('#tip'), b = document.querySelector(s).getBoundingClientRect(), r = tip.getBoundingClientRect(); return { show: tip.classList.contains('show'), l: r.left, r: r.right, t: r.top, b: r.bottom, bt: b.top, bb: b.bottom, W: innerWidth, H: innerHeight, txt: tip.textContent }; }, id);
+    ok(t.show && t.txt, id + ': no tooltip');
+    ok(t.l >= 5.5 && t.r <= t.W - 5.5, id + ': the tooltip runs off the side: ' + JSON.stringify(t));
+    ok(t.t >= 0 && t.b <= t.H, id + ': the tooltip runs off the top or bottom: ' + JSON.stringify(t));
+    if (t.bb > t.H - 160) ok(t.b <= t.bt, id + ': a button near the bottom should get its tip above: ' + JSON.stringify(t));
+    else ok(t.t >= t.bb, id + ': the tip should open below: ' + JSON.stringify(t));
+  }
+  await p.mouse.move(5, 300); await settle(p, 100);
+  await p.focus('#bStart'); await p.keyboard.press('Shift+Tab'); await p.keyboard.press('Tab'); await settle(p, 150);
+  ok(await p.evaluate(() => document.querySelector('#tip').classList.contains('show')), 'no tooltip on keyboard focus');
+  noErrors(p);
+});
+check('symbols: the transport buttons hold drawings, not text glyphs', async ({ open }) => {
+  const p = await open(); await settle(p, 400);
+  for (const id of ['#bStart', '#bPrevKey', '#bPlay', '#bNextKey', '#bEnd', '#bUndo', '#bRedo']) {
+    const r = await p.evaluate(s => { const b = document.querySelector(s); return { svg: !!b.querySelector('svg'), txt: b.textContent.trim() }; }, id);
+    ok(r.svg && r.txt === '', id + ' is not a drawing: ' + JSON.stringify(r));
+  }
+  const a = await p.evaluate(() => document.querySelector('#bPlay').innerHTML);
+  await p.click('#bPlay'); await settle(p, 200);
+  const b = await p.evaluate(() => ({ h: document.querySelector('#bPlay').innerHTML, svg: !!document.querySelector('#bPlay svg') }));
+  ok(b.svg && b.h !== a, 'the play drawing did not change to pause');
+  await p.click('#bPlay'); await settle(p, 200);
+  ok(await p.evaluate(() => document.querySelector('#bPlay').innerHTML) === a, 'pause did not go back to play');
+  noErrors(p);
+});
+check('first run: the tour question names the gear button on the web page', async ({ open }) => {
+  const p = await open(); await settle(p, 400);
+  const t = await p.evaluate(() => document.querySelector('#mTourP').textContent);
+  ok(/gear button, top right/.test(t) && !/Help menu/.test(t), 'welcome text: ' + t);
   noErrors(p);
 });

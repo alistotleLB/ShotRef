@@ -116,7 +116,49 @@ function pref(k) {
 }
 let toastTimer;
 /* the toast always shows at the top centre (CSS), above dialogs, so it is never hidden by one */
-function toast(msg, ms = 2400) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), ms); }
+/* Three kinds of message. 'info' is the quiet default, 'ok' (green tick) says a save, export or copy finished, 'bad' (red edge) says
+   something failed or the user has to act: it stays 8 s or until clicked. Info and ok stay as long as they take to read; a longer ms from the caller wins. */
+function toast(msg, ms, kind = 'info') {
+  const t = $('#toast'), text = String(msg);
+  t.textContent = text; t.className = 'show' + (kind === 'ok' || kind === 'bad' ? ' ' + kind : '');
+  const read = Math.max(2400, 1000 + 60 * text.length);
+  const dur = kind === 'bad' ? Math.max(8000, ms || 0) : Math.max(read, ms || 0);
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), dur);
+}
+/* One tooltip for every button. A button's title is moved to data-tip (and kept as its accessible name), and #tip shows it at once on
+   hover and on keyboard focus: below the button, above it in the bottom 160 px of the window, and never past the left or right edge.
+   Inputs, dropdowns and labels keep their native title. */
+function tipify(el) {
+  if (el.tagName !== 'BUTTON' || !el.hasAttribute('title')) return;
+  const t = el.getAttribute('title'); el.removeAttribute('title');
+  if (!t) return;
+  el.setAttribute('data-tip', t);
+  if (el.hasAttribute('aria-label')) return;
+  if (el.textContent.trim()) el.setAttribute('aria-description', t); else el.setAttribute('aria-label', t);
+}
+function tipifyTree(root) { if (root.nodeType !== 1) return; tipify(root); root.querySelectorAll('button[title]').forEach(tipify); }
+let tipFor = null;
+function tipHide() { tipFor = null; const t = $('#tip'); if (t) t.classList.remove('show'); }
+function tipShow(btn) {
+  const text = btn.getAttribute('data-tip'), t = $('#tip'); if (!text) { tipHide(); return; }
+  tipFor = btn; t.textContent = text; t.classList.remove('show');
+  const r = btn.getBoundingClientRect(), w = t.offsetWidth, hh = t.offsetHeight, M = 6;
+  const above = r.bottom > window.innerHeight - 160;
+  t.style.top = Math.max(M, above ? r.top - 6 - hh : r.bottom + 6) + 'px';
+  t.style.left = Math.max(M, Math.min(r.left + r.width / 2 - w / 2, window.innerWidth - w - M)) + 'px';
+  t.classList.add('show');
+}
+const tipTarget = e => { const b = e.target && e.target.closest ? e.target.closest('[data-tip]') : null; return b && b.closest('#app') ? b : null; };
+function wireTips() {
+  const app = $('#app'); tipifyTree(app);
+  new MutationObserver(ms => { for (const m of ms) { if (m.type === 'attributes') tipify(m.target); else m.addedNodes.forEach(tipifyTree); } })
+    .observe(app, { subtree: true, childList: true, attributes: true, attributeFilter: ['title'] });
+  document.addEventListener('mouseover', e => { const b = tipTarget(e); if (b) { if (b !== tipFor) tipShow(b); } else if (tipFor) tipHide(); });
+  document.addEventListener('focusin', e => { const b = tipTarget(e); if (b && b.matches(':focus-visible')) tipShow(b); });
+  for (const ev of ['focusout', 'pointerdown', 'keydown', 'wheel', 'blur']) document.addEventListener(ev, tipHide, true);
+  window.addEventListener('resize', tipHide); document.documentElement.addEventListener('mouseleave', tipHide);
+}
+$('#toast').addEventListener('click', e => { clearTimeout(toastTimer); e.currentTarget.classList.remove('show'); });
 function b64ToBuf(b64) { const bin = atob(b64); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u.buffer; }
 function bufToB64(buf) { const u = new Uint8Array(buf); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); }
 /* text fields only: a focused dropdown, slider, checkbox or colour still lets shortcuts like Space work (U5) */
@@ -128,9 +170,9 @@ const SAVE_KINDS = { png: ['PNG image', ['png']], mp4: ['MP4 video', ['mp4']], w
 async function saveFile(filename, blob) {
   const k = SAVE_KINDS[(filename.split('.').pop() || '').toLowerCase()];
   const r = await platform.saveBlob(filename, blob, { filters: k ? [{ name: k[0], extensions: k[1] }] : [] });
-  if (r.ok) toast('Saved ' + (r.name || filename));
+  if (r.ok) toast('Saved ' + (r.name || filename), null, 'ok');
   else if (r.canceled) toast('Save cancelled');
-  else toast("Couldn't save the file. Try again.", 4000);
+  else toast("Couldn't save the file. Try again.", 4000, 'bad');
   return r;
 }
 
@@ -281,7 +323,7 @@ function nextName(label) {
 }
 function makeObject(type, pos, extra = {}) {
   const c = CATALOG[type];
-  return { id: uid(), type, name: nextName(c.label), color: c.color, opts: clone(c.opts || {}), base: { p: pos || [0, 0, 0], r: [0, 0, 0], s: [1, 1, 1] }, keys: [], visible: true, ...extra };
+  return { id: uid(), type, name: nextName(type === 'person' ? BODIES.man.label : c.label), color: c.color, opts: clone(c.opts || {}), base: { p: pos || [0, 0, 0], r: [0, 0, 0], s: [1, 1, 1] }, keys: [], visible: true, ...extra };
 }
 
 /* ---- keyframes & interpolation ---- */
@@ -528,7 +570,7 @@ function idbOpen() {
       /* version 2 adds the recent projects next to the photos and models; a version 1 database keeps everything it has */
       rq.onupgradeneeded = () => { try { const d = rq.result; if (!d.objectStoreNames.contains('assets')) d.createObjectStore('assets'); const ps = d.objectStoreNames.contains('projects') ? rq.transaction.objectStore('projects') : d.createObjectStore('projects', { keyPath: 'id' }); if (!ps.indexNames.contains('updated')) ps.createIndex('updated', 'updated'); } catch (e) { } };
       rq.onupgradeneeded = (orig => ev => { longer(); orig(ev); })(rq.onupgradeneeded);
-      rq.onblocked = () => { longer(); toast('Another ShotRef tab is still open. Close it so ShotRef can finish updating its storage. Your work is safe.', 8000); };
+      rq.onblocked = () => { longer(); toast('Another ShotRef tab is still open. Close it so ShotRef can finish updating its storage. Your work is safe.', 8000, 'bad'); };
       rq.onsuccess = () => {
         const db = rq.result;
         if (!db.objectStoreNames.contains('assets') || !db.objectStoreNames.contains('projects')) { try { db.close(); } catch (e) { } finish(null); return; }
@@ -579,7 +621,7 @@ function idbSync(ids) {
   }).then(ok => { if (!ok && ids.length && isQuota(idb.lastErr)) warnSize(); })); /* other failures: console only (C6) */
 }
 let sizeWarned = false;
-function warnSize() { if (autosaveOff) return; if (!sizeWarned) { sizeWarned = true; toast(sizeWarning(), 6000); } }
+function warnSize() { if (autosaveOff) return; if (!sizeWarned) { sizeWarned = true; toast(sizeWarning(), 6000, 'bad'); } }
 let autosaveReady = false; /* false until boot has fetched the stored assets: saving earlier would drop them */
 /* writes the localStorage part now; in IndexedDB mode also queues the asset write */
 let autosaveWaiting = false;
@@ -980,7 +1022,7 @@ const BUILD = {
       g.remove(ph); ph.geometry.dispose(); g.add(wrap);
       const v = views.get(o.id); if (v) { v.aimY = (bb2.max.y - bb2.min.y) * 0.6; v.pending = false; if (!groundMigrate.has(o.id)) groundDirty = true; } /* real bounds now: rest it (a new import) */
       editRev++; requestRender();
-    }).catch(err => { console.error(err); toast(err && err.friendly || 'Could not read that model file', 4500); });
+    }).catch(err => { console.error(err); toast(err && err.friendly || 'Could not read that model file', 4500, 'bad'); });
     return res;
   },
 };
@@ -1560,7 +1602,7 @@ function selBarButtons(list) {
       if (isSeated(o)) out.push(btn('stand', 'Stand up', () => standPerson(o)));
       else if (anySeat(o)) out.push(btn('sit', 'Sit on the nearest seat', () => {
         const q = getObj(o.id), s = q && nearestSeatFor(q); /* by id: undo replaces the objects a button was built with */
-        if (s) sitPerson(q, freeSeat(s.o, q)); else toast('No seat within ' + SIT_REACH + ' m of ' + o.name + '. Move them closer, or right-click a seat and choose Sit here.', 4000);
+        if (s) sitPerson(q, freeSeat(s.o, q)); else toast('No seat within ' + SIT_REACH + ' m of ' + o.name + '. Move them closer, or right-click a seat and choose Sit here.', 4000, 'bad');
       }));
     }
     else if (o.type !== 'mark') out.push(btn('path', o.type === 'car' ? 'Draw drive path' : 'Draw path', () => startPath(o.id)), btn('target', 'Aim camera at this', () => keepCameraOn(o)));
@@ -1756,7 +1798,7 @@ function ensurePlate() {
     plateTex = tex; plateURL = url; plateKey = key; plateBusy = null;
     $$('.plateImg').forEach(i => { i.src = url; });
     requestRender();
-  }).catch(() => { plateBusy = null; plateKey = key; requestRender(); toast('Could not read the location photo'); });
+  }).catch(() => { plateBusy = null; plateKey = key; requestRender(); toast('Could not read the location photo', null, 'bad'); });
 }
 function plateActive(style) {
   const pl = state.plate;
@@ -2058,7 +2100,7 @@ function peekCamFrame(s, t, rt) {
     withShotStyle(state.settings.style, () => rd.render(scene, renderCam)); /* no depth of field in the preview */
   } finally { applyAll(T); prepRenderCam(T); placeSun(); }
 }
-const FEELS = [['constant', 'Constant'], ['gentle', 'Gentle ease'], ['strong', 'Strong ease']];
+const FEELS = [['constant', 'Constant'], ['gentle', 'Gentle'], ['strong', 'Strong']];
 const PEEK_SRC = {
   /* arg: a MOVES kind. The move planned from the current framing, or from PEEK_FROM on the example when nothing would be in frame */
   move: {
@@ -2402,7 +2444,7 @@ function lockObjs(list, on) {
 }
 const isGroupSel = list => list.length > 1 && list.every(o => o.grp) && new Set(list.map(o => o.grp)).size === 1 && state.objects.filter(x => x.grp === list[0].grp).length === list.length;
 function groupSel() {
-  const list = selObjs(); if (list.length < 2) { toast('Select two or more things to group them'); return; }
+  const list = selObjs(); if (list.length < 2) { toast('Select two or more things to group them', null, 'bad'); return; }
   state.groups = state.groups || {};
   let n = 1; const names = new Set(Object.values(state.groups).map(g => g.name)); while (names.has('Group ' + n)) n++;
   const gid = 'g' + uid(); state.groups[gid] = { name: 'Group ' + n };
@@ -2661,7 +2703,7 @@ function skySection(adv) {
     return svg; };
   return sec('Sky',
     h('div', { class: 'lbl', style: 'width:auto;margin:2px 0 6px' }, 'Clouds'),
-    h('div', { class: 'pictiles skytiles' }, COVER.map(e => h('button', { class: nearest === e[0] ? 'on' : '', title: e[2], 'aria-label': e[2], onclick: () => setC({ cover: e[1] }) }, h('i', { class: 'csw tpic ' + e[0] }), h('span', null, e[0] === 'mostly' ? 'Cloudy' : e[2])))),
+    h('div', { class: 'pictiles skytiles' }, COVER.map(e => { const lab = e[0] === 'mostly' ? 'Cloudy' : e[0] === 'overcast' ? 'Full cover' : e[2]; return h('button', { class: nearest === e[0] ? 'on' : '', title: lab, 'aria-label': lab, onclick: () => setC({ cover: e[1] }) }, h('i', { class: 'csw tpic ' + e[0] }), h('span', null, lab)); })),
     cover ? h('hr', { class: 'div', style: 'margin:0 0 8px' }) : null,
     cover ? seg('Look', LOOKS, cl().look, k => setC({ look: k })) : null,
     cover ? seg('Drift', DRIFTS, cl().drift, k => setC({ drift: k })) : null,
@@ -2785,7 +2827,7 @@ function propsCamera(p) {
       selectRow('Aspect', ASPECTS.map(a => [a[0], a[2]]), () => s.aspect, v => { s.aspect = v; changed(true, true); syncTopUI(); }),
       selectRow('Size', SIZES, () => String(s.size), v => { s.size = +v; changed(true); }),
       selectRow('Guides', [['thirds', 'Rule of thirds'], ['center', 'Centre cross'], ['safe', 'Safe areas'], ['none', 'None']], () => s.guides, v => { s.guides = v; drawGuides(); changed(true); }),
-      selectRow('View style', STYLES.map(x => [x[0], x[1]]), () => s.style, v => { s.style = v; changed(true); syncTopUI(); })));
+      selectRow('Render style', STYLES.map(x => [x[0], x[1]]), () => s.style, v => { s.style = v; changed(true); syncTopUI(); })));
     if (!simple) p.append(sec('Placement',
       vecRow('Position', () => camState.p, (v, cm) => writeCam({ p: v }, cm), { step: 0.02 }),
       c.lookAtId ? null : vecRow('Aims at', () => camState.tg, (v, cm) => writeCam({ tg: v }, cm), { step: 0.02 })));
@@ -3064,7 +3106,7 @@ function selKeysTarget() {
 }
 function addKeySel() {
   const id = selKeysTarget();
-  if (!id) { toast('Select something first (or switch to Camera view to key the camera)'); return; }
+  if (!id) { toast('Select something first (or switch to Camera view to key the camera)', null, 'bad'); return; }
   if (id === 'camera') { const cur = clone(evalCamRaw(T)); setKey(state.camera.keys, T, cur); }
   else { const o = getObj(id); setKey(o.keys, T, clone(evalLocal(o, T))); } /* keys are stored relative to the parent */
   changed(true, true); toast('◆ Key added at ' + fmtTime(snapT(T)));
@@ -3082,7 +3124,7 @@ function removeKeySel() {
   const id = selKeysTarget(); if (!id) return;
   const keys = id === 'camera' ? state.camera.keys : getObj(id).keys;
   const i = keyIndexAt(keys, T);
-  if (i < 0) { toast('No key at the playhead'); return; }
+  if (i < 0) { toast('No key at the playhead', null, 'bad'); return; }
   removeKey(id, i);
 }
 function jumpKey(dir) {
@@ -3093,9 +3135,11 @@ function jumpKey(dir) {
   times = [...new Set(times)].sort((a, b) => a - b);
   const eps = 0.5 / state.settings.fps;
   const t = dir > 0 ? times.find(x => x > T + eps) : [...times].reverse().find(x => x < T - eps);
-  if (t != null) setTime(t); else toast(dir > 0 ? 'No later key' : 'No earlier key');
+  if (t != null) setTime(t); else toast(dir > 0 ? 'No later key' : 'No earlier key', null, 'bad');
 }
-function setPlaying(v) { playing = v; $('#bPlay').textContent = v ? '❚❚' : '▶'; $('#bPlay').classList.toggle('on', v); if (!v) propsDirty = true; }
+const PLAY_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path class="fl" d="M7 4.5l12 7.5-12 7.5z"/></svg>';
+const PAUSE_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 5v14M15.5 5v14"/></svg>';
+function setPlaying(v) { playing = v; $('#bPlay').innerHTML = v ? PAUSE_SVG : PLAY_SVG; $('#bPlay').classList.toggle('on', v); if (!v) propsDirty = true; }
 
 const labelEls = new Map();
 function updateLabels() {
@@ -3330,7 +3374,7 @@ function focusLensAt(pt, name) {
   prepRenderCam(T);
   const fwd = new THREE.Vector3(); renderCam.getWorldDirection(fwd);
   const d = pt.clone().sub(renderCam.position).dot(fwd);
-  if (d < 0.1) { toast(name + ' is behind the camera'); return; }
+  if (d < 0.1) { toast(name + ' is behind the camera', null, 'bad'); return; }
   const dof = ensureDof(), wasOff = !dof.on, keyed = state.camera.keys.length > 0;
   dof.on = true; dof.auto = false;
   writeCam({ fd: d }, true); propsDirty = true; focusPicks++;
@@ -3607,11 +3651,11 @@ function cancelPath() { pathMode = null; hideModeBar(); canvas.style.cursor = ''
 function finishPath() {
   const pm = pathMode; if (!pm) return; cancelPath();
   const o = getObj(pm.id); if (!o) return;
-  if (pm.pts.length < 2) { toast('Click at least one point on the floor'); return; }
+  if (pm.pts.length < 2) { toast('Click at least one point on the floor', null, 'bad'); return; }
   const cum = [0]; for (let i = 1; i < pm.pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pm.pts[i][0] - pm.pts[i - 1][0], pm.pts[i][1] - pm.pts[i - 1][1]));
   const total = cum[cum.length - 1], t0 = snapT(T);
   let speed = pathSpeedOf(o);
-  if (pathFit) { const avail = lastT() - t0; if (avail < 0.3) { toast('Move the playhead earlier so there is time to walk'); return; } speed = total / avail; }
+  if (pathFit) { const avail = lastT() - t0; if (avail < 0.3) { toast('Move the playhead earlier so there is time to walk', null, 'bad'); return; } speed = total / avail; }
   const cur = clone(evalObj(o, t0)), eps = 0.5 / state.settings.fps;
   o.keys = o.keys.filter(k => k.t < t0 - eps);
   pm.pts.forEach((pt, i) => { const tk = t0 + cum[i] / speed, l = toLocalPose(o, { p: [r4(pt[0]), pm.y, r4(pt[1])], r: cur.r, s: cur.s }, tk); setKey(o.keys, tk, { p: l.p.map(r4), r: l.r.map(r4), s: l.s }); });
@@ -3619,7 +3663,7 @@ function finishPath() {
   o.opts.faceTravel = true;
   const dur = total / speed;
   changed(true, true);
-  toast(`Path set: ${total.toFixed(1)} m in ${dur.toFixed(1)} s` + (t0 + dur > lastT() + 0.01 ? '. It runs past the end of the shot. Raise the speed or tick "Fit path to shot length".' : ''), MODE_TIP_MS);
+  toast(`Path set: ${total.toFixed(1)} m in ${dur.toFixed(1)} s` + (t0 + dur > lastT() + 0.01 ? '. It runs past the end of the shot. Raise the speed or tick "Fit path to shot length".' : ''), MODE_TIP_MS, (t0 + dur > lastT() + 0.01 ? 'bad' : 'info'));
 }
 
 /* ---- marks & facing ---- */
@@ -3631,7 +3675,7 @@ function nextMarkLetter() {
 function walkToMark(o, markId, arrive) {
   const m = getObj(markId); if (!m) return;
   const t0 = snapT(T), tA = snapT(arrive), eps = 0.5 / state.settings.fps;
-  if (!(tA > t0 + eps)) { toast('The arrival time must be after the playhead (' + t0.toFixed(2) + ' s)'); return; }
+  if (!(tA > t0 + eps)) { toast('The arrival time must be after the playhead (' + t0.toFixed(2) + ' s)', null, 'bad'); return; }
   const cur = clone(evalObj(o, t0)), mp = evalObj(m, t0).p;
   o.keys = o.keys.filter(k => k.t < t0 - eps || k.t > tA + eps);
   const loc = (tr, tt) => { const l = toLocalPose(o, tr, tt); return { p: l.p.map(r4), r: l.r.map(r4), s: l.s }; };
@@ -3748,7 +3792,7 @@ function attachTo(o, pid) {
 function attachObj(o, pid) {
   o = getObj(o.id); if (!o) return;
   const par = pid ? getObj(pid) : null, old = parentOf(o);
-  if (!attachTo(o, pid)) { toast("Can't attach " + o.name + ' to ' + (par ? par.name : 'that') + ': it would ride on itself'); return; }
+  if (!attachTo(o, pid)) { toast("Can't attach " + o.name + ' to ' + (par ? par.name : 'that') + ': it would ride on itself', null, 'bad'); return; }
   changed(true, true); toast(par ? o.name + ' now moves with ' + par.name : o.name + ' no longer moves with ' + (old ? old.name : 'it'));
 }
 /* the item itself and everything that rides on it, as ids */
@@ -3843,7 +3887,7 @@ function migrateGround() {
     groundMigrate.delete(id);
     if ((o.keys.length ? o.keys : [o.base]).some(k => Math.abs(groundYFor(o, v, k) - k.p[1]) > 2e-3)) { o.opts.free = true; n++; }
   }
-  if (n) { hist[hi] = snapshot(); autosave(); uiDirty = true; propsDirty = true; toast(n === 1 ? 'A raised item was set to "Can float", so it stays where it is.' : n + ' raised items were set to "Can float", so they stay where they are.', 4500); }
+  if (n) { hist[hi] = snapshot(); autosave(); uiDirty = true; propsDirty = true; if (!floatQuiet) toast(n === 1 ? 'A raised item was set to "Can float", so it stays where it is.' : n + ' raised items were set to "Can float", so they stay where they are.', 4500); }
 }
 function settleGround() {
   groundDirty = false;
@@ -3919,7 +3963,7 @@ function planShot(kind, pid) {
   return { o, p: p.toArray(), tg: tg.toArray() };
 }
 function frameShot(kind, pid) {
-  const r = planShot(kind, pid); if (r.err) { toast(r.err); return; }
+  const r = planShot(kind, pid); if (r.err) { toast(r.err, null, 'bad'); return; }
   const o = r.o;
   writeCam({ p: r.p, tg: r.tg }, true);
   propsDirty = true;
@@ -3956,7 +4000,7 @@ function recSample() {
 function cancelRecord() { rec = null; pilotActive = false; setPlaying(false); hideModeBar(); $('#countdown').textContent = ''; toast('Recording cancelled'); }
 function finishRecord() {
   const r = rec; rec = null; pilotActive = false; setPlaying(false); hideModeBar(); $('#countdown').textContent = '';
-  const S = r.samples; if (S.length < 4) { toast('Recording too short'); return; }
+  const S = r.samples; if (S.length < 4) { toast('Recording too short', null, 'bad'); return; }
   const W = 4, sm = S.map((x, i) => {
     const o = { t: x.t, p: [0, 0, 0], tg: [0, 0, 0], f: 0 }; let n = 0;
     for (let j = Math.max(0, i - W); j <= Math.min(S.length - 1, i + W); j++) { for (let k = 0; k < 3; k++) { o.p[k] += S[j].p[k]; o.tg[k] += S[j].tg[k]; } o.f += S[j].f; n++; }
@@ -4035,7 +4079,7 @@ function finishFocusPick(rc) {
   const targets = [...views.values()].filter(v => v.group.visible).map(v => v.group);
   if (state.settings.groundOn) targets.push(ground);
   const hit = rc.intersectObjects(targets, true)[0];
-  if (!hit) { toast('Nothing there to focus on'); return; }
+  if (!hit) { toast('Nothing there to focus on', null, 'bad'); return; }
   const fwd = new THREE.Vector3(); renderCam.getWorldDirection(fwd);
   const d = hit.point.clone().sub(renderCam.position).dot(fwd);
   ensureDof().auto = false;
@@ -4096,7 +4140,7 @@ function deleteSel() {
   const all = targetObjs(); if (!all.length) return;
   /* locked items are never deleted by accident: unlock them first */
   const list = all.filter(o => !o.locked), kept = all.length - list.length;
-  if (!list.length) { toast((all.length === 1 ? all[0].name + ' is locked' : 'Those are locked') + '. Unlock ' + (all.length === 1 ? 'it' : 'them') + ' first (Ctrl+L).', 3500); return; }
+  if (!list.length) { toast((all.length === 1 ? all[0].name + ' is locked' : 'Those are locked') + '. Unlock ' + (all.length === 1 ? 'it' : 'them') + ' first (Ctrl+L).', 3500, 'bad'); return; }
   const gone = new Set(list.map(o => o.id));
   /* every shot's camera that rides on or looks at a deleted item keeps its place in the world (the live one and the saved copies of the other shots) */
   keepCamerasPut(gone);
@@ -4111,7 +4155,7 @@ function duplicateSel() {
   const src = targetObjs(); if (!src.length) return;
   const off = [0.8, 0, 0.4], gmap = {}, made = [], idMap = new Map(src.map(o => [o.id, uid()]));
   for (const o of src) {
-    const c = clone(o); c.id = idMap.get(o.id); if ('locked' in c) c.locked = false; c.name = nextName(catalogOf(o.type).label);
+    const c = clone(o); c.id = idMap.get(o.id); if ('locked' in c) c.locked = false; c.name = nextName(o.type === 'person' ? BODIES[bodyOf(o)].label : catalogOf(o.type).label);
     /* a copy of something that rides on a copied parent rides on the copy, and is not nudged again; a seat on a copied car is the copied car */
     const rides = !!(o.parent && idMap.has(o.parent)); if (rides) c.parent = idMap.get(o.parent);
     if (c.opts.seated && idMap.has(c.opts.seated)) c.opts.seated = idMap.get(c.opts.seated);
@@ -4225,7 +4269,9 @@ function buildState(fill) {
 }
 /* The one way to swap the whole scene. Keeps undo (pushes a step) and keeps old files in memory so undo can rebuild them.
    On any error the previous scene is put back and the error is rethrown. */
-function replaceProject(newState, newAssets = {}, label) {
+let floatQuiet = false; /* a starter set or New project made these items itself: no "Can float" message for them */
+function replaceProject(newState, newAssets = {}, label, quiet = false) {
+  floatQuiet = quiet;
   if (tourHandle) { try { tourHandle.end('external'); } catch (e) { console.error('ShotRef: the tour did not end cleanly', e); } } /* a quick tour is looking at the scene being swapped; the hands-on one also leaves practice here */
   if (practicing) endPracticeFirst(() => {}); /* every caller asks first; this keeps a missed one from mixing the two scenes */
   recentFlush(); /* the project being left, if it has edits the list does not have */
@@ -4238,7 +4284,7 @@ function replaceProject(newState, newAssets = {}, label) {
     platform.startDoc(); /* Open, New and starters are a new document: Save must not reuse the previous file */
     restore(snapshot()); pushHistory(); frameEditorSoon();
     snapHold = false; if (snapLive > snapPruneAt) pruneSnapPool();
-    if (label) toast(label);
+    if (label) toast(label, null, 'ok');
   } catch (e) {
     snapHold = false;
     state = prev.state; assets = prev.assets; selected = prev.selected; selIds = prev.selIds; setTime(prev.T); hist = prev.hist; histDoc = prev.histDoc; platform.restoreDoc(prev.doc); hi = prev.hi;
@@ -4249,7 +4295,7 @@ function replaceProject(newState, newAssets = {}, label) {
 function loadStarter(kind) {
   let sel = null;
   const built = buildState(() => fillStarter(kind, id => { sel = id; }));
-  replaceProject(built, {}, (STARTERS.find(x => x[0] === kind) || [, kind])[1] + ' ready');
+  replaceProject(built, {}, (STARTERS.find(x => x[0] === kind) || [, kind])[1] + ' ready', true);
   platform.newProject();
   if (sel) { select(sel); }
 }
@@ -4257,7 +4303,11 @@ function fillStarter(kind, selectId) {
   const L = snapT(lastT());
   const add = (type, pos, mod = {}) => {
     const o = makeObject(type, pos);
-    if (type === 'person') o.color = SHIRTS[persons().length % SHIRTS.length];
+    if (type === 'person') {
+      o.color = SHIRTS[persons().length % SHIRTS.length];
+      if (mod.opts && mod.opts.height) { const b = BODIES.woman; Object.assign(o.opts, { body: 'woman', pants: b.pants, skin: b.skin }); }
+      o.name = nextName(BODIES[bodyOf({ opts: mod.opts && mod.opts.height ? { body: 'woman' } : {} })].label);
+    }
     if (type === 'mark') { o.opts.letter = nextMarkLetter(); o.name = 'Mark ' + o.opts.letter; }
     if (mod.r) o.base.r = mod.r; if (mod.s) o.base.s = mod.s; if (mod.color) o.color = mod.color;
     if (mod.opts) Object.assign(o.opts, mod.opts);
@@ -4319,7 +4369,7 @@ function fillStarter(kind, selectId) {
   }
 }
 function newProject(skipConfirm) {
-  const go = () => replaceProject(buildState(seedScene), {}, 'New project');
+  const go = () => replaceProject(buildState(seedScene), {}, 'New project', true);
   if (skipConfirm) go(); else confirmBox('Start a new project?', 'The current scene will be cleared. You can undo this with Ctrl+Z.', go, 'New project');
 }
 function seedScene() {
@@ -4420,9 +4470,9 @@ function projectText() {
 async function doSaveProject(saveAs) {
   const data = projectText();
   const r = await platform.saveProject(data, { saveAs: saveAs === true, name: `${projectSlug() || 'shotref'}-${stamp()}.shotref` });
-  if (r.ok) { toast('Saved ' + (r.name || 'project')); autosave(); saveRecentNow(); } /* the autosave records that nothing is unsaved now */
+  if (r.ok) { toast('Saved ' + (r.name || 'project'), null, 'ok'); autosave(); saveRecentNow(); } /* the autosave records that nothing is unsaved now */
   else if (r.canceled) toast('Save cancelled');
-  else toast("Couldn't save the project. Your changes are still here, so try again.", 5000);
+  else toast("Couldn't save the project. Your changes are still here, so try again.", 5000, 'bad');
   return r;
 }
 /* allowed values for list-type settings: a file with anything else gets the default (I1) */
@@ -4437,13 +4487,13 @@ const BAD_FILE = "This isn't a ShotRef project, or the file is damaged.";
 let launchFile = false; /* a file came from the desktop shell (launch, double-click, Recent): the starter sets must not open over it */
 function loadProjectText(txt, file, fromShell = false, unsaved = false) {
   if (practicing) return endPracticeFirst(() => loadProjectText(txt, file, fromShell, unsaved)); /* Open, Recent, a dropped file, a file from Windows */
-  if (exporting) { toast('Wait for the export to finish.'); return; }
+  if (exporting) { toast('Wait for the export to finish.', null, 'bad'); return; }
   let d;
   try { d = normalizeProject(JSON.parse(txt), projectDefaults()); }
-  catch (e) { console.error('ShotRef: could not read the project file', e); toast(BAD_FILE, 4000); return; }
+  catch (e) { console.error('ShotRef: could not read the project file', e); toast(BAD_FILE, 4000, 'bad'); return; }
   const go = () => {
     try { replaceProject(d.state, d.assets, 'Project opened'); platform.setCurrent(file && file.name, file && file.path); if (unsaved) platform.setDirty(true); }
-    catch (e) { console.error('ShotRef: could not open the project', e); toast(BAD_FILE, 4000); }
+    catch (e) { console.error('ShotRef: could not open the project', e); toast(BAD_FILE, 4000, 'bad'); }
   };
   if (platform.kind === 'desktop' && platform.isDirty()) guardUnsaved(go);
   else if (!fromShell && (state.objects.length || state.plate)) confirmBox('Open this file?', 'It will replace the current scene. You can undo this with Ctrl+Z.', go, 'Open file');
@@ -4458,17 +4508,17 @@ async function pickImport(sel, handler, filters) {
 }
 async function importModel(file) {
   const buf = await readFile(file, 'buf');
-  if (/\.gltf$/i.test(file.name)) { const txt = new TextDecoder().decode(buf); if (/"uri"\s*:\s*"(?!data:)/.test(txt)) { toast('This .gltf uses separate files. Please export it as a single .glb.', 4000); return; } }
+  if (/\.gltf$/i.test(file.name)) { const txt = new TextDecoder().decode(buf); if (/"uri"\s*:\s*"(?!data:)/.test(txt)) { toast('This .gltf uses separate files. Please export it as a single .glb.', 4000, 'bad'); return; } }
   const id = uid(); assets[id] = { kind: 'model', name: file.name, b64: bufToB64(buf), mime: 'model/gltf-binary' };
   const o = addObject('model', { asset: id }, true);
   o.name = nextName(file.name.replace(/\.(glb|gltf)$/i, '')); changed(false, true); autosave(); if (placing === o.id) startPlacing(o.id);
 }
 async function importPlate(file) {
-  if (file.type && !/^image\//.test(file.type)) { toast('Please pick an image file (JPG, PNG or WebP)'); return; }
+  if (file.type && !/^image\//.test(file.type)) { toast('Please pick an image file (JPG, PNG or WebP)', null, 'bad'); return; }
   toast('Loading photo…', 8000);
   let c;
   try { c = await decodeToCanvas(file, 2560); }
-  catch (e) { toast('Could not read that image. Try a JPG or PNG.', 4500); return; }
+  catch (e) { toast('Could not read that image. Try a JPG or PNG.', 4500, 'bad'); return; }
   const dataURL = c.toDataURL('image/jpeg', 0.9), b64 = dataURL.slice(dataURL.indexOf(',') + 1);
   const ia = c.width / c.height;
   const id = uid(); assets[id] = { kind: 'plate', name: file.name, b64, mime: 'image/jpeg', aspect: r4(ia) };
@@ -4498,12 +4548,12 @@ function plateSection() {
 }
 const NOT_IMAGE = "That file isn't an image. Use a JPG, PNG or WebP.";
 async function importImage(file) {
-  if (file.type && !/^image\//.test(file.type)) { toast(NOT_IMAGE, 4500); return; }
+  if (file.type && !/^image\//.test(file.type)) { toast(NOT_IMAGE, 4500, 'bad'); return; }
   const buf = await readFile(file, 'buf');
   const b64 = bufToB64(buf), mime = file.type || 'image/png';
   const img = new Image();
   await new Promise(r => { img.onload = r; img.onerror = r; img.src = 'data:' + mime + ';base64,' + b64; });
-  if (!img.naturalWidth || !img.naturalHeight) { toast(NOT_IMAGE, 4500); return; }
+  if (!img.naturalWidth || !img.naturalHeight) { toast(NOT_IMAGE, 4500, 'bad'); return; }
   const aspect = img.naturalWidth && img.naturalHeight ? img.naturalWidth / img.naturalHeight : 1.5;
   const id = uid(); assets[id] = { kind: 'image', name: file.name, b64, mime };
   const o = addObject('image', { asset: id }, true);
@@ -4562,7 +4612,7 @@ function newShot(dup) {
 function deleteShot(id) {
   if (exporting || rec) return;
   ensureShots(); id = realShotId(id);
-  if (state.shots.length < 2) { toast('A project needs at least one shot'); return; }
+  if (state.shots.length < 2) { toast('A project needs at least one shot', null, 'bad'); return; }
   const i = state.shots.findIndex(s => s.id === id); if (i < 0) return;
   const name = state.shots[i].name;
   if (id === state.shotId) { state.shots.splice(i, 1); loadShot(state.shots[Math.max(0, i - 1)]); }
@@ -4742,9 +4792,9 @@ function promptText() {
 }
 const currentPrompt = () => promptEdit != null ? promptEdit : promptText();
 async function copyPromptText(text, box) {
-  try { await navigator.clipboard.writeText(text); toast('Prompt copied. Paste it next to the reference clip.'); return; } catch (e) { }
-  if (box) { box.focus(); box.select(); try { if (document.execCommand('copy')) { toast('Prompt copied'); return; } } catch (e) { } }
-  toast('Select the text and press Ctrl+C to copy it', 4000);
+  try { await navigator.clipboard.writeText(text); toast('Prompt copied. Paste it next to the reference clip.', null, 'ok'); return; } catch (e) { }
+  if (box) { box.focus(); box.select(); try { if (document.execCommand('copy')) { toast('Prompt copied', null, 'ok'); return; } } catch (e) { } }
+  toast('Select the text and press Ctrl+C to copy it', 4000, 'bad');
 }
 
 /* ============================== export panel ============================== */
@@ -4815,7 +4865,7 @@ async function whileLocked(fn) {
 }
 /* the first, middle and last frame as PNG plus the prompt, in one zip */
 async function exportFramePack() {
-  if (exporting) { toast('Wait for the export to finish.'); return false; }
+  if (exporting) { toast('Wait for the export to finish.', null, 'bad'); return false; }
   const r = await whileLocked(buildFramePack);
   if (!r) return false;
   await saveFile(r.name, r.blob);
@@ -4832,7 +4882,7 @@ async function buildFramePack() {
       if (!blob) throw new Error('no frame');
       files.push({ name: `${base}-${label}.png`, data: new Uint8Array(await blob.arrayBuffer()) });
     }
-  } catch (e) { console.error(e); applyAll(T); requestRender(); toast('Could not make that frame. Try a smaller export size.', 4000); return false; }
+  } catch (e) { console.error(e); applyAll(T); requestRender(); toast('Could not make that frame. Try a smaller export size.', 4000, 'bad'); return false; }
   applyAll(T); requestRender();
   files.push({ name: base + '-prompt.txt', data: new TextEncoder().encode(currentPrompt() + '\n') });
   return { name: base + '-frames.zip', blob: zipStore(files) };
@@ -4840,7 +4890,7 @@ async function buildFramePack() {
 /* one PNG with the first and last frame of every shot, its name, length, size and move */
 let sheetBlob = null;
 async function makeContactSheet() {
-  if (exporting) { toast('Wait for the export to finish.'); return; }
+  if (exporting) { toast('Wait for the export to finish.', null, 'bad'); return; }
   const url = await whileLocked(buildContactSheet);
   if (url) { $('#toast').classList.remove('show'); $('#sheetImg').src = url; openModal('mSheet'); }
 }
@@ -4859,7 +4909,7 @@ async function buildContactSheet() {
       rows.push({ name: s.name, dur: s.duration, move, size, a: grab(0), b: grab(lastT()) });
       await new Promise(res => setTimeout(res, 0));
     }
-  } catch (e) { console.error(e); toast('Could not make the contact sheet. Try a smaller export size.', 4000); rows.length = 0; }
+  } catch (e) { console.error(e); toast('Could not make the contact sheet. Try a smaller export size.', 4000, 'bad'); rows.length = 0; }
   loadShot(state.shots.find(s => s.id === keepId) || state.shots[0]); setTime(keepT); applyAll(T); requestRender(); syncTopUI();
   if (!rows.length) return null;
   const W = pad * 3 + cw * 2 + 260, H = top + pad + rows.length * (ch + cap + pad), c = document.createElement('canvas'); c.width = W; c.height = H;
@@ -4946,7 +4996,7 @@ function switchTake(id) {
   if (exporting || rec || id === '_') return false;
   ensureTakes(); if (id === state.takeId) return false;
   const t = state.takes.find(x => x.id === id); if (!t || !takeReadable(t)) return false;
-  let ns; try { ns = takeState(t.snap); } catch (e) { console.error('ShotRef: could not open the take', e); toast("That take couldn't be opened."); return false; }
+  let ns; try { ns = takeState(t.snap); } catch (e) { console.error('ShotRef: could not open the take', e); toast("That take couldn't be opened.", null, 'bad'); return false; }
   const from = activeTake(), text = takeSceneJSON();
   from.snap = text; t.snap = null; state.takeId = id;
   loadScene(ns); pushHistory(); syncTopUI();
@@ -4971,13 +5021,13 @@ function newTake(go) {
 function deleteTake(id) {
   if (exporting || rec) return;
   ensureTakes();
-  if (state.takes.length < 2) { toast('There is only one take'); return; }
+  if (state.takes.length < 2) { toast('There is only one take', null, 'bad'); return; }
   const i = state.takes.findIndex(t => t.id === id); if (i < 0) return;
   const t = state.takes[i];
   if (id === state.takeId) {
     const near = state.takes.filter(x => x !== t && takeReadable(x)).sort((x, y) => Math.abs(state.takes.indexOf(x) - i) - Math.abs(state.takes.indexOf(y) - i)), next = near[0];
-    if (!next) { toast("The other takes can't be opened, so nothing was deleted."); return; }
-    let ns; try { ns = takeState(next.snap); } catch (e) { console.error('ShotRef: could not open the take', e); toast("The other take couldn't be opened, so nothing was deleted."); return; }
+    if (!next) { toast("The other takes can't be opened, so nothing was deleted.", null, 'bad'); return; }
+    let ns; try { ns = takeState(next.snap); } catch (e) { console.error('ShotRef: could not open the take', e); toast("The other take couldn't be opened, so nothing was deleted.", null, 'bad'); return; }
     state.takes = state.takes.filter(x => x !== t); next.snap = null; state.takeId = next.id;
     loadScene(ns);
   } else state.takes = state.takes.filter(x => x !== t);
@@ -5015,9 +5065,9 @@ let cmp = null, cmpBusy = false, cmpStop = false, swapping = false; /* swapping:
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 function openCompare() {
   if (practicing) return endPracticeFirst(openCompare);
-  if (exporting) { toast('Wait for the export to finish.'); return; }
+  if (exporting) { toast('Wait for the export to finish.', null, 'bad'); return; }
   const ok2 = hasTakes() ? state.takes.filter(takeReadable) : [];
-  if (ok2.length < 2) { toast('Make a second take first: Take menu → New take'); return; }
+  if (ok2.length < 2) { toast('Make a second take first: Take menu → New take', null, 'bad'); return; }
   for (const sel of [$('#cmpA'), $('#cmpB')]) { sel.innerHTML = ''; for (const t of ok2) sel.append(h('option', { value: t.id }, t.name)); }
   $('#cmpA').value = state.takeId; $('#cmpB').value = ok2.find(t => t.id !== state.takeId).id;
   $('#cmpView').hidden = true; $('#cmpMsg').textContent = ''; cmp = null;
@@ -5123,7 +5173,7 @@ const outName = (...parts) => nameFrom([shotName(), ...parts]);
 const stamp = () => { const d = new Date(); const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`; };
 async function exportPNG(t, label) {
   if (practicing) return endPracticeFirst(() => exportPNG(t, label));
-  if (exporting) { toast('Wait for the export to finish.'); return false; }
+  if (exporting) { toast('Wait for the export to finish.', null, 'bad'); return false; }
   const { w, h: hh } = exportSize();
   let blob = null;
   try {
@@ -5132,7 +5182,7 @@ async function exportPNG(t, label) {
     blob = await canvasBlob(r.domElement);
   } catch (e) { console.error(e); }
   applyAll(T);
-  if (!blob) { toast('Could not make that frame. Try a smaller export size.', 4000); return false; }
+  if (!blob) { toast('Could not make that frame. Try a smaller export size.', 4000, 'bad'); return false; }
   const fr = Math.round(t * state.settings.fps) + 1;
   await saveFile(outName(label || 'frame' + String(fr).padStart(4, '0'), state.settings.style) + '.png', blob);
   return true;
@@ -5146,10 +5196,10 @@ function renderFrameBlob(t) {
   return p;
 }
 function copyFrame() {
-  if (exporting) { toast('Wait for the export to finish.'); return; }
+  if (exporting) { toast('Wait for the export to finish.', null, 'bad'); return; }
   setPlaying(false);
   let blobP;
-  try { blobP = renderFrameBlob(T); } catch (e) { toast('Could not render the frame'); return; }
+  try { blobP = renderFrameBlob(T); } catch (e) { toast('Could not render the frame', null, 'bad'); return; }
   // ClipboardItem is created synchronously inside the click so the browser keeps the user gesture
   let writeP;
   try {
@@ -5158,9 +5208,9 @@ function copyFrame() {
   } catch (e) { writeP = Promise.reject(e); }
   writeP.then(() => {
     const { w, h: hh } = exportSize();
-    toast(`Frame copied (${w}×${hh}, ${(STYLES.find(x => x[0] === state.settings.style) || STYLES[0])[1]}). Paste it anywhere with Ctrl+V.`, 3500);
+    toast(`Frame copied (${w}×${hh}, ${(STYLES.find(x => x[0] === state.settings.style) || STYLES[0])[1]}). Paste it anywhere with Ctrl+V.`, 3500, 'ok');
   }).catch(async () => {
-    const blob = await blobP; if (!blob) { toast('Could not copy the frame'); return; }
+    const blob = await blobP; if (!blob) { toast('Could not copy the frame', null, 'bad'); return; }
     const url = await new Promise(res => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(blob); });
     $('#copyImg').src = url; copyBlob = blob; openModal('mCopy');
   });
@@ -5248,7 +5298,7 @@ async function exportVideo(opts = {}) {
   } catch (e) {
     console.error(e);
     const msg = e && e.plain ? e.message : e && e.mp4 ? "Your PC couldn't make an MP4 at this size. Try 1280 px, or use Frame pack (zip)." : 'The export stopped because of an error. Try again, or try a smaller size.';
-    toast(msg, 6000); exProgress(0, msg);
+    toast(msg, 6000, 'bad'); exProgress(0, msg);
   } finally {
     if (vf) { try { vf.close(); } catch (e) { } }
     if (enc && enc.state !== 'closed') { try { enc.close(); } catch (e) { } }
@@ -5347,8 +5397,8 @@ function endPracticeFirst(go) {
 let tourHandle = null;
 /* Runs a list of stops (see src/tour.js for the stop shape). Returns null, with a toast, while an export runs or a dialog is open. */
 function runStops(stops, opts = {}) {
-  if (exporting) { toast('Wait for the export to finish.'); return null; }
-  if (openModals().length) { toast('Close the open window first.'); return null; }
+  if (exporting) { toast('Wait for the export to finish.', null, 'bad'); return null; }
+  if (openModals().length) { toast('Close the open window first.', null, 'bad'); return null; }
   const { onEnd, canKey, ui, interactive } = opts;
   /* Esc goes to the app first when it has something to cancel */
   const appCanEsc = e => e.key === 'Escape' && (openModals().length > 0 || menuOpen() || !!rec || !!placing || !!pathMode || focusPick || (canKey ? canKey(e) : false));
@@ -5417,9 +5467,9 @@ const tourRefusal = () => exporting ? 'Wait for the export to finish.' : openMod
 function startTour(kind, opts = {}) {
   const firstRun = !!opts.firstRun;
   /* a tour is already running: leave it exactly as it is */
-  if (tourActive() || practicing) { toast(TOUR_COPY.ui.busy); if (firstRun) openStarters(true); return null; }
+  if (tourActive() || practicing) { toast(TOUR_COPY.ui.busy, null, 'bad'); if (firstRun) openStarters(true); return null; }
   if (kind === 'hands') {
-    if (!enterPractice()) { toast(tourRefusal()); if (firstRun) openStarters(true); return null; }
+    if (!enterPractice()) { toast(tourRefusal(), null, 'bad'); if (firstRun) openStarters(true); return null; }
     const tab = getPref('leftTab', undefined); /* the tour's Add and Scene steps save the remembered tab: put it back */
     const handle = runStops(handsStops(), {
       ui: TOUR_COPY.ui, interactive: true,
@@ -5457,7 +5507,7 @@ function tourFromDialog(modalId, kind, firstRun) {
 }
 function wireTourDialogs() {
   const W = TOUR_COPY.welcome, H = TOUR_COPY.helpPage;
-  $('#mTourT').textContent = W.title; $('#mTourP').textContent = W.body;
+  $('#mTourT').textContent = W.title;
   $('#tourQuick').textContent = W.quick; $('#tourHands').textContent = W.hands; $('#tourNo').textContent = W.notNow;
   $('#tourQuick').onclick = () => tourFromDialog('mTour', 'basic', true);
   $('#tourHands').onclick = () => tourFromDialog('mTour', 'hands', true);
@@ -5471,7 +5521,8 @@ function wireTourDialogs() {
 function applyHandsTourSwitch() {
   const on = handsTourOn(), W = TOUR_COPY.welcome;
   $('#tourHands').hidden = !on; $('#helpTourHands').hidden = !on;
-  $('#mTourP').textContent = on ? W.body : W.bodySolo;
+  const desk = platform.kind === 'desktop';
+  $('#mTourP').textContent = on ? (desk ? W.body : W.bodyWeb) : (desk ? W.bodySolo : W.bodySoloWeb);
 }
 function setHandsTour(on) { setPref('handsTour', !!on); applyHandsTourSwitch(); }
 
@@ -5529,14 +5580,14 @@ function confirmBox(title, text, cb, okLabel = 'OK', alt = null) {
 /* the one way to pick a project to open: native dialog on desktop, the file picker on the web */
 async function openDialog() {
   if (practicing) return endPracticeFirst(openDialog);
-  if (exporting) { toast('Wait for the export to finish.'); return; }
+  if (exporting) { toast('Wait for the export to finish.', null, 'bad'); return; }
   const f = await platform.openProject($('#fOpen'));
   if (f && typeof f.text === 'string') loadProjectText(f.text, f);
 }
 /* The desktop window asked to close. Nothing unsaved: allow it. Otherwise ask, and only allow it once it is safe. */
 function closeRequested() {
   if (practicing) return endPracticeFirst(closeRequested); /* so the question below is about the real scene */
-  if (exporting) { toast('Wait for the export to finish before closing.', 4000); return; }
+  if (exporting) { toast('Wait for the export to finish before closing.', 4000, 'bad'); return; }
   if (!platform.isDirty()) { platform.closeOk(); return; }
   const nm = platform.currentName();
   confirmBox('Save changes before closing?', (nm ? '"' + nm + '" has' : 'This project has') + ' changes that are not saved.',
@@ -5548,7 +5599,7 @@ function onDesktopMenu(cmd) {
   if (cmd === 'close-request') { closeRequested(); return; }
   if (cmd === 'about') { openAbout(); return; } /* only a window: a running tour just pauses under it */
   if (practicing && !/^tour-/.test(cmd)) { endPracticeFirst(() => onDesktopMenu(cmd)); return; }
-  if (exporting) { toast('Wait for the export to finish.'); return; }
+  if (exporting) { toast('Wait for the export to finish.', null, 'bad'); return; }
   if (cmd === 'new') openStarters();
   else if (cmd === 'open') openDialog();
   else if (cmd === 'save') saveProject(false);
@@ -5643,7 +5694,7 @@ function buildSettings() {
         prefCheck('recentOn', 'Keep recent projects'),
         prefSelect('keepRecent', 'How many to keep', PREF_LISTS.keepRecent.map(v => [v, String(v)])),
         h('div', { class: 'btns', style: 'margin-top:6px' },
-          h('button', { onclick: () => { closeModal($('#mSettings')); confirmBox('Clear recent projects?', 'This removes the list of recent projects stored ' + whereSaved() + '. Your current scene stays open.', async () => { const r = await clearRecents(); toast(r === null ? recentGone() + '.' : 'Recent projects cleared'); }, 'Clear'); } }, 'Clear recent projects'),
+          h('button', { onclick: () => { closeModal($('#mSettings')); confirmBox('Clear recent projects?', 'This removes the list of recent projects stored ' + whereSaved() + '. Your current scene stays open.', async () => { const r = await clearRecents(); toast(r === null ? recentGone() + '.' : 'Recent projects cleared', null, (r === null ? 'bad' : 'info')); }, 'Clear'); } }, 'Clear recent projects'),
           h('button', { onclick: () => { closeModal($('#mSettings')); openModal('mHelp'); } }, 'Open quick start')))),
     h('div', { class: 'btns', style: 'margin-top:4px' }, h('button', { onclick: resetPrefs }, 'Reset all settings')));
 }
@@ -5689,7 +5740,7 @@ function setItemOf(o, tr, cx, cz) {
 }
 function saveSet(name, objs) {
   const keep = objs.filter(o => o.type !== 'image' && o.type !== 'model'), left = objs.length - keep.length;
-  if (!keep.length) { toast('Nothing to save'); return false; }
+  if (!keep.length) { toast('Nothing to save', null, 'bad'); return false; }
   const trs = keep.map(o => evalObj(o, T)), cx = trs.reduce((a, t) => a + t.p[0], 0) / trs.length, cz = trs.reduce((a, t) => a + t.p[2], 0) / trs.length;
   const list = libraryEntries().slice();
   name = (name || '').trim().slice(0, 40) || 'Set ' + (librarySets().length + 1);
@@ -5697,8 +5748,8 @@ function saveSet(name, objs) {
   const stored = writeLibrary(list);
   buildAddPanel(); propsDirty = true;
   const note = left ? ' (' + left + ' imported item' + (left > 1 ? 's' : '') + ' left out)' : '';
-  if (stored) toast('Saved "' + name + '" to My sets' + note, 4000);
-  else toast('Saved "' + name + '" for this visit only: this browser blocks storage here, so it will not be kept when the page is closed' + note, 6500);
+  if (stored) toast('Saved "' + name + '" to My sets' + note, 4000, 'ok');
+  else toast('Saved "' + name + '" for this visit only: this browser blocks storage here, so it will not be kept when the page is closed' + note, 6500, 'bad');
   return true;
 }
 function deleteSet(set) {
@@ -5719,6 +5770,7 @@ function placeSet(set) {
     o.color = typeof it.color === 'string' ? it.color : o.color; o.opts = clone(it.opts); o.base.r = it.base.r.slice(); o.base.s = it.base.s.slice();
     if (gid) o.grp = gid;
     if (it.type === 'mark') { o.opts.letter = nextMarkLetter(); o.name = 'Mark ' + o.opts.letter; }
+    else if (it.type === 'person' && /^Person/.test(String(it.name || 'Person'))) o.name = nextName(BODIES[bodyOf(o)].label);
     else o.name = nextName(String(it.name || catalogOf(it.type).label).replace(/\s+\d+$/, '') || catalogOf(it.type).label);
     state.objects.push(o); made.push(o);
   }
@@ -5812,7 +5864,7 @@ const recentTrim = () => recentTx('readwrite', st => {
 const agoText = t => { const m = Math.round((Date.now() - t) / 6e4); return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : m < 1440 ? Math.round(m / 60) + ' h ago' : new Date(t).toLocaleDateString(); };
 async function openRecent() {
   if (practicing) return endPracticeFirst(openRecent);
-  if (exporting) { toast('Wait for the export to finish.'); return; }
+  if (exporting) { toast('Wait for the export to finish.', null, 'bad'); return; }
   $('#recentGrid').innerHTML = ''; $('#recNote').textContent = 'Loading…';
   openModal('mRecent');
   await renderRecent();
@@ -5836,7 +5888,7 @@ async function renderRecent() {
   }
 }
 function openRecentRow(r, readable, cur) {
-  if (!readable) { toast("This project can't be opened here (damaged, or made by a newer ShotRef). It stays in the list until you remove it.", 5000); return; }
+  if (!readable) { toast("This project can't be opened here (damaged, or made by a newer ShotRef). It stays in the list until you remove it.", 5000, 'bad'); return; }
   closeModal($('#mRecent'));
   if (cur) return;
   loadProjectText(r.data, undefined, false, platform.kind === 'desktop'); /* a copy kept inside the app has no file: on the desktop it counts as unsaved, so Save asks where to put it */
@@ -5858,7 +5910,7 @@ function syncTopUI() {
   drawGuides();
 }
 function wire() {
-  wireTourDialogs(); wireTileDrag();
+  wireTourDialogs(); wireTileDrag(); wireTips();
   buildAddPanel();
   setLeftTab(getPref('leftTab', 'add'), false);
   $$('#leftTabs button').forEach(b => b.onclick = () => setLeftTab(b.dataset.lt));
@@ -5900,7 +5952,7 @@ function wire() {
   $('#bLoop').onclick = () => { state.settings.loop = !state.settings.loop; syncTopUI(); changed(true); };
   $('#inDur').onchange = e => {
     const v = parseFloat(e.target.value);
-    if (!isFinite(v)) { syncTopUI(); toast('Type the shot length in seconds, for example 5.'); return; }
+    if (!isFinite(v)) { syncTopUI(); toast('Type the shot length in seconds, for example 5.', null, 'bad'); return; }
     if (v < 1) toast('1 s is the minimum shot length, so it was set to 1 s.', 3500);
     else if (v > 120) toast('120 s is the maximum shot length, so it was set to 120 s.', 3500);
     setDuration(v);
@@ -5922,7 +5974,7 @@ function wire() {
   /* a file dropped anywhere else must not make the browser open it and leave ShotRef (C7) */
   const hasFiles = e => !!e.dataTransfer && [...(e.dataTransfer.types || [])].includes('Files');
   window.addEventListener('dragover', e => { if (hasFiles(e)) e.preventDefault(); });
-  window.addEventListener('drop', e => { if (hasFiles(e) && !e.defaultPrevented) { e.preventDefault(); toast('Drop files on the 3D view to add them.'); } });
+  window.addEventListener('drop', e => { if (hasFiles(e) && !e.defaultPrevented) { e.preventDefault(); toast('Drop files on the 3D view to add them.', null, 'bad'); } });
   vpEl.addEventListener('drop', async e => {
     e.preventDefault(); drop.style.display = 'none';
     if (practicing && hasFiles(e)) endPracticeFirst(() => {}); /* the file goes into the real scene, as it would with no tour */
@@ -6226,7 +6278,7 @@ function wire() {
 
   // keyboard
   window.addEventListener('keydown', e => {
-    if (exporting) { if (e.key === 'p' || e.key === 'P' || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c')) toast('Wait for the export to finish.'); return; }
+    if (exporting) { if (e.key === 'p' || e.key === 'P' || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c')) toast('Wait for the export to finish.', null, 'bad'); return; }
     if (e.key === 'Tab' && trapTab(e)) return;
     if (isTyping()) return;
     const ae = document.activeElement;
@@ -6336,8 +6388,8 @@ function boot() {
   applyPrefs(); setView('editor'); setGizmoMode('translate');
   requestAnimationFrame(frame);
   let seen = false; try { seen = localStorage.getItem('shotref.seenHelp'); localStorage.setItem('shotref.seenHelp', '1'); } catch (e) { }
-  if (autosaveOff) toast(NO_AUTOSAVE, 6000); /* starter sets still open below on a first visit */
-  if (broken) toast("Your last session couldn't be restored, so ShotRef started a fresh scene.", 5000);
+  if (autosaveOff) toast(NO_AUTOSAVE, 6000, 'bad'); /* starter sets still open below on a first visit */
+  if (broken) toast("Your last session couldn't be restored, so ShotRef started a fresh scene.", 5000, 'bad');
   else if (embedded) { if (EMBED.message) toast(EMBED.message, 7000); }
   else if (!restored && !seen) setTimeout(() => { if (!openModals().length && !launchFile) { tourAsk = true; openModal('mTour'); } }, 400);
   /* photos and models come from IndexedDB (async); legacy autosaves carry them inline */
@@ -6360,7 +6412,7 @@ function boot() {
     /* a file that failed to load (maybe a passing error) must not be pruned this session (C5) */
     for (const id of want) if (!got[id]) idb.keep.add(id);
     const missing = want.length - n;
-    if (missing > 0) toast(missing === 1 ? "1 photo or model couldn't be restored. Open your saved project file to get them back." : missing + " photos or models couldn't be restored. Open your saved project file to get them back.", 6000);
+    if (missing > 0) toast(missing === 1 ? "1 photo or model couldn't be restored. Open your saved project file to get them back." : missing + " photos or models couldn't be restored. Open your saved project file to get them back.", 6000, 'bad');
     else if (want.length) toast('Restored your last session');
   }).catch(e => console.error('ShotRef: could not restore photos and models', e)).finally(() => {
     autosaveReady = true;
@@ -6369,11 +6421,11 @@ function boot() {
   /* another tab writing the same autosave (A5): warn once */
   let tabWarned = false;
   window.addEventListener('storage', e => {
-    if (e.key === AUTOSAVE_KEY && !tabWarned) { tabWarned = true; toast('ShotRef is open in another tab. Changes here may overwrite it.', 6000); }
+    if (e.key === AUTOSAVE_KEY && !tabWarned) { tabWarned = true; toast('ShotRef is open in another tab. Changes here may overwrite it.', 6000, 'bad'); }
   });
   window.addEventListener('pagehide', () => { flushAutosave(); recentFlush(); });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') recentFlush(); });
-  window.__shotref = { practice: { enter: () => enterPractice(), enterEarly: () => enterPractice(true), leave: leavePractice, active: () => !!practicing }, practicing: () => !!practicing, stateForSave, docInfo: () => ({ dirty: platform.isDirty(), name: platform.currentName(), path: platform.currentPath(), doc: platform.getDoc() }), tour: { run: runStops, active: tourActive, end: r => tourHandle && tourHandle.end(r), current: () => tourHandle }, startTour, setHandsTour, handsTourOn, setSimple, promptText, ensureDof, get selection() { return selIds; }, layout: () => layout, gizmoNdc: (x, y) => { const q = gizmo._getPointer({ clientX: x, clientY: y, button: 0 }); return { x: q.x, y: q.y }; }, arrowsVisible: () => [...arrows.values()].some(a => a.visible), videoBitrate, snapValue: snapWith, rotSnapDeg: () => pref('rotSnap'), controlSpeeds: () => ({ orbit: edControls.rotateSpeed, zoom: edControls.zoomSpeed, cam: camControls.rotateSpeed }), flySpeedNow, walkSpeedNow: () => pathSpeedOf({ type: 'person', opts: { pose: 'stand' } }), buildAddPanel: () => buildAddPanel(), saveRecentNow, recentFlush, recentStats, recentBusy, selectMany: ids => { selIds = ids.slice(); selected = selIds[selIds.length - 1] || null; updateGizmo(); uiDirty = true; propsDirty = true; requestRender(); }, pickAtScreen: (x, y) => { const rc = rayFromEvent({ clientX: x, clientY: y }); const h = rc && pickAt(rc); return h ? h.id : null; }, settleTime: () => { const t0 = performance.now(); solveGround(); return performance.now() - t0; }, groundMigrate: () => groundMigrate.size, liftKnob: () => { if (!liftGrp.visible) return null; const q = liftPick.getWorldPosition(new THREE.Vector3()); return window.__shotref.project(q.x, q.y, q.z); }, attachTo, setMount, writeCam, shownObj: (id, t) => shownObj(getObj(id), t), viewOf: id => { const v = views.get(id); if (!v) return null; v.group.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(v.group), sz = bb.getSize(new THREE.Vector3()); return { p: v.group.position.toArray(), yaw: v.group.rotation.y * R2D, s: v.group.scale.toArray(), size: sz.toArray(), wheels: v.wheels ? v.wheels.list.map(w => ({ spin: w.spin.rotation.x, steer: w.piv.rotation.y, front: w.front })) : null }; }, ringKnob: () => ringGrp.visible ? ringKnob.getWorldPosition(new THREE.Vector3()).toArray() : null, getPref, setPref, showMenu, menuButton, hideMenu, project: (x, y, z) => { const r = canvas.getBoundingClientRect(), R = viewRects(r.width, r.height); let cam = view === 'top' ? topCam : edCam, rr = R.work || { x: 0, y: 0, w: r.width, h: r.height }; if (camPane() && R.frame) { cam = renderCam; rr = R.frame; } const v = new THREE.Vector3(x, y, z).project(cam); return [r.left + rr.x + (v.x * 0.5 + 0.5) * rr.w, r.top + rr.y + (-v.y * 0.5 + 0.5) * rr.h]; }, get view() { return view; }, get placing() { return placing; }, get playing() { return playing; }, get step() { return currentStep(); }, get selected() { return selected; }, get state() { return state; }, get assets() { return assets; }, setT: t => setTime(t, false), applyMove, planMove, peek: () => ({ open: peek.open, src: peek.src, arg: peek.arg, kind: peek.src === 'move' ? peek.arg : null, demo: !!(peek.s && peek.s.demo), frames: peek.frames, endPose: (peek.s && peek.s.endPose) || null, poseRoot: peek.s && peek.s.P ? peek.s.P.pelvis.getWorldPosition(new THREE.Vector3()).toArray() : null }), addObject, select, setView, evalCam, exportVideo, exportPNG, pickCodec, _exportCanvas: () => exRenderer ? exRenderer.domElement : null, changed, writeObj, evalObj, setKey, get T() { return T; },
+  window.__shotref = { toast, practice: { enter: () => enterPractice(), enterEarly: () => enterPractice(true), leave: leavePractice, active: () => !!practicing }, practicing: () => !!practicing, stateForSave, docInfo: () => ({ dirty: platform.isDirty(), name: platform.currentName(), path: platform.currentPath(), doc: platform.getDoc() }), tour: { run: runStops, active: tourActive, end: r => tourHandle && tourHandle.end(r), current: () => tourHandle }, startTour, setHandsTour, handsTourOn, setSimple, promptText, ensureDof, get selection() { return selIds; }, layout: () => layout, gizmoNdc: (x, y) => { const q = gizmo._getPointer({ clientX: x, clientY: y, button: 0 }); return { x: q.x, y: q.y }; }, arrowsVisible: () => [...arrows.values()].some(a => a.visible), videoBitrate, snapValue: snapWith, rotSnapDeg: () => pref('rotSnap'), controlSpeeds: () => ({ orbit: edControls.rotateSpeed, zoom: edControls.zoomSpeed, cam: camControls.rotateSpeed }), flySpeedNow, walkSpeedNow: () => pathSpeedOf({ type: 'person', opts: { pose: 'stand' } }), buildAddPanel: () => buildAddPanel(), saveRecentNow, recentFlush, recentStats, recentBusy, selectMany: ids => { selIds = ids.slice(); selected = selIds[selIds.length - 1] || null; updateGizmo(); uiDirty = true; propsDirty = true; requestRender(); }, pickAtScreen: (x, y) => { const rc = rayFromEvent({ clientX: x, clientY: y }); const h = rc && pickAt(rc); return h ? h.id : null; }, settleTime: () => { const t0 = performance.now(); solveGround(); return performance.now() - t0; }, groundMigrate: () => groundMigrate.size, liftKnob: () => { if (!liftGrp.visible) return null; const q = liftPick.getWorldPosition(new THREE.Vector3()); return window.__shotref.project(q.x, q.y, q.z); }, attachTo, setMount, writeCam, shownObj: (id, t) => shownObj(getObj(id), t), viewOf: id => { const v = views.get(id); if (!v) return null; v.group.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(v.group), sz = bb.getSize(new THREE.Vector3()); return { p: v.group.position.toArray(), yaw: v.group.rotation.y * R2D, s: v.group.scale.toArray(), size: sz.toArray(), wheels: v.wheels ? v.wheels.list.map(w => ({ spin: w.spin.rotation.x, steer: w.piv.rotation.y, front: w.front })) : null }; }, ringKnob: () => ringGrp.visible ? ringKnob.getWorldPosition(new THREE.Vector3()).toArray() : null, getPref, setPref, showMenu, menuButton, hideMenu, project: (x, y, z) => { const r = canvas.getBoundingClientRect(), R = viewRects(r.width, r.height); let cam = view === 'top' ? topCam : edCam, rr = R.work || { x: 0, y: 0, w: r.width, h: r.height }; if (camPane() && R.frame) { cam = renderCam; rr = R.frame; } const v = new THREE.Vector3(x, y, z).project(cam); return [r.left + rr.x + (v.x * 0.5 + 0.5) * rr.w, r.top + rr.y + (-v.y * 0.5 + 0.5) * rr.h]; }, get view() { return view; }, get placing() { return placing; }, get playing() { return playing; }, get step() { return currentStep(); }, get selected() { return selected; }, get state() { return state; }, get assets() { return assets; }, setT: t => setTime(t, false), applyMove, planMove, peek: () => ({ open: peek.open, src: peek.src, arg: peek.arg, kind: peek.src === 'move' ? peek.arg : null, demo: !!(peek.s && peek.s.demo), frames: peek.frames, endPose: (peek.s && peek.s.endPose) || null, poseRoot: peek.s && peek.s.P ? peek.s.P.pelvis.getWorldPosition(new THREE.Vector3()).toArray() : null }), addObject, select, setView, evalCam, exportVideo, exportPNG, pickCodec, _exportCanvas: () => exRenderer ? exRenderer.domElement : null, changed, writeObj, evalObj, setKey, get T() { return T; },
     get rebuilds() { return rebuilds; }, urlCacheIds: () => [...urlCache.keys()],
     /* batch H (takes) hooks for the smoke test */
     switchTake, newTake, snapPoolSize: () => snapLive, snapPruned: () => snapPruned,

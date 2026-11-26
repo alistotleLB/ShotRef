@@ -17,6 +17,9 @@ export const TOUR_COPY = {
     body: 'Two short tours show you where everything is. Both are always in the Help menu if you want them later.',
     // while the hands-on tour is switched off (see handsTourOn in main.js)
     bodySolo: "A one-minute tour shows you where everything is. It's always in the Help menu if you want it later.",
+    // the web and claude.ai pages have no Help menu: the tours are in the gear menu
+    bodyWeb: 'Two short tours show you where everything is. Both are always under the gear button, top right, if you want them later.',
+    bodySoloWeb: "A one-minute tour shows you where everything is. It's always under the gear button, top right.",
     quick: 'Take the quick tour',
     hands: 'Try it hands-on',
     notNow: 'Not now',

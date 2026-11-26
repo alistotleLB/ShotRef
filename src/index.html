@@ -93,8 +93,10 @@ aside{background:var(--panel);overflow:auto}
 #vpRight .ib{position:relative;display:inline-flex;align-items:center;justify-content:center;background:transparent;border:0;border-radius:6px;padding:5px 6px;color:var(--ink2)}
 #vpRight .ib:hover{background:rgba(255,255,255,.08)}
 #vpRight .vsep{width:1px;background:rgba(255,255,255,.12);margin:4px 2px}
-button.icon svg,.ib svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
-[data-tip]:hover::after,[data-tip]:focus-visible::after{content:attr(data-tip);position:absolute;top:calc(100% + 6px);right:0;white-space:nowrap;background:var(--bg);color:#e7e9ec;border:1px solid var(--line2);font-size:12px;font-weight:400;padding:4px 8px;border-radius:6px;pointer-events:none;z-index:20}
+button.icon svg,.ib svg,.tp svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+/* the one tooltip for every button: #tip, placed by script (tipShow in main.js) so it stays inside the window */
+#tip{position:fixed;left:0;top:0;z-index:65;max-width:calc(100vw - 12px);width:max-content;background:var(--bg);color:#e7e9ec;border:1px solid var(--line2);font-size:12px;font-weight:400;line-height:1.35;padding:4px 8px;border-radius:6px;pointer-events:none;visibility:hidden}
+#tip.show{visibility:visible}
 #pipFrame{border:1.5px solid var(--acc);border-radius:3px;pointer-events:auto;cursor:pointer;box-shadow:0 4px 22px rgba(0,0,0,.5)}
 #pipFrame span{position:absolute;left:6px;top:4px;font-size:12px;font-weight:700;color:var(--acc2);text-shadow:0 1px 2px #000;letter-spacing:.5px}
 #camFrame{border:1px solid rgba(255,255,255,.25)}
@@ -215,6 +217,8 @@ hr.div{border:0;border-top:1px solid var(--line);margin:8px 0 4px}
 .tp{display:flex;gap:3px}
 .tp button{padding:4px 8px;min-width:32px}
 #bPlay{min-width:44px}
+.tp svg{display:block;margin:0 auto}
+.tp svg .fl{fill:currentColor}
 #tcode{font:600 15px ui-monospace,Consolas,monospace;color:var(--acc2);min-width:92px;text-align:center}
 #tframe{color:var(--mute);font-variant-numeric:tabular-nums;min-width:60px}
 /* room for the ruler, the camera row and one more, so selecting an un-keyed object does not resize the view (K4) */
@@ -270,6 +274,8 @@ hr.div{border:0;border-top:1px solid var(--line);margin:8px 0 4px}
 .steps li{margin:6px 0}
 #toast{position:fixed;left:50%;top:56px;transform:translateX(-50%);background:#2a2d33;border:1px solid var(--line2);padding:8px 14px;border-radius:8px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:60;box-shadow:0 8px 30px rgba(0,0,0,.4)}
 #toast.show{opacity:1}
+#toast.ok::before{content:'\2713';color:var(--ok);font-weight:700;margin-right:8px}
+#toast.bad{border-left:3px solid var(--danger);pointer-events:auto;cursor:pointer}
 #ctxMenu{position:fixed;display:none;z-index:70;min-width:220px;background:#1f2125;border:1px solid var(--line2);border-radius:9px;padding:5px;box-shadow:0 14px 40px rgba(0,0,0,.55)}
 #ctxMenu:focus{outline:none}
 /* tour: dimmed screen, viewfinder corners and a bubble (src/tour.js). Layers: #movePeek 45, .modal 50, #tour 55, #toast 60, #ctxMenu 70 */
@@ -334,7 +340,6 @@ hr.div{border:0;border-top:1px solid var(--line);margin:8px 0 4px}
 #selBar button{position:relative;background:transparent;border:0;border-radius:6px;padding:4px 6px;color:#e3e6ea;display:flex;align-items:center}
 #selBar button.danger:hover{background:rgba(255,93,93,.18);color:#ffbdbd}
 #selBar svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
-#selBar [data-tip]:hover::after,#selBar [data-tip]:focus-visible::after{top:auto;bottom:calc(100% + 7px);right:auto;left:50%;transform:translateX(-50%)}
 #selBar .sb-sep{width:1px;background:rgba(255,255,255,.12);margin:3px 2px}
 #modeBar{bottom:46px;left:50%;transform:translateX(-50%);display:none;align-items:center;gap:8px;pointer-events:auto;z-index:5;width:max-content;background:rgba(20,22,26,.94);border:1px solid var(--acc);border-radius:10px;padding:7px 8px 7px 14px;box-shadow:0 8px 30px rgba(0,0,0,.45);max-width:92%}
 #modeBar span{color:#ffe3c6;font-size:13px;flex:1 1 auto;white-space:normal}
@@ -471,8 +476,8 @@ button.on,.shotchip.on,button.on:hover{background:var(--sel);box-shadow:var(--ri
       <button id="bTake" class="menubtn" aria-haspopup="menu" title="Takes: alternative versions of this scene you can switch between and compare">Take 1</button>
       <button id="bFile" class="menubtn" aria-haspopup="menu" title="New, open, save and export">File</button>
       <div class="grp">
-        <button id="bUndo" class="icon" aria-label="Undo" title="Undo (Ctrl+Z)">↶</button>
-        <button id="bRedo" class="icon" aria-label="Redo" title="Redo (Ctrl+Y)">↷</button>
+        <button id="bUndo" class="icon" aria-label="Undo" title="Undo (Ctrl+Z)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 010 12h-3"/></svg></button>
+        <button id="bRedo" class="icon" aria-label="Redo" title="Redo (Ctrl+Y)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 14l5-5-5-5"/><path d="M20 9H10a6 6 0 000 12h3"/></svg></button>
       </div>
     </div>
     <div class="stepseg" id="stepSeg" role="group" aria-label="Work in three steps">
@@ -542,11 +547,11 @@ button.on,.shotchip.on,button.on:hover{background:var(--sel);box-shadow:var(--ri
     <div id="tlBar">
       <div class="tlc">
       <div class="tp">
-        <button id="bStart" title="Go to start (Home)">⏮</button>
-        <button id="bPrevKey" title="Previous key">◆◀</button>
-        <button id="bPlay" title="Play / pause (Space)">▶</button>
-        <button id="bNextKey" title="Next key">▶◆</button>
-        <button id="bEnd" title="Go to end (End)">⏭</button>
+        <button id="bStart" title="Go to start (Home)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5v14"/><path d="M19 5l-10 7 10 7z"/></svg></button>
+        <button id="bPrevKey" title="Previous key"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l3 3-3 3-3-3z"/><path d="M20 5l-8 7 8 7z"/></svg></button>
+        <button id="bPlay" title="Play / pause (Space)"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="fl" d="M7 4.5l12 7.5-12 7.5z"/></svg></button>
+        <button id="bNextKey" title="Next key"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5l8 7-8 7z"/><path d="M18 9l3 3-3 3-3-3z"/></svg></button>
+        <button id="bEnd" title="Go to end (End)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 5v14"/><path d="M5 5l10 7-10 7z"/></svg></button>
       </div>
       <div id="tcode">00:00.00</div>
       <div id="tframe" class="adv">frame 1</div>
@@ -741,6 +746,7 @@ button.on,.shotchip.on,button.on:hover{background:var(--sel);box-shadow:var(--ri
 <div id="ctxMenu" role="menu" tabindex="-1"></div>
 <div id="movePeek" aria-hidden="true"><canvas></canvas><div class="lab"></div><p class="note">Example. Add people or props to preview it on your shot.</p></div>
 <div id="toast"></div>
+<div id="tip" role="tooltip"></div>
 <script>/*APP*/</script>
 </body>
 </html>
