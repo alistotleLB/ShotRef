@@ -57,7 +57,10 @@ import { TOUR_COPY } from './tour-copy.js';
  * exRenderer                     offscreen export renderer: getExportRenderer (dropped on context loss)
  * copyBlob                       last copied frame: copyFrame
  * exCancel, exporting            export cancel request and export running: exportVideo, #exCancel
- * modalReturn, cfCb              focus to return to after dialogs: openModal, closeModal; confirm callback: confirmBox
+ * exFrom, exSaved                where a video export started ('panel' or 'options') and the files it saved: exportVideo (shown by exEnd, showExDone)
+ * foldStep, foldHand, leftTouchAt  the step the left panel's fold was decided for, a hand choice in it (null = the step's default), the last press in the panel: syncFold, openLeft, foldLeft, wire
+ * revealSec                      a panel section to open and scroll to on the next panel build: showPhotoSettings, importPlate (renderProps clears it)
+ * modalReturn, cfCb             focus to return to after dialogs: openModal, closeModal; confirm callback: confirmBox
  */
 
 /* ============================== utilities ============================== */
@@ -179,12 +182,13 @@ const isField = el => !!el && (el.tagName === 'INPUT' || el.tagName === 'SELECT'
 
 /* exports and downloads go through the platform layer (native dialog in the desktop app, downloads capability on claude.ai, plain link elsewhere) */
 const SAVE_KINDS = { png: ['PNG image', ['png']], mp4: ['MP4 video', ['mp4']], webm: ['WebM video', ['webm']], shotref: ['ShotRef project', ['shotref']], zip: ['Zip file', ['zip']] };
-async function saveFile(filename, blob) {
+/* quiet: the caller shows the result itself (the Export window's "Video saved" / "Video not saved"); a cancelled Save still says so */
+async function saveFile(filename, blob, quiet = false) {
   const k = SAVE_KINDS[(filename.split('.').pop() || '').toLowerCase()];
   const r = await platform.saveBlob(filename, blob, { filters: k ? [{ name: k[0], extensions: k[1] }] : [] });
-  if (r.ok) toast('Saved ' + (r.name || filename), null, 'ok');
+  if (r.ok) { if (!quiet) toast('Saved ' + (r.name || filename), null, 'ok'); }
   else if (r.canceled) toast('Save cancelled');
-  else toast("Couldn't save the file. Try again.", 4000, 'bad');
+  else if (!quiet) toast("Couldn't save the file. Try again.", 4000, 'bad');
   return r;
 }
 
@@ -1938,6 +1942,7 @@ function frame(now) {
   const dt = Math.min(0.1, (now - lastNow) / 1000); lastNow = now;
   if (exporting) { wasExporting = true; peekHide(); return; } // the export owns the scene and the renderers until it finishes
   if (wasExporting) { wasExporting = false; needsRender = true; }
+  syncFold(); /* before the draw: a fold or unfold re-sizes the 3D view in this same frame */
   if (tourActive()) tourTick();
   if (rec && rec.phase === 'count') { const left = Math.ceil((rec.until - now) / 1000); $('#countdown').textContent = left > 0 ? left : ''; if (now >= rec.until) { rec.phase = 'rec'; setTime(0, false); setPlaying(true); $('#countdown').textContent = ''; recSample(); showModeBar('● Recording. Steer the camera until the shot ends.', [['Cancel', cancelRecord]]); } }
   if (playing) {
@@ -2334,6 +2339,28 @@ function setLeftTab(t, save = true) {
   $('#addArea').style.display = t === 'add' ? '' : 'none'; $('#outliner').style.display = t === 'scene' ? '' : 'none';
   $$('#leftTabs button').forEach(b => { const on = b.dataset.lt === t; b.classList.toggle('on', on); b.setAttribute('aria-selected', String(on)); });
 }
+/* In step 2 Frame and step 3 Export the left panel folds to a 44 px strip (#app.lfold) so the picture gets the width; step 1 Build opens it.
+   The strip's Add and Items buttons open it, « folds it again: that hand choice holds until the step changes. Picking something inside
+   the open panel (Shot camera in the Items list, say) counts as a hand choice to keep it open in the step that pick leads to.
+   Decided from currentStep(), not the view. Runs at the top of frame(), before the draw, so the 3D view re-fits in the same frame. */
+let foldStep = null, foldHand = null, leftTouchAt = -1e9;
+function syncFold() {
+  const step = currentStep(), app = $('#app');
+  if (step !== foldStep) {
+    const first = foldStep === null; foldStep = step;
+    foldHand = !first && !app.classList.contains('lfold') && performance.now() - leftTouchAt < 600 ? true : null;
+  }
+  const fold = foldHand !== null ? !foldHand : step !== 'build';
+  if (app.classList.contains('lfold') !== fold) {
+    const had = document.activeElement, inLeft = had && had !== document.body && $('#left').contains(had);
+    app.classList.toggle('lfold', fold); requestRender();
+    if (inLeft && !had.getClientRects().length) (fold ? $('#stripAdd') : $('#leftTabs .on') || $('#leftTabs button')).focus(); /* keyboard focus never falls out of the panel */
+  }
+  putStyle($('#bFold'), 'display', step === 'build' ? 'none' : '');
+}
+/* the strip's two buttons and « */
+function openLeft(tab) { syncFold(); foldHand = true; if (tab) setLeftTab(tab); syncFold(); }
+function foldLeft() { syncFold(); foldHand = false; syncFold(); }
 function buildAddPanel() {
   const area = $('#addArea'); area.innerHTML = '';
   const cats = { People: [], Shapes: [], Props: [], Import: [], Blocking: [] };
@@ -2582,6 +2609,11 @@ function renderProps() {
   peekHide();
   renderPropsInner();
   decorateSections($('#props'));
+  if (revealSec) { /* open one section and bring it into view (the Location photo button above the picture) */
+    const name = revealSec, sc = [...$$('#props .sec')].find(x => { const hd = x.querySelector(':scope > h3'); return hd && hd.firstChild && hd.firstChild.textContent.trim() === name; });
+    if (sc) { revealSec = null; sc.classList.remove('closed'); sc.scrollIntoView({ block: 'start' }); }
+    else if (selected === 'camera') revealSec = null;
+  }
 }
 function renderPropsInner() {
   live.length = 0;
@@ -2689,16 +2721,19 @@ function camThumbs() {
 }
 function moveCard() {
   const ends = camEnds(), mv = detectMove(), th = camThumbs(), keyed = state.camera.keys.length > 0;
+  const barUp = view === 'camera' || splitOn(); /* Set start / Set end live above the picture (#camBar); the card has its own pair only while no pane shows the camera */
   const thumb = (label, src, on, t) => h('button', { class: 'mthumb' + (on ? ' ok' : ''), title: 'Go to the ' + label.toLowerCase() + ' frame', onclick: () => setTime(t) },
     src ? h('img', { src, alt: label + ' frame' }) : h('div', { class: 'noimg' }), h('span', null, (on ? '✓ ' : '') + label));
   return sec('Camera move', h('div', { class: 'movecard' },
     h('div', { class: 'mc-title' }, mv.title), h('div', { class: 'mc-sub' }, mv.sub),
     h('div', { class: 'mc-thumbs' }, thumb('Start', th.s, ends.s, 0), h('span', { class: 'mc-arrow' }, '→'), thumb('End', th.e, ends.e, lastT())),
-    h('div', { class: 'btns big2' },
+    barUp ? null : h('div', { class: 'btns big2' },
       h('button', { class: ends.s ? 'on' : '', onclick: () => setShotEnd('start'), title: 'Save what the camera sees now as the first frame' }, 'Set start'),
       h('button', { class: ends.e ? 'on' : '', onclick: () => setShotEnd('end'), title: 'Save what the camera sees now as the last frame' }, 'Set end')),
     keyed ? h('div', { class: 'btns' }, h('button', { onclick: () => { setTime(0); setPlaying(true); } }, '▶ Play'), h('button', { onclick: makeCameraStatic }, 'Clear move')) : null,
-    h('p', { class: 'note' }, ends.s && ends.e ? 'Reframe at either end and press Set start or Set end again to change it.' : 'Frame the opening shot → Set start. Frame the closing shot → Set end.')));
+    h('p', { class: 'note' }, barUp
+      ? (ends.s && ends.e ? 'Reframe at either end and press Set start or Set end above the picture again to change it.' : 'Frame the opening shot, then press Set start above the picture. Frame the closing shot, then press Set end.')
+      : (ends.s && ends.e ? 'Reframe at either end and press Set start or Set end again to change it.' : 'Frame the opening shot → Set start. Frame the closing shot → Set end.'))));
 }
 
 /* "Sky": how cloudy it is, what the clouds look like and how they drift. Advanced adds exact amounts and the sky, ground and fog colours */
@@ -2761,17 +2796,20 @@ function propsSun(p) {
   p.append(sunSection(!simple));
   p.append(h('div', { class: 'btns', style: 'margin:2px 0 8px' }, h('button', { 'data-role': 'to-scene', title: 'Environment presets, sky colours and clouds', onclick: () => { if (view === 'camera') setView(lastWorkView); select(null); } }, 'Sky and clouds: Scene panel')));
 }
-/* ---- the camera panel: Shot | Move | Lens | Photo | Output ---- */
-const CAM_TABS = [['shot', 'Shot'], ['move', 'Move'], ['lens', 'Lens'], ['photo', 'Photo'], ['output', 'Output']];
+/* ---- the camera panel: Shot | Move | Lens ----
+   One home per control: Aspect and the guides are above the picture in the camera view (#bAspect, #bGuides); Size and Render style are in the
+   Export panel (behind Change); the location photo is on the Shot tab. A remembered tab from older builds (Photo, Output) opens Shot. */
+const CAM_TABS = [['shot', 'Shot'], ['move', 'Move'], ['lens', 'Lens']];
+const GUIDES = [['thirds', 'Rule of thirds'], ['center', 'Centre cross'], ['safe', 'Safe areas'], ['none', 'None']];
 function propsCamera(p) {
-  const c = state.camera, s = state.settings, dof = ensureDof();
+  const c = state.camera, dof = ensureDof();
   p.append(sec('Shot camera',
     h('div', { class: 'btns' },
       h('button', { class: view === 'camera' ? 'quiet' : '', onclick: () => setView(view === 'camera' ? 'editor' : 'camera') }, view === 'camera' ? 'Back to editor' : 'Look through camera'),
       view === 'editor' ? h('button', { onclick: camToEditorView, title: 'Place the camera where the editor view is' }, 'Camera to editor view') : null),
   ));
-  const tab = CAM_TABS.some(t => t[0] === getPref('camTab')) ? getPref('camTab') : 'move';
-  const inUse = { photo: !!state.plate, move: c.keys.length > 0, lens: !!dof.on };
+  const saved = getPref('camTab'), tab = saved === 'photo' || saved === 'output' ? 'shot' : CAM_TABS.some(t => t[0] === saved) ? saved : 'move';
+  const inUse = { shot: !!state.plate, move: c.keys.length > 0, lens: !!dof.on };
   p.append(h('div', { class: 'tabs', role: 'tablist' }, CAM_TABS.map(([k, l]) =>
     h('button', { role: 'tab', 'aria-selected': String(tab === k), class: tab === k ? 'on' : '', onclick: () => { setPref('camTab', k); propsDirty = true; } }, l, inUse[k] ? h('i', { class: 'tdot' }) : null))));
   if (tab === 'shot') {
@@ -2788,11 +2826,17 @@ function propsCamera(p) {
       selectRow('Look at', subjOpts, () => c.lookAtId || '', v => { if (v && !c.lookAtId) { c.base.tg = evalCam(T).tg; } c.lookAtId = v || null; if (!v) c.follow = false; updateGizmo(); changed(true, true); }),
       c.lookAtId ? check('Follow subject', () => c.follow, v => { const cur = evalCam(T).p; c.follow = v; writeCam({ p: cur }, true); propsDirty = true; }, 'The camera travels with the subject') : null,
       h('p', { class: 'note' }, c.lookAtId ? 'The camera keeps aiming at the subject while it moves.' : 'Pick a person or object to keep it centred automatically.')));
+    const psec = plateSection(); /* folded until a photo is loaded */
+    psec.dataset.fold = '1'; if (state.plate) psec.dataset.inuse = '1';
+    p.append(psec);
     const mountSel = selectRow('Mount on', [['', 'None'], ...state.objects.filter(o => o.type !== 'mark').map(o => [o.id, o.name])], () => c.mount || '', v => mountCamera(v || null));
     mountSel.querySelector('select').dataset.role = 'mount';
     const msec = sec('Mount', mountSel, h('p', { class: 'note' }, 'The camera rides with it, like a car mount or a camera on a moving cart. Your camera moves still work on top.'));
     if (c.mount) msec.dataset.inuse = '1';
     p.append(msec);
+    if (!simple) p.append(sec('Placement',
+      vecRow('Position', () => camState.p, (v, cm) => writeCam({ p: v }, cm), { step: 0.02 }),
+      c.lookAtId ? null : vecRow('Aims at', () => camState.tg, (v, cm) => writeCam({ tg: v }, cm), { step: 0.02 })));
   } else if (tab === 'move') {
     p.append(moveCard());
     const mg = h('div', { class: 'movegrid' }, MOVES.map(([k, ic, l]) => {
@@ -2832,18 +2876,18 @@ function propsCamera(p) {
           ? 'Focus stays on the aim point or subject, even while it moves.'
           : 'Set keys on the distance to rack focus between subjects.'),
         h('p', { class: 'note' }, 'Lower f-numbers and longer lenses give more blur. Not used in the Depth and Normals styles.')) : h('p', { class: 'note' }, 'Simulates a real lens: focal length, f-stop and focus distance.')));
-  } else if (tab === 'photo') {
-    p.append(plateSection());
-  } else {
-    p.append(sec('Frame',
-      selectRow('Aspect', ASPECTS.map(a => [a[0], a[2]]), () => s.aspect, v => { s.aspect = v; changed(true, true); syncTopUI(); }),
-      selectRow('Size', SIZES, () => String(s.size), v => { s.size = +v; changed(true); }),
-      selectRow('Guides', [['thirds', 'Rule of thirds'], ['center', 'Centre cross'], ['safe', 'Safe areas'], ['none', 'None']], () => s.guides, v => { s.guides = v; drawGuides(); changed(true); }),
-      selectRow('Render style', STYLES.map(x => [x[0], x[1]]), () => s.style, v => { s.style = v; changed(true); syncTopUI(); })));
-    if (!simple) p.append(sec('Placement',
-      vecRow('Position', () => camState.p, (v, cm) => writeCam({ p: v }, cm), { step: 0.02 }),
-      c.lookAtId ? null : vecRow('Aims at', () => camState.tg, (v, cm) => writeCam({ tg: v }, cm), { step: 0.02 })));
   }
+}
+/* the camera view's aspect chip and guides button (#vpRight): each opens a menu, the current choice ticked */
+const setAspect = v => { state.settings.aspect = v; changed(true, true); syncTopUI(); };
+const aspectMenuItems = () => [{ head: 'Aspect' }, ...ASPECTS.map(a => ({ id: 'aspect-' + a[0], label: a[2], check: state.settings.aspect === a[0], fn: () => setAspect(a[0]) }))];
+const guidesMenuItems = () => [{ head: 'Guides' }, ...GUIDES.map(([k, l]) => ({ id: 'guides-' + k, label: l, check: state.settings.guides === k, fn: () => { state.settings.guides = k; drawGuides(); changed(true); } }))];
+/* "Location photo" above the picture, once a photo is loaded: the Shot tab, opened at the photo's section */
+let revealSec = null;
+function showPhotoSettings() {
+  setPref('camTab', 'shot'); revealSec = 'Location photo';
+  if (selected !== 'camera') select('camera');
+  propsDirty = true; requestRender();
 }
 function shotGrid(pid) { return h('div', { class: 'posegrid' }, SHOTS.map(([k, l]) => peekHover(h('button', { onclick: () => frameShot(k, pid()) }, l), 'shot', k))); }
 function feelSeg() {
@@ -3208,8 +3252,11 @@ function tickUI() {
     putStyle($('#hud'), 'display', 'flex');
   } else putStyle($('#hud'), 'display', 'none');
   /* the overlays sit over the half they belong to */
+  if (view === 'camera') { const a = state.settings.aspect; putText($('#aspectTxt'), a); if ($('#bAspect').getAttribute('aria-label') !== 'Aspect ' + a) $('#bAspect').setAttribute('aria-label', 'Aspect ' + a); }
   { const sp = splitOn(), R = viewRects(vpEl.clientWidth, vpEl.clientHeight), bar = $('#camBar');
     putStyle(bar, 'left', (sp ? R.cam.x : 0) + 10 + 'px'); putStyle(bar, 'maxWidth', sp ? (R.cam.w - 20) + 'px' : '');
+    /* in the camera view the buttons stop 10 px short of the icon cluster (aspect, guides, preview), whatever its width */
+    putStyle(bar, 'right', !sp && view === 'camera' ? ($('#vpRight').offsetWidth + 20) + 'px' : '');
     /* the info pill is centred over the camera pane and sits 6 px below the buttons, whether they fill one row or wrap onto two */
     putStyle($('#hud'), 'left', (sp ? R.cam.x + R.cam.w / 2 : vpEl.clientWidth / 2) + 'px'); putStyle($('#hud'), 'maxWidth', (sp ? R.cam.w : vpEl.clientWidth) - 24 + 'px'); putStyle($('#hud'), 'top', (10 + bar.offsetHeight + 6) + 'px');
     putStyle($('#vpRight'), 'right', (sp ? vpEl.clientWidth - R.work.w + 10 : 10) + 'px'); putStyle(hint, 'maxWidth', sp ? (R.work.w - 30) + 'px' : '');
@@ -4110,7 +4157,8 @@ function setView(v) {
   view = v;
   syncControls();
   $$('#viewSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
-  $$('#vpRight [data-g], #vpRight [data-g2], #bSnapGrid, #bFocus').forEach(b => { b.style.display = v === 'camera' ? 'none' : ''; }); /* in Camera view only Grid stays */
+  $$('#vpRight [data-g], #vpRight [data-g2], #bSnapGrid, #bFocus, #bGrid').forEach(b => { b.style.display = v === 'camera' ? 'none' : ''; }); /* the editor tools; the editor grid is never in the shot */
+  $$('#bAspect, #bGuides').forEach(b => { b.style.display = v === 'camera' ? '' : 'none'; }); /* framing: the frame's aspect and the guides over it */
   $('#camBar').style.display = v === 'camera' || splitOn() ? 'flex' : 'none';
   $('#bCamHere').style.display = v === 'editor' ? '' : 'none';
   $('#bPip').style.display = v !== 'camera' && !splitOn() ? '' : 'none';
@@ -4535,6 +4583,7 @@ async function importPlate(file) {
   state.plate = { asset: id, overlay: prev.overlay ?? 0, export: prev.export ?? true, ground: prev.ground || 'shadow' };
   const close = ASPECTS.reduce((b, a) => Math.abs(Math.log(a[1] / ia)) < Math.abs(Math.log(b[1] / ia)) ? a : b);
   if (Math.abs(Math.log(close[1] / ia)) < 0.04 && close[0] !== state.settings.aspect) state.settings.aspect = close[0];
+  setPref('camTab', 'shot'); revealSec = 'Location photo'; /* the panel opens at the new photo's settings */
   select('camera'); setView('camera'); changed(true, true); syncTopUI();
   toast('Location photo loaded. Match the lens and camera height, then line up the floor.', 4500);
 }
@@ -4542,7 +4591,7 @@ function plateSection() {
   const pl = state.plate, a = plateAsset();
   if (!pl || !a) return sec('Location photo',
     h('p', { class: 'note', style: 'margin:0 0 8px' }, 'Put a still of the real or AI-generated location behind the scene. Then block people and the camera on top of it.'),
-    h('button', { class: 'primary', style: 'width:100%', onclick: () => pickImport('#fPlate', importPlate, PLATE_FILTER) }, 'Choose photo…'));
+    h('button', { style: 'width:100%', onclick: () => pickImport('#fPlate', importPlate, PLATE_FILTER) }, 'Choose photo…'));
   const fa = arOf(state.settings.aspect), ia = a.aspect || 1.5;
   const close = ASPECTS.reduce((b, x) => Math.abs(Math.log(x[1] / ia)) < Math.abs(Math.log(b[1] / ia)) ? x : b);
   const thumb = h('img', { src: assetURL(pl.asset), style: 'width:100%;border-radius:6px;display:block;border:1px solid var(--line2)' });
@@ -4823,7 +4872,7 @@ function propsExport(p) {
     h('p', { class: 'note keep', style: 'margin:0 0 8px' }, `${s.fps} fps · ${s.duration.toFixed(1)} s` + (sn ? ' · ' + sn : '')),
     fmt));
   p.append(sec('Export video', h('div', { class: 'expgrid' },
-    h('button', { id: 'xoVideo', class: 'primary wide', onclick: () => { openModal('mExport'); exportVideo(); } }, 'Export video (MP4)'),
+    h('button', { id: 'xoVideo', class: 'primary wide', onclick: () => exportVideo() }, 'Export video (MP4)'), /* opens the small "Exporting video…" window by itself */
     h('button', { id: 'xoOptions', onclick: () => openModal('mExport') }, 'Video options…'))));
   p.append(sec('Frame pack', h('div', { class: 'expgrid' },
     h('button', { id: 'xoPack', onclick: exportFramePack, title: 'Start, middle and end frames plus the prompt, in one zip' }, 'Frame pack (zip)'),
@@ -4945,11 +4994,10 @@ async function exportAllShots() {
   if (exporting) return;
   const list = ensureShots().slice(); syncShot();
   const keepId = state.shotId, keepT = T;
-  openModal('mExport');
   try {
     for (const [i, s] of list.entries()) {
       loadShot(s);
-      if (!(await exportVideo({ label: `Shot ${i + 1} of ${list.length}: ${s.name}` }))) break;
+      if (!(await exportVideo({ label: `Shot ${i + 1} of ${list.length}: ${s.name}`, batch: { i, n: list.length } }))) break;
     }
   } finally { loadShot(state.shots.find(s => s.id === keepId) || state.shots[0]); setTime(keepT); applyAll(T); requestRender(); syncTopUI(); }
 }
@@ -5245,11 +5293,59 @@ function setExportLock(on) {
   if (on) { const c = $('#exCancel'); if (c && !c.hidden) c.focus(); else if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); }
 }
 function exProgressRaw(frac, txt) { $('#exBar').style.width = (frac * 100).toFixed(1) + '%'; $('#exTxt').textContent = txt; }
+const fmtSize = n => n < 0.1 * 1048576 ? Math.max(1, Math.round(n / 1024)) + ' KB' : (n / 1048576).toFixed(1) + ' MB';
+/* The Export window shows one body at a time: 'opts' (Video options…), 'run' (Exporting video…: bar, text, Cancel and nothing else),
+   'done' (Video saved: file, where it is, Done, Copy prompt) and 'fail' (the plain error, Close). Only the window changes: rendering,
+   encoding, file names and saving are exportVideo's, as before. exFrom: 'panel' (the Export panel's button opened the small window; Cancel
+   closes it) or 'options' (started inside Video options…; Cancel brings the options back). exSaved: the files saved by this export (every shot). */
+let exFrom = 'panel', exSaved = [];
+function exBody(k) {
+  $('#exOpts').hidden = k !== 'opts'; $('#exRunning').hidden = k !== 'run'; $('#exDone').hidden = k !== 'done'; $('#exFail').hidden = k !== 'fail';
+  $('#mExport .dlg').classList.toggle('run', k !== 'opts');
+  $('#mExport .x').hidden = k === 'run'; /* while a video renders the only way out is Cancel */
+  $('#mExport').setAttribute('aria-labelledby', { opts: 'mExportT', run: 'exRunT', done: 'exDoneT', fail: 'exFailT' }[k]);
+  if (k !== 'done') $('#exPromptBox').hidden = true;
+}
+const exShowing = () => !$('#exOpts').hidden ? 'opts' : !$('#exRunning').hidden ? 'run' : !$('#exDone').hidden ? 'done' : 'fail';
+function showExDone() {
+  const n = exSaved.length, f0 = exSaved[0], total = exSaved.reduce((a, f) => a + f.size, 0), folder = (exSaved.find(f => f.folder) || {}).folder;
+  $('#exDoneT').textContent = n > 1 ? n + ' videos saved' : 'Video saved';
+  const sz = b => fmtSize(b).replace(' ', ' '); /* "0.3 MB" never splits over two lines */
+  putText($('#exFile'), n > 1 ? `${f0.name} and ${n - 1} more · ${sz(total)}` : `${f0.name} · ${sz(f0.size)}`);
+  $('#exFile').title = exSaved.map(f => f.name).join('\n');
+  putText($('#exWhere'), platform.kind === 'desktop' ? (folder ? 'Look in ' + folder + '.' : 'Look in the folder you chose.') : 'Look in your Downloads folder.');
+  exBody('done'); $('#exDoneBtn').focus();
+}
+/* how an export ends in the window: fail shows the error; a cancel, or a video nobody saved (the Save dialog was cancelled), closes the small
+   window or goes back to the options; anything saved shows "Video saved" once the last shot is done */
+function exEnd(outcome, msg, last) {
+  if (outcome === 'fail') { putText($('#exErr'), msg); exBody('fail'); $('#exClose').focus(); return; }
+  if (!last && outcome !== 'cancel') return; /* more shots to come: the progress stays */
+  if (outcome === 'cancel' || !exSaved.length) {
+    if (exFrom === 'options') { exBody('opts'); renderExportDialog(); $('#exVideo').focus(); } else closeModal($('#exCancel'));
+    return;
+  }
+  showExDone();
+}
+/* Copy prompt in the finished window: the clipboard, else the prompt shown selected in the window so Ctrl+C copies it */
+async function exCopyPrompt() {
+  const text = currentPrompt(), box = $('#exPromptBox');
+  try { await navigator.clipboard.writeText(text); toast('Prompt copied. Paste it next to the video in the AI tool.', null, 'ok'); return; } catch (e) { }
+  box.value = text; box.hidden = false; box.focus(); box.select();
+  try { if (document.execCommand('copy')) { toast('Prompt copied. Paste it next to the video in the AI tool.', null, 'ok'); return; } } catch (e) { }
+  toast('The prompt is selected below. Press Ctrl+C to copy it.', 5000, 'bad');
+}
 async function exportVideo(opts = {}) {
   if (practicing) return endPracticeFirst(() => exportVideo(opts));
   if (exporting) return false;
+  if ($('#mExport').classList.contains('hidden')) { exFrom = 'panel'; openModal('mExport'); } /* the Export panel's button: the small window only */
+  else if (exShowing() === 'opts') exFrom = 'options';
+  if (!opts.batch || opts.batch.i === 0) exSaved = [];
+  exBody('run');
   exporting = true; exCancel = false;
-  let done = false; const pre = opts.label ? opts.label + ' · ' : '';
+  let done = false, outcome = 'fail', failMsg = ''; const pre = opts.label ? opts.label + ' · ' : '';
+  /* the save's answer: saved, the Save dialog cancelled, or the file could not be written */
+  const saved = (r, name, size) => { if (r.ok) { exSaved.push({ name: r.name || name, size, folder: r.folder || '' }); return 'done'; } if (r.canceled) return 'savecancel'; failMsg = "Couldn't save the file. Try again."; return 'fail'; };
   const exProgress = (f, t) => exProgressRaw(f, t ? pre + t : t);
   const saveT = T;
   let enc = null, vf = null; /* closed in finally if the loop fails (C8) */
@@ -5273,13 +5369,14 @@ async function exportVideo(opts = {}) {
         while (enc.encodeQueueSize > 6) await new Promise(res => setTimeout(res, 2));
         if (i % 2 === 0) { exProgress((i + 1) / N, `Rendering frame ${i + 1} of ${N}…`); await new Promise(res => setTimeout(res, 0)); }
       }
-      if (exCancel) { try { enc.close(); } catch (e) { } toast('Export cancelled'); return; }
+      if (exCancel) { try { enc.close(); } catch (e) { } toast('Export cancelled'); outcome = 'cancel'; return; }
       exProgress(1, 'Finishing the MP4…');
       try { await enc.flush(); enc.close(); muxer.finalize(); } catch (e) { e.mp4 = true; throw e; }
       const blob = new Blob([muxer.target.buffer], { type: 'video/mp4' });
       if (blob.size < 1024) { const e = new Error('MP4 came out empty (' + blob.size + ' bytes)'); e.mp4 = true; throw e; }
-      exProgress(1, 'Done: ' + (blob.size < 0.1 * 1048576 ? Math.max(1, Math.round(blob.size / 1024)) + ' KB' : (blob.size / 1048576).toFixed(1) + ' MB'));
-      await saveFile(outName(state.settings.style, `${w}x${hh}`, `${fps}fps`) + '.mp4', blob); done = true;
+      exProgress(1, 'Done: ' + fmtSize(blob.size));
+      const name = outName(state.settings.style, `${w}x${hh}`, `${fps}fps`) + '.mp4';
+      outcome = saved(await saveFile(name, blob, true), name, blob.size); done = true;
     } else {
       // fallback: WebM in real time
       const c = r.domElement;
@@ -5299,21 +5396,22 @@ async function exportVideo(opts = {}) {
         const due = t0 + (i + 1) * 1000 / fps; await new Promise(res => setTimeout(res, Math.max(0, due - performance.now())));
       }
       rec.stop(); await stopped;
-      if (exCancel) { toast('Export cancelled'); return; }
+      if (exCancel) { toast('Export cancelled'); outcome = 'cancel'; return; }
       const blob = new Blob(parts, { type: 'video/webm' });
       if (blob.size < 1024) throw new Error('WebM came out empty (' + blob.size + ' bytes)');
-      await saveFile(outName(state.settings.style, `${w}x${hh}`) + '.webm', blob); done = true;
+      const name = outName(state.settings.style, `${w}x${hh}`) + '.webm';
+      outcome = saved(await saveFile(name, blob, true), name, blob.size); done = true;
     }
   } catch (e) {
     console.error(e);
     const msg = e && e.plain ? e.message : e && e.mp4 ? "Your PC couldn't make an MP4 at this size. Try 1280 px, or use Frame pack (zip)." : 'The export stopped because of an error. Try again, or try a smaller size.';
-    toast(msg, 6000, 'bad'); exProgress(0, msg);
+    exProgress(0, msg); outcome = 'fail'; failMsg = msg; /* the window shows it (exEnd) */
   } finally {
     if (vf) { try { vf.close(); } catch (e) { } }
     if (enc && enc.state !== 'closed') { try { enc.close(); } catch (e) { } }
     if (exCancel) exProgress(0, '');
     exporting = false; exCancel = false; $('#exCancel').hidden = true; setTime(saveT, false); applyAll(T); setExportLock(false);
-    if (!$('#mExport').classList.contains('hidden')) $('#exVideo').focus(); /* Cancel just hid itself; keep focus in the dialog (M8) */
+    if (!$('#mExport').classList.contains('hidden')) exEnd(outcome, failMsg, !opts.batch || opts.batch.i === opts.batch.n - 1); /* focus stays in the window (M8) */
   }
   return done;
 }
@@ -5419,7 +5517,7 @@ function runStops(stops, opts = {}) {
 const BASIC_STOPS = [
   ['b-welcome', null],
   ['b-steps', '#stepSeg'],
-  ['b-add', '#left', () => setLeftTab('add', false)],
+  ['b-add', '#left', () => { setLeftTab('add', false); if ($('#app').classList.contains('lfold')) openLeft(); }], /* folded in steps 2 and 3: open it for this stop (put back when the tour ends) */
   ['b-picture', '#vp'],
   ['b-view', '#viewGrp'],
   ['b-panel', '#right'],
@@ -5493,10 +5591,12 @@ function startTour(kind, opts = {}) {
     return handle;
   }
   const tab = $('#leftTabs .on') ? $('#leftTabs .on').dataset.lt : 'add';
+  syncFold(); const fold = { step: foldStep, hand: foldHand }; /* the Add stop may open the folded panel: put it back as it was */
   const handle = runStops(basicStops(), {
     ui: TOUR_COPY.ui,
     onEnd: reason => {
       setLeftTab(tab, false);
+      if (foldStep === fold.step) { foldHand = fold.hand; syncFold(); }
       setPref('tourBasicDone', true);
       if (reason === 'external') return; /* another tour took over, or Open / New / a file from Windows swapped the project: no picker */
       if (firstRun) openStarters(true);
@@ -5544,7 +5644,7 @@ function openModal(id) {
   const m = $('#' + id), ae = document.activeElement;
   if (!openModals().length && ae && ae !== document.body) modalReturn = ae;
   m.classList.remove('hidden'); requestRender();
-  if (id === 'mExport') { $('#exProg').hidden = !exporting; renderExportDialog(); }
+  if (id === 'mExport') { exBody(exporting ? 'run' : 'opts'); renderExportDialog(); } /* opened by hand it always shows the options */
   if (exporting && id === 'mExport') return; /* the export lock owns focus */
   if (id === 'mHelp') { setHelpTab('quick'); const b = m.querySelector('.dlgBody'); if (b) b.scrollTop = 0; } /* always opens on Quick start */
   /* the main button, else the first real control: the × only when there is nothing else (K6) */
@@ -5923,6 +6023,10 @@ function wire() {
   buildAddPanel();
   setLeftTab(getPref('leftTab', 'add'), false);
   $$('#leftTabs button').forEach(b => b.onclick = () => setLeftTab(b.dataset.lt));
+  $('#stripAdd').onclick = () => openLeft('add'); $('#stripItems').onclick = () => openLeft('scene'); $('#bFold').onclick = foldLeft;
+  document.addEventListener('pointerdown', e => { leftTouchAt = e.target && e.target.closest && e.target.closest('#left') ? performance.now() : -1e9; }, true); /* a press anywhere else forgets it */
+  $('#left').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') leftTouchAt = performance.now(); }, true);
+  menuButton($('#bAspect'), aspectMenuItems); menuButton($('#bGuides'), guidesMenuItems);
   $$('#stepSeg button').forEach(b => b.onclick = () => goStep(b.dataset.step));
   if (platform.kind === 'desktop') $('#bFile').style.display = 'none'; /* the Windows File menu does this job */
   $$('[data-where]').forEach(e => { e.textContent = whereSaved(); });
@@ -5975,7 +6079,7 @@ function wire() {
   $('#fModel').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (f) importModel(f); };
   $('#fImage').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (f) importImage(f); };
   $('#fPlate').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (f) importPlate(f); };
-  $('#cbPlate').onclick = () => { if (plateAsset()) { select('camera'); toast('Location photo settings are in the Camera panel'); } else pickImport('#fPlate', importPlate, PLATE_FILTER); };
+  $('#cbPlate').onclick = () => { if (plateAsset()) showPhotoSettings(); else pickImport('#fPlate', importPlate, PLATE_FILTER); };
   // drag & drop
   const drop = $('#drop');
   vpEl.addEventListener('dragover', e => { e.preventDefault(); drop.style.display = 'flex'; });
@@ -6003,7 +6107,9 @@ function wire() {
   $('#exAspect').onchange = e => { state.settings.aspect = e.target.value; changed(true, true); renderExportDialog(); };
   $('#exSize').onchange = e => { state.settings.size = +e.target.value; changed(true, true); renderExportDialog(); };
   $('#exGrid').onchange = e => { state.settings.exportGrid = e.target.checked; changed(true); };
-  $('#exVideo').onclick = exportVideo;
+  $('#exVideo').onclick = () => exportVideo();
+  $('#exDoneBtn').onclick = () => closeModal($('#exDoneBtn')); $('#exClose').onclick = () => closeModal($('#exClose'));
+  $('#exCopyPrompt').onclick = exCopyPrompt;
   $('#exFrame').onclick = () => exportPNG(T);
   $('#exEnds').onclick = exportFramePack;
   $('#sheetSave').onclick = () => { if (sheetBlob) saveFile(nameFrom(['contact-sheet']) + '.png', sheetBlob); };

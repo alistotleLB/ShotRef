@@ -655,6 +655,20 @@ const ok = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
     await kill(app);
   });
 
+  await check('a video export ends on "Video saved", naming the file and the folder it was saved in', async () => {
+    const { app, page } = await launch();
+    const dir = path.join(tmp, 'videos'); fs.mkdirSync(dir, { recursive: true });
+    const out = path.join(dir, 'clip.mp4');
+    await stubDialogs(app, [out]);
+    await page.evaluate(() => { const s = window.__shotref.state.settings; s.size = 1280; s.duration = 1; window.__shotref.changed(true, true); });
+    await page.click('#bExport'); await sleep(200); await page.click('#xoVideo');
+    await page.waitForSelector('#exDone:not([hidden])', { timeout: 60000 });
+    const d = await page.evaluate(() => ({ head: document.querySelector('#exDoneT').textContent, file: document.querySelector('#exFile').textContent, where: document.querySelector('#exWhere').textContent, focus: document.activeElement && document.activeElement.id }));
+    ok(fs.existsSync(out) && fs.statSync(out).size > 1024, 'no video written');
+    ok(d.head === 'Video saved' && d.file.startsWith('clip.mp4 · ') && d.where === 'Look in ' + dir + '.' && d.focus === 'exDoneBtn', 'finish window: ' + JSON.stringify(d));
+    await kill(app);
+  });
+
   for (const a of apps) await kill(a);
   try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (e) { /* leftover temp folder is harmless */ }
   const bad = results.filter(r => !r[1]).length;

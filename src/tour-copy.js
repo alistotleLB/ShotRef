@@ -51,7 +51,7 @@ export const TOUR_COPY = {
     },
     'b-add': {
       title: 'The Add tab',
-      text: 'People and props wait here, like a prop truck. Click one, then click the floor to place it.',
+      text: 'People and props wait here: click one, then click the floor to place it. In Frame and Export this panel folds away to give the picture room, and its Add and Items buttons bring it back.',
     },
     'b-picture': {
       title: 'The picture',

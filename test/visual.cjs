@@ -58,6 +58,11 @@ const SCREENS = [
     await p.evaluate(() => { const S = window.__shotref; for (let i = 0; i < 3; i++) S.addObject('building'); S.addObject('lamp'); S.addObject('sofa'); S.addObject('tree'); const c = S.addObject('car'); c.keys.push({ t: 0, p: [0, 0, 0], r: [0, 0, 0], s: [1, 1, 1] }); S.setPref('olClosed', { Buildings: true }); S.select(c.id, 'single'); S.changed(true, true); });
     await p.click('#leftTabs [data-lt=scene]'); await p.waitForTimeout(400);
   } },
+  { name: '13-export-done', note: 'step 3 Export, a short video exported from the panel: the "Video saved" window', run: async p => {
+    await p.evaluate(() => { const s = window.__shotref.state.settings; s.size = 1280; s.duration = 1; window.__shotref.changed(true, true); });
+    await p.click('#bExport'); await p.waitForTimeout(300); await p.click('#xoVideo');
+    await p.waitForSelector('#exDone:not([hidden])', { timeout: 60000 });
+  } },
 ];
 
 async function main() {

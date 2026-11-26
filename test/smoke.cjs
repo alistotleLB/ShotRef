@@ -550,7 +550,8 @@ check('export settings are locked while exporting', async ({ open, downloads }) 
   await startExport(p, 1280, 4);
   const info = await p.evaluate(() => [...document.querySelectorAll('#mExport input, #mExport select, #mExport button')].filter(e => e.id !== 'exCancel' && !e.disabled).map(e => e.id || e.className || e.textContent.trim().slice(0, 20)));
   ok(info.length === 0, 'controls still enabled during export: ' + info.join(', '));
-  await p.click('#mExport [data-close]', { force: true });
+  ok(await p.evaluate(() => !document.querySelector('#mExport .x').getClientRects().length), 'the × shows while the video renders (only Cancel should)');
+  await p.evaluate(() => document.querySelector('#mExport .x').click()); /* even a script click on the hidden × does not close it */
   await p.keyboard.press('Escape');
   await p.mouse.click(5, 450);
   const open1 = await p.evaluate(() => !document.querySelector('#mExport').classList.contains('hidden'));
@@ -570,13 +571,16 @@ check('export settings are locked while exporting', async ({ open, downloads }) 
 check('keyboard cannot change the scene while exporting', async ({ open, downloads }) => {
   const p = await open();
   await startExport(p, 1280, 4);
-  const before = await p.evaluate(() => JSON.stringify(window.__shotref.state));
+  /* Enter or Space on Cancel may end the export, and the small window then closes (task 5): keys after that reach the page, which is fine.
+     So every key is judged at the moment it lands, while the video still renders. */
+  await p.evaluate(() => {
+    const S = window.__shotref, b = JSON.stringify(S.state), run = () => !document.querySelector('#exCancel').hidden; window.__kbBad = [];
+    window.addEventListener('keyup', e => { if (!run()) return; if (JSON.stringify(S.state) !== b) window.__kbBad.push('state changed after ' + e.key); if (!document.querySelector('#mConfirm').classList.contains('hidden')) window.__kbBad.push('a confirm box opened after ' + e.key); if (document.querySelector('#mExport').classList.contains('hidden')) window.__kbBad.push('the export window closed after ' + e.key); }, true);
+  });
   for (let i = 0; i < 14; i++) { await p.keyboard.press('Tab'); await p.keyboard.press('Enter'); await p.keyboard.press('Space'); }
   await p.keyboard.press('Control+z');
-  const after = await p.evaluate(() => ({ s: JSON.stringify(window.__shotref.state), conf: !document.querySelector('#mConfirm').classList.contains('hidden'), exp: !document.querySelector('#mExport').classList.contains('hidden') }));
-  ok(after.s === before, 'scene state changed during export');
-  ok(!after.conf, 'a confirm box opened during export');
-  ok(after.exp, 'export dialog closed');
+  const bad = await p.evaluate(() => window.__kbBad);
+  ok(!bad.length, 'while exporting: ' + bad.join('; '));
   /* Enter/Space on Cancel may legitimately cancel the export, so just wait for it to end */
   await p.waitForFunction(() => document.querySelector('#exCancel').hidden, null, { timeout: 60000 });
   noPageErrors(p, 'keyboard during export');
@@ -610,9 +614,9 @@ check('lost graphics context does not save an empty video', async ({ open, downl
   await p.evaluate(() => { window.__shotref.exportVideo(); });
   const end = Date.now() + 40000; let res = null;
   while (Date.now() < end) {
-    const s = await p.evaluate(() => ({ dl: window.__dl.map(d => ({ n: d.name, s: d.size })), toast: document.querySelector('#toast').textContent, txt: document.querySelector('#exTxt').textContent, show: document.querySelector('#toast').classList.contains('show') }));
+    const s = await p.evaluate(() => ({ dl: window.__dl.map(d => ({ n: d.name, s: d.size })), toast: document.querySelector('#toast').textContent, err: document.querySelector('#exFail').hidden ? '' : document.querySelector('#exErr').textContent, txt: document.querySelector('#exTxt').textContent, show: document.querySelector('#toast').classList.contains('show') }));
     if (s.dl.length) { res = s; break; }
-    if (/stopped because|couldn.t make an MP4/.test(s.toast)) { res = s; break; }
+    if (/stopped because|couldn.t make an MP4/.test(s.toast + ' ' + s.err)) { res = s; break; } /* task 5: the error shows in the Export window ("Video not saved") */
     await p.waitForTimeout(300);
   }
   ok(res, 'neither a video nor an error message appeared');
@@ -627,8 +631,9 @@ check('cancel clears the progress text', async ({ open }) => {
   await p.waitForFunction(() => /Rendering frame/.test(document.querySelector('#exTxt').textContent), null, { timeout: 20000 });
   await p.click('#exCancel');
   await p.waitForFunction(() => document.querySelector('#exCancel').hidden, null, { timeout: 20000 });
-  const s = await p.evaluate(() => ({ txt: document.querySelector('#exTxt').textContent, w: document.querySelector('#exBar').style.width }));
+  const s = await p.evaluate(() => ({ txt: document.querySelector('#exTxt').textContent, w: document.querySelector('#exBar').style.width, open: !document.querySelector('#mExport').classList.contains('hidden') }));
   ok(s.txt === '' && (s.w === '0%' || s.w === '0.0%' || s.w === ''), 'progress left behind: "' + s.txt + '" ' + s.w);
+  ok(!s.open, 'Cancel did not close the small export window');
 }, { timeout: 60000 });
 
 check('duration 0 becomes the minimum', async ({ open }) => {
@@ -1073,14 +1078,14 @@ check('shortcut letters do not change a focused dropdown', async ({ open }) => {
   await p.waitForTimeout(300);
   await goAdvanced(p);
   await p.waitForTimeout(300);
-  const g0 = await p.evaluate(() => window.__shotref.state.settings.guides);
-  await p.evaluate(() => { window.__shotref.setPref('camTab', 'output'); window.__shotref.select(null); window.__shotref.select('camera'); }); await p.waitForTimeout(300); /* the camera panel is tabbed (batch F): Guides is on the Output tab */
-  ok(await focusPropSelect(p, 'Guides') !== null, 'setup: no Guides dropdown in the camera panel');
+  const g0 = await p.evaluate(() => { window.__shotref.addObject('car'); return window.__shotref.state.camera.mount || ''; });
+  await p.evaluate(() => { window.__shotref.setPref('camTab', 'shot'); window.__shotref.select(null); window.__shotref.select('camera'); }); await p.waitForTimeout(300); /* task 5: Guides moved above the picture; Mount on (a dropdown on the Shot tab) now lists "Car 1", which type-ahead C would pick */
+  ok(await focusPropSelect(p, 'Mount on') !== null, 'setup: no Mount on dropdown in the camera panel');
   await p.keyboard.press('c');
   await p.waitForTimeout(200);
-  const s = await p.evaluate(() => ({ g: window.__shotref.state.settings.guides, view: window.__shotref.view }));
+  const s = await p.evaluate(() => ({ g: window.__shotref.state.camera.mount || '', view: window.__shotref.view }));
   ok(s.view === 'camera', 'C did not switch to camera view (view ' + s.view + ')');
-  ok(s.g === g0, 'pressing C changed Guides from ' + g0 + ' to ' + s.g);
+  ok(s.g === g0, 'pressing C changed Mount on from "' + g0 + '" to "' + s.g + '"');
   await p.evaluate(() => { window.__shotref.setPref('camTab', 'shot'); window.__shotref.select(null); window.__shotref.select('camera'); }); await p.waitForTimeout(300); /* Look at is on the Shot tab */
   const v0 = await focusPropSelect(p, 'Look at');
   ok(v0 !== null, 'setup: no Look at dropdown in the camera panel');
@@ -1426,14 +1431,18 @@ check('Tab from the depth range fields stays in the export dialog', async ({ ope
 
 check('depth range labels cannot be dragged while exporting', async ({ open }) => {
   const p = await open();
-  await p.evaluate(() => { const s = window.__shotref.state.settings; s.style = 'depth'; s.depthAuto = false; s.depthNear = 1; s.depthFar = 20; window.__shotref.changed(true, true); });
-  await startExport(p, 1280, 4);
+  await p.evaluate(() => { const s = window.__shotref.state.settings; s.style = 'depth'; s.depthAuto = false; s.depthNear = 1; s.depthFar = 20; s.size = 1280; s.duration = 4; window.__shotref.changed(true, true); });
+  await exportDialog(p); /* from Video options…: the options are swapped for the progress while the video renders (task 5) */
+  await p.click('#exVideo');
   await p.waitForFunction(() => /Rendering frame/.test(document.querySelector('#exTxt').textContent), null, { timeout: 20000 });
-  const b = await p.locator('#exDepthRow .nf-l').first().boundingBox();
-  ok(b, 'setup: no Near label');
-  await p.mouse.move(b.x + b.width / 2, b.y + b.height / 2); await p.mouse.down();
-  for (let i = 1; i <= 8; i++) await p.mouse.move(b.x + b.width / 2 + i * 20, b.y + b.height / 2);
-  await p.mouse.up();
+  ok(await p.evaluate(() => !!document.querySelector('#exDepthRow .nf-l') && !document.querySelector('#exDepthRow').getClientRects().length), 'the depth range shows while the video renders');
+  /* the hidden label still refuses a drag sent straight to it */
+  await p.evaluate(() => {
+    const l = document.querySelector('#exDepthRow .nf-l'), o = { bubbles: true, pointerId: 1, clientX: 100, clientY: 100, button: 0 };
+    l.dispatchEvent(new PointerEvent('pointerdown', o));
+    for (let i = 1; i <= 8; i++) l.dispatchEvent(new PointerEvent('pointermove', { ...o, clientX: 100 + i * 20 }));
+    l.dispatchEvent(new PointerEvent('pointerup', { ...o, clientX: 260 }));
+  }).catch(() => { });
   const near = await p.evaluate(() => window.__shotref.state.settings.depthNear);
   ok(near === 1, 'depthNear changed during export: ' + near);
   await p.click('#exCancel');
@@ -1445,8 +1454,9 @@ check('small mp4 shows its size in KB', async ({ open, downloads }) => {
   await startExport(p, 320, 0.5);
   const f = await downloads(p).wait('.mp4', 50000);
   ok(f.size < 0.1 * 1048576, 'setup: test video is ' + f.size + ' bytes, not under 0.1 MB');
-  const t = await p.textContent('#exTxt');
-  ok(/^Done: \d+ KB$/.test(t), 'progress says "' + t + '"');
+  await p.waitForSelector('#exDone:not([hidden])', { timeout: 20000 });
+  const t = await p.textContent('#exFile');
+  ok(/ · \d+ KB$/.test(t) && t.startsWith(f.name), 'the finish line says "' + t + '"');
 }, { timeout: 80000 });
 
 check('repeated object ids are made unique', async ({ open }) => {
@@ -1486,13 +1496,13 @@ check('frame pack (from the Video options window) stops after a failed frame', a
   noPageErrors(p);
 });
 
-check('focus returns to Export video when an export ends', async ({ open, downloads }) => {
+check('focus goes to Done when an export ends (it was Export video before the finish window)', async ({ open, downloads }) => {
   const p = await open();
   await startExport(p, 1280, 1);
   await downloads(p).wait('.mp4', 50000);
   await p.waitForFunction(() => document.querySelector('#exCancel').hidden, null, { timeout: 20000 });
   const a = await p.evaluate(() => document.activeElement && (document.activeElement.id || document.activeElement.tagName));
-  ok(a === 'exVideo', 'focus is on ' + a);
+  ok(a === 'exDoneBtn', 'focus is on ' + a);
 }, { timeout: 80000 });
 
 check('branding: tab icon, top-bar mark and welcome header', async ({ open, freshContext }) => {
@@ -2161,7 +2171,7 @@ check('viewport has one icon toolbar with tooltips; Simple hides the arrows', as
   const p = await open();
   ok(await p.$('#vpTools') === null, 'the old tool group is still there');
   const info = await p.evaluate(() => [...document.querySelectorAll('#vpRight .ib')].map(b => ({ id: b.id || b.dataset.g, tip: b.dataset.tip, shown: b.getClientRects().length > 0 })));
-  ok(info.length === 8 && info.every(i => i.tip), 'expected 8 icon buttons with tooltips: ' + JSON.stringify(info));
+  ok(info.length === 10 && info.every(i => i.tip), 'expected 10 icon buttons (8 + the camera view\'s aspect and guides) with tooltips: ' + JSON.stringify(info));
   ok(info.filter(i => i.shown).map(i => i.id).join() === 'bSnapGrid,bFocus,bGrid,bPip,bCamHere', 'Simple should show Snap, Zoom to, Grid, Preview, Camera here: ' + info.filter(i => i.shown).map(i => i.id));
   await p.hover('#bFocus');
   const tip = await p.evaluate(() => { const t = document.querySelector('#tip'); return t.classList.contains('show') ? t.textContent : 'none'; });
@@ -2172,6 +2182,8 @@ check('viewport has one icon toolbar with tooltips; Simple hides the arrows', as
   ok(await p.evaluate(() => document.querySelector('#vpRight [data-g=rotate]').classList.contains('on')), 'Rotate button did not light up');
   await p.keyboard.press('c');
   ok(await p.evaluate(() => [...document.querySelectorAll('#vpRight [data-g], #bSnapGrid, #bFocus, #bPip, #bCamHere')].every(b => b.getClientRects().length === 0)), 'Camera view should hide the editor tools');
+  const cam = await p.evaluate(() => [...document.querySelectorAll('#vpRight .ib')].filter(b => b.getClientRects().length).map(b => b.id).join());
+  ok(cam === 'bAspect,bGuides', 'the camera view shows the aspect chip and the guides button only: ' + cam);
 });
 
 check('timeline: Simple hides frame count, Remove key and FPS; Tracks collapse', async ({ open }) => {
@@ -3373,11 +3385,11 @@ check('shot description: the camera view says shot size, lens, angle and the mov
   noErrors(p);
 });
 
-check('camera panel: tabs Shot, Move, Lens, Photo, Output; the choice is remembered; a dot marks tabs in use', async ({ open }) => {
+check('camera panel: tabs Shot, Move, Lens; the choice is remembered; a dot marks tabs in use', async ({ open }) => {
   const p = await open(); await settle(p, 300);
   await p.evaluate(() => window.__shotref.select('camera')); await settle(p, 300);
   const names = await p.evaluate(() => [...document.querySelectorAll('#props .tabs button')].map(b => b.textContent.trim()));
-  ok(names.join() === 'Shot,Move,Lens,Photo,Output', 'tabs: ' + names);
+  ok(names.join() === 'Shot,Move,Lens', 'tabs: ' + names);
   ok(await p.evaluate(() => document.querySelector('#props .tabs button.on').textContent.trim()) === 'Move', 'Move is the first tab to show');
   ok(await p.evaluate(() => !!document.querySelector('#props .movecard')), 'the Move tab has the Camera move card');
   await camTab(p, 'Lens');
@@ -3387,12 +3399,17 @@ check('camera panel: tabs Shot, Move, Lens, Photo, Output; the choice is remembe
   ok(await p.evaluate(() => document.querySelector('#props .tabs button.on').textContent.trim()) === 'Lens', 'it comes back on Lens');
   await camTab(p, 'Shot');
   ok(/Subject/.test(await p.textContent('#props')) && /Mount on/.test(await p.textContent('#props')), 'the Shot tab has Subject and Mount');
-  await camTab(p, 'Photo'); ok(/Location photo/.test(await p.textContent('#props')), 'the Photo tab has the location photo');
-  await camTab(p, 'Output'); ok(/Aspect/.test(await p.textContent('#props')) && /Guides/.test(await p.textContent('#props')), 'the Output tab has aspect and guides');
+  ok(/Location photo/.test(await p.textContent('#props')), 'the Shot tab has the location photo');
   ok(await p.evaluate(() => !document.querySelector('#props .tabs .tdot')), 'no dot while nothing is in use');
   await p.evaluate(() => { const S = window.__shotref; S.state.camera.dof.on = true; S.state.camera.keys = [{ t: 0, p: [0, 1.6, 8], tg: [0, 1, 0], f: 35, roll: 0, fd: 6 }, { t: 5, p: [0, 1.6, 5], tg: [0, 1, 0], f: 35, roll: 0, fd: 6 }]; S.changed(true, true); }); await settle(p, 300);
   const dots = await p.evaluate(() => [...document.querySelectorAll('#props .tabs button')].filter(b => b.querySelector('.tdot')).map(b => b.textContent.trim()));
   ok(dots.join() === 'Move,Lens', 'dots on Move (keys) and Lens (blur on): ' + dots);
+  await p.setInputFiles('#fPlate', path.join(FIX, 'location.jpg'));
+  await p.waitForFunction(() => window.__shotref.state.plate, null, { timeout: 5000 }); await settle(p, 300);
+  const dots2 = await p.evaluate(() => [...document.querySelectorAll('#props .tabs button')].filter(b => b.querySelector('.tdot')).map(b => b.textContent.trim()));
+  ok(dots2.join() === 'Shot,Move,Lens', 'a loaded location photo puts the dot on Shot: ' + dots2);
+  await p.evaluate(() => { window.__shotref.setPref('camTab', 'output'); window.__shotref.select(null); window.__shotref.select('camera'); }); await settle(p, 300);
+  ok(await p.evaluate(() => document.querySelector('#props .tabs button.on').textContent.trim()) === 'Shot', 'a remembered Output tab from an older build opens Shot');
   noErrors(p);
 });
 
@@ -4149,6 +4166,8 @@ check('every shot renders one video per shot, named after the shot, with each sh
   const s = await stateOf(p);
   ok(s.shotId === s.shots[0].id && s.settings.duration === 1, 'the first shot is not active again: ' + JSON.stringify([s.shotId, s.settings.duration]));
   ok(await p.evaluate(() => [...document.body.children].every(e => !e.inert)), 'page still locked');
+  const fin = await p.evaluate(() => ({ shown: !document.querySelector('#exDone').hidden, head: document.querySelector('#exDoneT').textContent, file: document.querySelector('#exFile').textContent }));
+  ok(fin.shown && fin.head === '2 videos saved' && /and 1 more/.test(fin.file), 'the finish window after every shot: ' + JSON.stringify(fin));
   noErrors(p);
 }, { timeout: 120000 });
 
@@ -6159,12 +6178,14 @@ check('drag and drop: works in the top view, the camera view and both halves of 
   ok(await nObj(p) === n0 + 1, 'top view: nothing added');
   let d = await dropNear(p, x, y); ok(d < 30, 'top view: landed ' + Math.round(d) + ' px away');
   await p.evaluate(() => window.__shotref.setView('camera')); await settle(p, 300);
+  if (await p.evaluate(() => document.querySelector('#app').classList.contains('lfold'))) { await p.click('#stripAdd'); await settle(p, 300); } /* task 5: step 2 folds the panel; the strip's Add brings it back */
   const fr = await p.evaluate(() => { const r = document.querySelector('#camFrame').getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; });
   x = fr.x + fr.w * 0.5; y = fr.y + fr.h * 0.85;
   await dragTile(p, '#addArea .tile:text-is("Box")', x, y);
   ok(await nObj(p) === n0 + 2, 'camera view: nothing added');
   d = await dropNear(p, x, y); ok(d < 30, 'camera view: landed ' + Math.round(d) + ' px away');
   await p.evaluate(() => window.__shotref.setView('editor')); await settle(p, 200); await splitOn(p);
+  if (await p.evaluate(() => document.querySelector('#app').classList.contains('lfold'))) { await p.click('#stripAdd'); await settle(p, 300); }
   cb = await canvasBox(p);
   x = cb.x + cb.w * 0.25; y = cb.y + cb.h * 0.7;
   await dragTile(p, '#addArea .tile[data-body="woman"]', x, y);
@@ -6694,6 +6715,7 @@ check('feel preview: hover replays the shot move with that feel', async ({ open 
 });
 check('feel preview: static camera falls back to a dolly in, bottom bar opens above', async ({ open }) => {
   const p = await open(); await settle(p, 300);
+  await goAdvanced(p); /* task 5: the timeline's motion feel buttons show in Advanced mode only */
   await p.evaluate(() => { const S = window.__shotref; S.addObject('person'); S.state.camera.keys = []; delete S.state.camera.feel; S.changed(true, true); }); await settle(p, 600);
   const before = await p.evaluate(() => JSON.stringify(window.__shotref.state)); /* a file without a feel field must stay without one */
   const btn = '#feelBar button[data-feel="strong"]';
@@ -7251,12 +7273,12 @@ check('names: Render style, Constant/Gentle/Strong, Full cover, and people named
   const p = await open(); await settle(p, 400);
   const text = () => p.evaluate(() => document.body.innerText);
   const bad = t => /View style|Gentle ease|Strong ease/.test(t);
-  for (const tab of ['Shot', 'Move', 'Lens', 'Photo', 'Output']) { await camTab(p, tab); ok(!bad(await text()), 'old name on the ' + tab + ' tab'); }
+  for (const tab of ['Shot', 'Move', 'Lens']) { await camTab(p, tab); ok(!bad(await text()), 'old name on the ' + tab + ' tab'); }
   await camTab(p, 'Move');
   const feels = await p.evaluate(() => [...document.querySelectorAll('#feelBar button, #props .seg.feel button')].map(b => b.textContent.trim()).join());
   ok(/Constant,Gentle,Strong/.test(feels), 'motion feel names: ' + feels);
-  await camTab(p, 'Output');
-  ok(/Render style/.test(await text()), 'Render style is missing');
+  await p.evaluate(() => window.__shotref.select('export')); await settle(p, 300); await p.click('#xoChange'); await settle(p, 150); /* task 5: Render style lives in the Export panel */
+  ok(/Render style/.test(await text()) && !bad(await text()), 'Render style is missing from the Export panel');
   await p.evaluate(() => window.__shotref.select(null)); await settle(p, 300);
   const tiles = await p.evaluate(() => [...document.querySelectorAll('#props .skytiles button')].map(b => b.textContent.trim()));
   ok(tiles.join() === 'Clear,Few,Scattered,Cloudy,Full cover', 'cloud tiles: ' + tiles.join());
@@ -7355,5 +7377,233 @@ check('first run: the end-of-tour words on the web page point to the gear button
   const t = await p.evaluate(() => JSON.stringify(window.__shotref.basicStops ? window.__shotref.basicStops() : []));
   ok(t.length > 10, 'no basicStops hook: ' + t);
   ok(/gear button, top right/.test(t) && !/Help menu/.test(t), 'tour words: ' + t);
+  noErrors(p);
+});
+
+/* ---- UI audit task 5: one home per control, a roomier picture, a clear export finish ---- */
+const visibleText = (p, sel, txt) => p.evaluate(([s, t]) => [...document.querySelectorAll(s)].filter(b => b.getClientRects().length && b.textContent.replace('✓', '').trim() === t).length, [sel, txt]);
+const leftW = p => p.evaluate(() => Math.round(document.querySelector('#left').getBoundingClientRect().width));
+const vpW = p => p.evaluate(() => Math.round(document.querySelector('#vp').getBoundingClientRect().width));
+/* the canvas's drawing buffer against its size on screen, read in the first frame after a fold: the same ratio means no stretched frame */
+const canvasFit = p => p.evaluate(() => new Promise(r => requestAnimationFrame(() => { const c = document.querySelector('#c'); r({ buf: c.width, css: c.clientWidth }); })));
+
+check('one home: Set start shows once in the camera view (above the picture) and once in the Move tab when no pane shows the camera', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => { const S = window.__shotref; S.setPref('camTab', 'move'); S.select('camera'); S.setView('camera'); }); await settle(p, 400);
+  ok(await visibleText(p, 'button', 'Set start') === 1 && await visibleText(p, 'button', 'Set end') === 1, 'camera view: Set start ×' + await visibleText(p, 'button', 'Set start') + ', Set end ×' + await visibleText(p, 'button', 'Set end'));
+  ok(await p.evaluate(() => !!document.querySelector('#camBar #cbStart').getClientRects().length), 'the one Set start is not the one above the picture');
+  await p.click('#bSplit'); await settle(p, 400);
+  ok(await visibleText(p, 'button', 'Set start') === 1, 'split view: Set start ×' + await visibleText(p, 'button', 'Set start'));
+  await p.click('#bSplit'); await settle(p, 200);
+  await p.evaluate(() => { const S = window.__shotref; S.setView('editor'); S.select('camera'); }); await settle(p, 400);
+  ok(await visibleText(p, '#props .movecard button', 'Set start') === 1 && await visibleText(p, 'button', 'Set start') === 1, 'editor view: the Move tab should hold the one Set start: ' + await visibleText(p, 'button', 'Set start'));
+  await p.click('#props .movecard button:has-text("Set start")'); await settle(p, 300);
+  ok(await p.evaluate(() => window.__shotref.state.camera.keys.length) === 1, 'the Move tab\'s Set start did not key the camera');
+  noErrors(p);
+});
+
+check('one home: the timeline\'s motion feel buttons show in Advanced mode only; the Move tab always has them', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => window.__shotref.setSimple(true)); await settle(p, 200);
+  ok(await p.evaluate(() => !document.querySelector('#feelBar').getClientRects().length), '#feelBar shows in normal mode');
+  await camTab(p, 'Move');
+  ok(await p.evaluate(() => [...document.querySelectorAll('#props .seg.feel button')].map(b => b.textContent.trim()).join()) === 'Constant,Gentle,Strong', 'the Move tab has no motion feel');
+  await p.click('#props .seg.feel button:has-text("Strong")'); await settle(p, 200);
+  ok(await p.evaluate(() => window.__shotref.state.camera.feel) === 'strong', 'the Move tab did not set the feel');
+  await p.evaluate(() => window.__shotref.setSimple(false)); await settle(p, 200);
+  ok(await p.evaluate(() => document.querySelector('#feelBar').getClientRects().length > 0), '#feelBar hidden in Advanced mode');
+  ok(await p.evaluate(() => document.querySelector('#feelBar [data-feel=strong]').classList.contains('on')), 'the timeline buttons do not show the same choice');
+  noErrors(p);
+});
+
+check('one home: the camera panel has exactly Shot, Move, Lens; the photo is on Shot, folded until one is loaded; the button above the picture opens it there', async ({ freshContext }) => {
+  const fc = await freshContext({ keepFolds: true }); const p = await fc.open(); await settle(p, 300);
+  await p.evaluate(() => { const S = window.__shotref; S.setPref('camTab', 'shot'); S.select('camera'); S.setView('camera'); }); await settle(p, 400);
+  ok(await p.evaluate(() => [...document.querySelectorAll('#props .tabs button')].map(b => b.textContent.trim()).join()) === 'Shot,Move,Lens', 'tabs');
+  const sec = () => p.evaluate(() => { const s = [...document.querySelectorAll('#props .sec')].find(x => x.querySelector('h3').firstChild.textContent.trim() === 'Location photo'); return s ? { closed: s.classList.contains('closed'), top: s.getBoundingClientRect().top, text: s.textContent } : null; });
+  const s0 = await sec();
+  ok(s0 && s0.closed, 'the Location photo section should be on the Shot tab and folded with no photo: ' + JSON.stringify(s0));
+  const heads = await p.evaluate(() => [...document.querySelectorAll('#props .sec > h3')].map(h => h.firstChild.textContent.trim()));
+  ok(heads.indexOf('Shot size') < heads.indexOf('Subject') && heads.indexOf('Subject') < heads.indexOf('Location photo') && heads.indexOf('Location photo') < heads.indexOf('Mount'), 'order Shot size, Subject, Location photo, Mount: ' + heads.join());
+  ok(!/Aspect|Guides|Render style/.test(await p.innerText('#props')), 'Aspect, Guides or Render style are still in the camera panel');
+  await p.setInputFiles('#fPlate', path.join(FIX, 'location.jpg'));
+  await p.waitForFunction(() => window.__shotref.state.plate, null, { timeout: 5000 }); await settle(p, 400);
+  const s1 = await sec();
+  ok(s1 && !s1.closed && /See-through/.test(s1.text), 'with a photo loaded the section is open: ' + JSON.stringify(s1 && { closed: s1.closed }));
+  await p.click('#props .tabs button:has-text("Lens")'); await settle(p, 300);
+  await p.click('#cbPlate'); await settle(p, 400);
+  ok(await p.evaluate(() => document.querySelector('#props .tabs button.on').textContent.trim()) === 'Shot', 'Location photo above the picture did not open the Shot tab');
+  const s2 = await sec(), pr = await p.evaluate(() => { const r = document.querySelector('#right').getBoundingClientRect(); return [r.top, r.bottom]; });
+  ok(s2 && !s2.closed && s2.top >= pr[0] && s2.top < pr[1] - 40, 'the photo section is not open and in view: ' + JSON.stringify({ s2: s2 && { closed: s2.closed, top: s2.top }, pr }));
+  noErrors(p);
+});
+
+check('one home: the aspect chip and the guides button above the picture change the aspect and the guides', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => { const S = window.__shotref; S.select('camera'); S.setView('camera'); }); await settle(p, 400);
+  ok((await p.textContent('#bAspect')).trim() === '16:9', 'the chip shows ' + await p.textContent('#bAspect'));
+  await p.click('#bAspect'); await settle(p, 150);
+  const items = await p.evaluate(() => [...document.querySelectorAll('#ctxMenu [data-cmd]')].map(b => b.dataset.cmd + (b.getAttribute('aria-checked') === 'true' ? '*' : '')));
+  ok(items.length === 7 && items[0] === 'aspect-16:9*', 'aspect menu: ' + items.join());
+  await p.click('#ctxMenu [data-cmd="aspect-9:16"]'); await settle(p, 300);
+  ok(await p.evaluate(() => window.__shotref.state.settings.aspect) === '9:16', 'the menu did not set the aspect');
+  ok((await p.textContent('#bAspect')).trim() === '9:16', 'the chip did not follow: ' + await p.textContent('#bAspect'));
+  await p.click('#bGuides'); await settle(p, 150);
+  const g = await p.evaluate(() => [...document.querySelectorAll('#ctxMenu [role=menuitemcheckbox]')].map(b => b.textContent.replace('✓', '').trim() + (b.getAttribute('aria-checked') === 'true' ? '*' : '')));
+  ok(g.join() === 'Rule of thirds*,Centre cross,Safe areas,None', 'guides menu: ' + g.join());
+  await p.click('#ctxMenu [data-cmd="guides-safe"]'); await settle(p, 300);
+  ok(await p.evaluate(() => window.__shotref.state.settings.guides) === 'safe' && await p.evaluate(() => document.querySelectorAll('#guides rect').length === 2), 'Safe areas did not apply');
+  await p.click('#bGuides'); await settle(p, 150); await p.click('#ctxMenu [data-cmd="guides-none"]'); await settle(p, 300);
+  ok(await p.evaluate(() => window.__shotref.state.settings.guides === 'none' && document.querySelector('#guides').innerHTML === ''), 'None did not clear the guides');
+  await p.keyboard.press('Control+z'); await settle(p, 300);
+  ok(await p.evaluate(() => window.__shotref.state.settings.guides) === 'safe', 'a guides change is not one undo step');
+  /* the buttons above the picture keep clear of the wider icon cluster, at 1100 x 700 too */
+  for (const [W, H] of [[1440, 900], [1100, 700]]) {
+    await p.setViewportSize({ width: W, height: H }); await settle(p, 300);
+    const r = await p.evaluate(() => { const c = document.querySelector('#vpRight').getBoundingClientRect(); return { cl: c.left, bars: [...document.querySelectorAll('#camBar button')].map(b => b.getBoundingClientRect()).map(b => [b.left, b.top, b.right, b.bottom]), ct: c.top, cb: c.bottom }; });
+    ok(!r.bars.some(b => b[2] > r.cl && b[1] < r.cb && b[3] > r.ct), W + ' px: a camera button meets the icon cluster: ' + JSON.stringify(r));
+  }
+  noErrors(p);
+});
+
+check('roomier picture: the left panel is 44 px in Frame and Export, 236 px in Build, opens from the strip and folds with «; the view grows by 192 px and never stretches', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  ok(await p.evaluate(() => window.__shotref.step) === 'build' && await leftW(p) === 236, 'Build: ' + await leftW(p));
+  const v1 = await vpW(p), f0 = await canvasFit(p), ratio = f0.buf / f0.css;
+  await p.click('#stepSeg [data-step="frame"]');
+  const f1 = await canvasFit(p);
+  ok(Math.abs(f1.buf / f1.css - ratio) < 0.01, 'the first frame after folding is stretched: ' + JSON.stringify({ f0, f1 }));
+  await settle(p, 200);
+  ok(await leftW(p) === 44, 'Frame: ' + await leftW(p));
+  ok(await vpW(p) - v1 === 192, 'the 3D view grew by ' + (await vpW(p) - v1) + ' px, not 192');
+  ok(await p.evaluate(() => ['stripAdd', 'stripItems'].every(id => { const b = document.getElementById(id), r = b.getBoundingClientRect(); return r.width >= 24 && r.height >= 24 && !!b.dataset.tip && !!b.querySelector('svg'); })), 'the strip needs two drawn buttons with the app\'s tooltip');
+  await p.click('#stripItems');
+  const f2 = await canvasFit(p);
+  ok(Math.abs(f2.buf / f2.css - ratio) < 0.01, 'the first frame after opening is stretched: ' + JSON.stringify(f2));
+  await settle(p, 200);
+  ok(await leftW(p) === 236 && await p.evaluate(() => document.querySelector('#leftTabs .on').dataset.lt) === 'scene', 'Items did not open the panel on Items');
+  await p.evaluate(() => window.__shotref.setT ? window.__shotref.setT(1) : null); await settle(p, 200);
+  ok(await leftW(p) === 236, 'the hand choice did not hold within the step');
+  await p.click('#bFold'); await settle(p, 200);
+  ok(await leftW(p) === 44, '« did not fold it: ' + await leftW(p));
+  ok(await p.evaluate(() => document.activeElement && document.activeElement.id) === 'stripAdd', 'focus fell out of the panel when it folded');
+  await p.click('#stripAdd'); await settle(p, 200);
+  ok(await leftW(p) === 236 && await p.evaluate(() => document.querySelector('#leftTabs .on').dataset.lt) === 'add', 'Add did not open the panel on Add');
+  await p.click('#stepSeg [data-step="export"]'); await settle(p, 300);
+  ok(await leftW(p) === 44, 'Export (a new step) should fold again: ' + await leftW(p));
+  await p.click('#stepSeg [data-step="build"]'); await settle(p, 300);
+  ok(await leftW(p) === 236 && await p.evaluate(() => getComputedStyle(document.querySelector('#bFold')).display) === 'none', 'Build should open the panel and hide «');
+  /* picking the camera inside the open panel keeps it open in the step that pick leads to */
+  await p.click('#leftTabs [data-lt=scene]'); await settle(p, 200);
+  await p.click('#outliner .ol:has-text("Shot camera")'); await settle(p, 300);
+  ok(await p.evaluate(() => window.__shotref.step) === 'frame' && await leftW(p) === 236, 'choosing Shot camera in Items folded the panel under the mouse');
+  noErrors(p);
+});
+
+check('roomier picture: folded at 1100 x 700 and in split view, the camera buttons, cluster and info pill stay apart', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.setViewportSize({ width: 1100, height: 700 }); await settle(p, 300);
+  await p.click('#stepSeg [data-step="frame"]'); await settle(p, 300);
+  ok(await leftW(p) === 44, 'narrow window: ' + await leftW(p));
+  await p.click('#bSplit'); await settle(p, 400);
+  ok(await leftW(p) === 44 && await p.evaluate(() => window.__shotref.step) === 'frame', 'split view in step 2 should stay folded');
+  const g = await p.evaluate(() => { const R = e => { const r = e.getBoundingClientRect(); return [r.left, r.top, r.right, r.bottom]; }; return { bar: [...document.querySelectorAll('#camBar button')].map(R), cl: R(document.querySelector('#vpRight')), hud: R(document.querySelector('#hud')) }; });
+  const hit = (a, b) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1];
+  ok(!g.bar.some(b => hit(b, g.cl) || hit(b, g.hud)), 'overlap in split view: ' + JSON.stringify(g));
+  noErrors(p);
+});
+
+check('export finish: the panel button shows only the progress (no Aspect), then "Video saved" with Done focused; Esc closes it', async ({ open, downloads }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => { const s = window.__shotref.state.settings; s.size = 1280; s.duration = 2; window.__shotref.changed(true, true); });
+  await p.click('#bExport'); await settle(p, 200); await p.click('#xoVideo');
+  await p.waitForFunction(() => /Rendering frame|Starting|Finishing/.test(document.querySelector('#exTxt').textContent), null, { timeout: 20000 });
+  const run = await p.evaluate(() => ({ title: document.querySelector('#exRunT').textContent, aspect: !!document.querySelector('#exAspect').getClientRects().length, shown: [...document.querySelectorAll('#mExport button, #mExport select, #mExport input')].filter(e => e.getClientRects().length).map(e => e.id || e.textContent.trim()) }));
+  ok(run.title === 'Exporting video…' && !run.aspect && run.shown.join() === 'exCancel', 'while rendering: ' + JSON.stringify(run));
+  const f = await downloads(p).wait('.mp4', 50000);
+  await p.waitForSelector('#exDone:not([hidden])', { timeout: 20000 });
+  const d = await p.evaluate(() => ({ head: document.querySelector('#exDoneT').textContent, file: document.querySelector('#exFile').textContent, where: document.querySelector('#exWhere').textContent, focus: document.activeElement && document.activeElement.id, main: document.querySelector('#exDoneBtn').classList.contains('primary'), tick: getComputedStyle(document.querySelector('.extick svg')).stroke, btns: [...document.querySelectorAll('#mExport button')].filter(e => e.getClientRects().length).map(e => e.textContent.trim()) }));
+  ok(d.head === 'Video saved' && d.file.startsWith(f.name + ' · ') && d.where === 'Look in your Downloads folder.', 'finish: ' + JSON.stringify(d));
+  ok(d.focus === 'exDoneBtn' && d.main && d.tick === 'rgb(89, 209, 138)', 'Done focused and main, tick green: ' + JSON.stringify(d));
+  ok(d.btns.join() === '×,Done,Copy prompt', 'buttons: ' + d.btns.join());
+  await settle(p, 2500);
+  ok(await p.evaluate(() => !document.querySelector('#mExport').classList.contains('hidden')), 'the finish window did not stay');
+  await p.keyboard.press('Escape'); await settle(p, 200);
+  ok(await p.evaluate(() => document.querySelector('#mExport').classList.contains('hidden')), 'Esc did not close it');
+  await p.click('#xoOptions'); await settle(p, 200);
+  ok(await p.evaluate(() => !document.querySelector('#exOpts').hidden && document.querySelector('#exDone').hidden), 'Video options… did not open on the options');
+  noErrors(p);
+}, { timeout: 90000 });
+
+check('export finish: from Video options… the options give way to the progress and the finish; Cancel there brings the options back', async ({ open, downloads }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => { const s = window.__shotref.state.settings; s.size = 1920; s.duration = 6; window.__shotref.changed(true, true); });
+  await exportDialog(p); await settle(p, 200);
+  await p.click('#exVideo');
+  await p.waitForFunction(() => /Rendering frame/.test(document.querySelector('#exTxt').textContent), null, { timeout: 20000 });
+  ok(await p.evaluate(() => !document.querySelector('#exAspect').getClientRects().length && !document.querySelector('#exStyles').getClientRects().length), 'the options show while rendering');
+  await p.click('#exCancel');
+  await p.waitForFunction(() => document.querySelector('#exCancel').hidden, null, { timeout: 20000 });
+  ok(await p.evaluate(() => !document.querySelector('#mExport').classList.contains('hidden') && !document.querySelector('#exOpts').hidden && document.activeElement.id === 'exVideo'), 'Cancel from the options window should bring the options back, focus on Export video');
+  await p.evaluate(() => { const s = window.__shotref.state.settings; s.size = 1280; s.duration = 1; window.__shotref.changed(true, true); });
+  await p.click('#exVideo');
+  await downloads(p).wait('.mp4', 50000);
+  await p.waitForSelector('#exDone:not([hidden])', { timeout: 20000 });
+  ok(await p.evaluate(() => document.querySelector('#exOpts').hidden), 'the options show with the finish');
+  await p.click('#exDoneBtn'); await settle(p, 200);
+  ok(await p.evaluate(() => document.querySelector('#mExport').classList.contains('hidden')), 'Done did not close the window');
+  noErrors(p);
+}, { timeout: 90000 });
+
+check('export finish: Copy prompt puts the prompt on the clipboard, or shows it selected when the clipboard is refused', async ({ open, ctx, base, downloads }) => {
+  await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: base.replace(/\/$/, '') }).catch(() => { });
+  const p = await open(); await settle(p, 300);
+  await startExport(p, 1280, 1);
+  await downloads(p).wait('.mp4', 50000);
+  await p.waitForSelector('#exDone:not([hidden])', { timeout: 20000 });
+  await p.click('#exCopyPrompt'); await settle(p, 300);
+  const r = await p.evaluate(async () => ({ clip: await navigator.clipboard.readText().catch(() => null), box: document.querySelector('#exPromptBox').hidden ? null : document.querySelector('#exPromptBox').value, toast: document.querySelector('#toast').textContent }));
+  const want = await p.evaluate(() => { window.__shotref.select('export'); return new Promise(res => requestAnimationFrame(() => requestAnimationFrame(() => res(document.querySelector('#props .promptbox') ? document.querySelector('#props .promptbox').value : '')))); });
+  ok(want.length > 20 && (r.clip === want || r.box === want), 'the prompt was neither copied nor shown: ' + JSON.stringify({ r, want: want.slice(0, 40) }));
+  ok(/Prompt copied|Ctrl\+C/.test(r.toast), 'Copy prompt said nothing: ' + r.toast);
+  /* the clipboard refused (as in some sandboxes): the prompt shows selected in the window */
+  await p.evaluate(() => { navigator.clipboard.writeText = () => Promise.reject(new Error('no')); document.execCommand = () => false; });
+  await p.click('#exCopyPrompt'); await settle(p, 300);
+  const fb = await p.evaluate(() => { const b = document.querySelector('#exPromptBox'); return { shown: !b.hidden && b.getClientRects().length > 0, sel: b.selectionEnd - b.selectionStart, len: b.value.length, focus: document.activeElement === b, toast: document.querySelector('#toast').textContent, bad: document.querySelector('#toast').classList.contains('bad') }; });
+  ok(fb.shown && fb.focus && fb.sel === fb.len && fb.len > 20 && /Ctrl\+C/.test(fb.toast) && fb.bad, 'fallback: ' + JSON.stringify(fb));
+  noErrors(p);
+}, { timeout: 90000 });
+
+check('export finish: a failed video shows the plain error with a Close button, and no "Video saved"', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => { const s = window.__shotref.state.settings; s.size = 1280; s.duration = 1; window.__shotref.changed(true, true); VideoEncoder.isConfigSupported = async () => ({ supported: false }); HTMLCanvasElement.prototype.captureStream = undefined; });
+  await p.click('#bExport'); await settle(p, 200); await p.click('#xoVideo');
+  await p.waitForSelector('#exFail:not([hidden])', { timeout: 20000 });
+  const r = await p.evaluate(() => ({ head: document.querySelector('#exFailT').textContent, err: document.querySelector('#exErr').textContent, done: document.querySelector('#exDone').hidden, focus: document.activeElement && document.activeElement.id, locked: [...document.body.children].some(e => e.inert) }));
+  ok(r.head === 'Video not saved' && /cannot record video/.test(r.err) && r.done && r.focus === 'exClose' && !r.locked, 'failure: ' + JSON.stringify(r));
+  await p.click('#exClose'); await settle(p, 200);
+  ok(await p.evaluate(() => document.querySelector('#mExport').classList.contains('hidden')), 'Close did not close the window');
+  p.__errors = p.__errors.filter(e => !/cannot record video/.test(e)); /* the error is logged on purpose */
+  noErrors(p);
+});
+
+check('quick tour from step 2: every stop is on screen, the Add stop opens the folded panel, and the panel folds again after', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.click('#stepSeg [data-step="frame"]'); await settle(p, 300);
+  ok(await leftW(p) === 44, 'setup: not folded');
+  ok(await p.evaluate(() => !!window.__shotref.startTour('basic')), 'the tour did not start');
+  const seen = [];
+  for (let n = 0; n < 12; n++) {
+    await settle(p, 450);
+    const g = await p.evaluate(TOUR_TARGET);
+    if (!g) break;
+    seen.push(g.id);
+    if (g.hasTarget) ok(g.rect && g.rect.w > 0 && g.rect.h > 0 && g.rect.l >= 0 && g.rect.t >= 0 && g.rect.r <= g.vw && g.rect.b <= g.vh, 'stop ' + g.id + ' is not on screen: ' + JSON.stringify(g.rect));
+    if (g.id === 'b-add') ok(g.rect && g.rect.w > 200, 'the Add stop points at the folded strip: ' + JSON.stringify(g.rect));
+    await p.click('#tourNext');
+  }
+  ok(seen[seen.length - 1] === 'b-bye' && seen.includes('b-add'), 'stops: ' + seen.join());
+  await settle(p, 300);
+  ok(await leftW(p) === 44, 'the panel did not fold again after the tour: ' + await leftW(p));
   noErrors(p);
 });

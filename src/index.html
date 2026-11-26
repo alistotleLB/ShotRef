@@ -466,6 +466,32 @@ button.on,.shotchip.on,button.on:hover{background:var(--sel);box-shadow:var(--ri
 .rcard.cur,.rcard.cur:hover{border-color:#c3c8cf;box-shadow:inset 0 0 0 1px #c3c8cf}
 /* phase 2 */
 .xofmt.hidden{display:none}
+/* the left panel folds to a 44 px strip in steps 2 and 3 (syncFold in main.js): two buttons bring it back, « folds it again */
+#leftHead{display:flex;align-items:flex-end;border-bottom:1px solid var(--line);background:var(--panel);flex:none}
+#leftHead .tabs{flex:1;border-bottom:0}
+#bFold{flex:none;align-self:center;margin:8px 6px 0 2px;padding:3px;min-width:28px;min-height:28px;background:transparent;color:var(--ink2)}
+#bFold:hover{background:var(--panel2);color:var(--ink)}
+#leftStrip{display:none}
+#app.lfold{grid-template-columns:44px minmax(0,1fr) 336px}
+#app.lfold #left > :not(#leftStrip){display:none!important}
+#app.lfold #leftStrip{display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 0}
+#leftStrip button{width:32px;height:32px;min-width:0;padding:0;background:transparent;color:var(--ink2)}
+#leftStrip button:hover{background:var(--panel2);color:var(--ink)}
+@media (max-width:900px){#app.lfold{grid-template-columns:44px minmax(0,1fr) 250px}}
+/* camera view: the frame shape chip and the guides button in the icon cluster */
+#props .sec{scroll-margin-top:48px}
+#vpRight .ib.chip{gap:4px;padding:5px 8px 5px 6px;font-size:12px;font-weight:600;color:var(--ink)}
+/* the export window: running, finished and failed (exportVideo) */
+#mExport [hidden]{display:none!important}
+#mExport .dlg.run{width:min(400px,94vw)}
+#mExport .dlg.run .prog{margin-top:12px}
+.extick{width:40px;height:40px;border-radius:50%;background:rgba(89,209,138,.14);display:flex;align-items:center;justify-content:center;margin:0 0 10px}
+.extick svg{width:24px;height:24px;fill:none;stroke:var(--ok);stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+.exline{margin:4px 0 0;overflow-wrap:anywhere}
+#exFile{color:var(--ink)}
+#exErr{color:var(--ink2)}
+.exbtns{margin-top:16px}
+#exPromptBox{margin-top:10px;min-height:110px}
 </style>
 </head>
 <body>
@@ -490,7 +516,11 @@ button.on,.shotchip.on,button.on:hover{background:var(--sel);box-shadow:var(--ri
   </header>
 
   <aside id="left">
-    <div class="tabs" id="leftTabs" role="tablist"><button data-lt="add" role="tab">Add</button><button data-lt="scene" role="tab">Items <span class="cnt" id="sceneCnt"></span></button></div>
+    <div id="leftHead"><div class="tabs" id="leftTabs" role="tablist"><button data-lt="add" role="tab">Add</button><button data-lt="scene" role="tab">Items <span class="cnt" id="sceneCnt"></span></button></div><button id="bFold" class="icon" aria-label="Fold the panel away" title="Fold this panel away to give the picture more room"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 7l-5 5 5 5M18 7l-5 5 5 5"/></svg></button></div>
+    <div id="leftStrip" role="toolbar" aria-label="Open the left panel" aria-orientation="vertical">
+      <button id="stripAdd" class="icon" aria-label="Add" title="Add people and props"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+      <button id="stripItems" class="icon" aria-label="Items" title="Items: everything in the scene"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></svg></button>
+    </div>
     <div id="addArea"></div>
     <div id="outliner"></div>
   </aside>
@@ -504,6 +534,8 @@ button.on,.shotchip.on,button.on:hover{background:var(--sel);box-shadow:var(--ri
       <span class="vsep" data-g2></span>
       <button id="bSnapGrid" class="ib" data-tip="Snap to 25 cm and 15°" aria-label="Snap to 25 cm and 15 degrees"><svg viewBox="0 0 24 24"><path d="M4 4h16v16H4zM4 12h16M12 4v16"/><circle cx="12" cy="12" r="2.2" fill="currentColor"/></svg></button>
       <button id="bFocus" class="ib" data-tip="Zoom to the selection (F)" aria-label="Zoom to the selection"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/><circle cx="12" cy="12" r="3"/></svg></button>
+      <button id="bAspect" class="ib chip" style="display:none" aria-haspopup="menu" title="Frame shape (aspect). Click to change it"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9V6h4M17 6h4v3M21 15v3h-4M7 18H3v-3"/></svg><span id="aspectTxt">16:9</span></button>
+      <button id="bGuides" class="ib" style="display:none" aria-haspopup="menu" aria-label="Framing guides" title="Framing guides over the picture"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M9 5v14M15 5v14M3 9.7h18M3 14.3h18"/></svg></button>
       <button id="bGrid" class="ib" data-tip="Grid" aria-label="Grid"><svg viewBox="0 0 24 24"><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg></button>
       <button id="bPip" class="ib" data-tip="Camera preview in the corner" aria-label="Camera preview in the corner"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><rect x="12" y="12" width="7" height="5" rx="1" fill="currentColor"/></svg></button>
       <button id="bCamHere" class="ib" data-tip="Put the shot camera where you are looking now" aria-label="Put the shot camera where you are looking now"><svg viewBox="0 0 24 24"><rect x="3" y="8" width="12" height="9" rx="2"/><path d="M15 11l5-3v9l-5-3M7 4l2 3 2-3"/></svg></button>
@@ -568,7 +600,7 @@ button.on,.shotchip.on,button.on:hover{background:var(--sel);box-shadow:var(--ri
       <label class="adv">FPS <select id="inFps"><option>24</option><option>25</option><option>30</option><option>50</option><option>60</option></select></label>
       </div>
       <div class="tlc">
-      <div class="seg feelbar" id="feelBar">
+      <div class="seg feelbar adv" id="feelBar" role="group" aria-label="Motion feel">
         <button data-feel="constant">Constant</button><button data-feel="gentle">Gentle</button><button data-feel="strong">Strong</button>
       </div>
       <button id="bLoop" title="Loop playback">⟲ Loop</button>
@@ -590,6 +622,7 @@ button.on,.shotchip.on,button.on:hover{background:var(--sel);box-shadow:var(--ri
 
 <div id="mExport" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mExportT"><div class="dlg">
   <button class="x" data-close aria-label="Close">×</button>
+  <div id="exOpts">
   <h2 id="mExportT">Export</h2>
   <div class="sum" id="exSum"></div>
   <div class="row"><label>Aspect</label><select id="exAspect" class="grow"></select></div>
@@ -604,11 +637,28 @@ button.on,.shotchip.on,button.on:hover{background:var(--sel);box-shadow:var(--ri
     <button id="exEnds" title="Start, middle and end frames plus the prompt, in one zip">Frame pack (zip)</button>
     <button id="exCopy" style="grid-column:span 2">Copy current frame to clipboard</button>
   </div>
-  <div class="prog" id="exProg" hidden>
-    <div class="bar"><i id="exBar"></i></div>
-    <div class="row" style="justify-content:space-between"><span id="exTxt" class="note"></span><button id="exCancel">Cancel</button></div>
-  </div>
   <p class="note">Video renders frame by frame, so it is always smooth at the chosen FPS, whatever your PC's speed. Helpers like the camera icon and paths are never included.</p>
+  </div>
+  <div id="exRunning" hidden>
+    <h2 id="exRunT">Exporting video…</h2>
+    <div class="prog" id="exProg">
+      <div class="bar"><i id="exBar"></i></div>
+      <div class="row" style="justify-content:space-between"><span id="exTxt" class="note" role="status"></span><button id="exCancel">Cancel</button></div>
+    </div>
+  </div>
+  <div id="exDone" hidden>
+    <div class="extick" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>
+    <h2 id="exDoneT">Video saved</h2>
+    <p id="exFile" class="exline"></p>
+    <p id="exWhere" class="exline note"></p>
+    <textarea id="exPromptBox" class="promptbox" readonly hidden aria-label="Prompt for the AI model" spellcheck="false"></textarea>
+    <div class="btns exbtns"><button id="exDoneBtn" class="primary">Done</button><button id="exCopyPrompt" title="Copy the prompt for the AI model, to paste next to the video">Copy prompt</button></div>
+  </div>
+  <div id="exFail" hidden>
+    <h2 id="exFailT">Video not saved</h2>
+    <p id="exErr" class="exline" role="alert"></p>
+    <div class="btns exbtns"><button id="exClose" class="primary">Close</button></div>
+  </div>
 </div></div>
 
 <div id="mName" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mNameT"><div class="dlg" style="width:min(380px,94vw)">

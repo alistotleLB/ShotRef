@@ -109,7 +109,7 @@ ipcMain.handle('shotref:save-blob', async (e, name, data, filters) => {
     const buf = data instanceof ArrayBuffer ? Buffer.from(data) : Buffer.from(data.buffer, data.byteOffset, data.byteLength);
     await writeAtomic(r.filePath, buf);
     rememberFolder('export', r.filePath);
-    return { ok: true, name: path.basename(r.filePath) };
+    return { ok: true, name: path.basename(r.filePath), folder: path.dirname(r.filePath) }; /* the folder: the Export window says where the video went */
   } catch (err) { console.error('ShotRef: save failed', err); return { ok: false, error: plainError(err) }; }
 });
 
