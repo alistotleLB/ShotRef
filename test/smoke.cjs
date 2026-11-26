@@ -6951,8 +6951,12 @@ check('the info line is a backed pill clear of the buttons, the toast is at the 
   ok(g.barR <= g.vpL, 'the buttons run into the icon cluster: ' + JSON.stringify(g));
   ok(g.hint < 34, 'the camera view hint is ' + g.hint + ' px high');
   await p.evaluate(() => window.__shotref.addObject('box')); await settle(p, 400);
+  const hit = await p.evaluate(() => { const t = document.querySelector('#toast').getBoundingClientRect(), hits = []; for (const e of [...document.querySelectorAll('#camBar button'), document.querySelector('#hud')]) { const r = e.getBoundingClientRect(); if (r.width && t.left < r.right && t.right > r.left && t.top < r.bottom && t.bottom > r.top) hits.push(e.textContent.trim().slice(0, 20)); } return hits; });
+  ok(!hit.length, 'in the camera view the toast covers: ' + hit.join(', '));
+  await p.evaluate(() => window.__shotref.setView('editor')); await settle(p, 300);
+  await p.evaluate(() => window.__shotref.addObject('box')); await settle(p, 400);
   const top = await p.evaluate(() => document.querySelector('#toast').getBoundingClientRect().top);
-  ok(Math.abs(top - 56) < 1.5, 'the toast top is at ' + top);
+  ok(Math.abs(top - 56) < 1.5, 'the toast top is at ' + top + ' in the editor view');
   noErrors(p);
 });
 
@@ -6980,5 +6984,79 @@ check('name labels in the 3D view do not overlap, and the selected one stays put
   await p.evaluate(() => { const S = window.__shotref; S.select(S.state.objects[S.state.objects.length - 2].id); }); await settle(p, 400);
   const r2 = await rects(); ok(!hit(r2[0], r2[1]), 'the labels overlap with one selected: ' + JSON.stringify(r2));
   ok(Math.abs(r2[0][1] - r[0][1]) < 1, 'the selected label moved: ' + JSON.stringify([r[0], r2[0]]));
+  noErrors(p);
+});
+
+/* ---------------- UI audit, task 1, fix round 1 ---------------- */
+check('every hint fits one line without being cut off at 1100 x 700', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.setViewportSize({ width: 1100, height: 700 }); await settle(p, 300);
+  const fits = async what => {
+    await settle(p, 250);
+    const r = await p.evaluate(() => { const e = document.querySelector('#hint'); return { sw: e.scrollWidth, cw: e.clientWidth, h: e.getBoundingClientRect().height, t: e.textContent }; });
+    ok(r.sw <= r.cw && r.h < 34 && r.t.length > 0, what + ' hint is cut off or wraps: ' + JSON.stringify(r));
+  };
+  await fits('idle editor');
+  await p.evaluate(() => { const S = window.__shotref; S.addObject('person'); S.addObject('person'); S.addObject('tree'); S.select(null); window.__shotref.setView('top'); }); await fits('idle top');
+  await p.evaluate(() => window.__shotref.setView('editor'));
+  const ids = await p.evaluate(() => window.__shotref.state.objects.slice(-3).map(o => o.id));
+  await p.evaluate(i => window.__shotref.select(i), ids[0]); await fits('item selected');
+  await p.evaluate(i => window.__shotref.select(i, 'toggle'), ids[1]); await fits('multi-select');
+  await p.evaluate(() => window.__shotref.select('sun')); await fits('sun selected');
+  await p.evaluate(() => window.__shotref.select('camera')); await fits('camera selected');
+  await p.evaluate(() => window.__shotref.select('export')); await fits('export selected');
+  await p.evaluate(i => window.__shotref.select(i), ids[0]); await settle(p, 300);
+  await p.evaluate(() => [...document.querySelectorAll('#props button')].find(x => /Draw walk path/.test(x.textContent)).click()); await fits('path mode');
+  await p.keyboard.press('Escape'); await settle(p, 200);
+  await p.evaluate(() => window.__shotref.select(null));
+  await p.click('#addArea .tile:has-text("Table")'); await fits('placing');
+  await p.keyboard.press('Escape'); await settle(p, 200);
+  await p.evaluate(() => window.__shotref.setView('camera')); await fits('camera view');
+  noErrors(p);
+});
+
+check('a still item with a move starts with Move & face open; the choice to open it carries to the next tree', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const head = () => p.evaluate(() => { const h = [...document.querySelectorAll('#props .sec > h3')].find(x => x.textContent.trim().startsWith('Move & face')); return h ? h.parentElement.classList.contains('closed') : null; });
+  await p.evaluate(() => { const S = window.__shotref; const t = S.addObject('tree'); S.addObject('tree'); S.select(S.state.objects[S.state.objects.length - 2].id); }); await settle(p, 300);
+  ok(await head() === true, 'a plain tree does not start folded');
+  await p.evaluate(() => { const S = window.__shotref, o = S.state.objects[S.state.objects.length - 2]; o.keys = [{ t: 0, p: [...o.base.p], r: [...o.base.r], s: [...o.base.s] }, { t: 1, p: [o.base.p[0] + 1, o.base.p[1], o.base.p[2]], r: [...o.base.r], s: [...o.base.s] }]; S.changed(true, true); S.select(null); S.select(o.id); }); await settle(p, 300);
+  ok(await head() === false, 'a tree with keys starts folded (should be open)');
+  await p.evaluate(() => { const S = window.__shotref; S.select(S.state.objects[S.state.objects.length - 1].id); }); await settle(p, 300);
+  ok(await head() === true, 'the second tree should start folded');
+  await p.click('#props .sec > h3:has-text("Move & face")'); await settle(p, 200);
+  ok(await head() === false, 'clicking did not open it');
+  await p.evaluate(() => { const S = window.__shotref; S.addObject('person'); S.select(S.state.objects[S.state.objects.length - 1].id); }); await settle(p, 300);
+  await p.click('#props .sec > h3:has-text("Move & face")'); await settle(p, 200);
+  await p.click('#props .sec > h3:has-text("Move & face")'); await settle(p, 200); /* fold, then unfold, on a person */
+  await p.evaluate(() => { const S = window.__shotref; S.addObject('tree'); S.select(S.state.objects[S.state.objects.length - 1].id); }); await settle(p, 300);
+  ok(await head() === false, 'the next tree should keep Move & face open');
+  noErrors(p);
+});
+
+for (const [W, H] of [[1440, 900], [1100, 700]]) {
+  check('split view at ' + W + ' x ' + H + ': camera buttons, icon cluster and info pill stay apart', async ({ open }) => {
+    const p = await open(); await settle(p, 300);
+    await p.setViewportSize({ width: W, height: H }); await settle(p, 300);
+    await p.evaluate(() => { const S = window.__shotref; S.addObject('person'); S.select('camera'); }); await p.click('#bSplit'); await settle(p, 500);
+    const g = await p.evaluate(() => {
+      const R = e => { const r = e.getBoundingClientRect(); return [r.left, r.top, r.right, r.bottom]; };
+      const bar = [...document.querySelectorAll('#camBar button')].map(R), cl = R(document.querySelector('#vpRight')), hud = R(document.querySelector('#hud')), vp = R(document.querySelector('#vp')), cb = R(document.querySelector('#camBar'));
+      return { bar, cl, hud, vp, cb, mid: (vp[0] + vp[2]) / 2 };
+    });
+    const hit = (a, b) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1];
+    ok(!g.bar.some(b => hit(b, g.cl)), 'a camera button meets the icon cluster: ' + JSON.stringify(g));
+    ok(!g.bar.some(b => hit(b, g.hud)), 'the info pill meets a camera button: ' + JSON.stringify(g));
+    ok(g.hud[0] >= g.mid - 2 && g.hud[2] <= g.vp[2] + 0.5, 'the info pill leaves the camera half: ' + JSON.stringify(g));
+    noErrors(p);
+  });
+}
+
+check('colour: a locked lock and the menu tick are not orange', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => { const S = window.__shotref; S.addObject('tree'); }); await p.click('#leftTabs [data-lt=scene]'); await settle(p, 300);
+  await p.click('#outliner .ol[data-id] .lockb'); await settle(p, 300);
+  const c = await p.evaluate(() => { const e = document.querySelector('#outliner .lockb.on'); const s = getComputedStyle(e); return [s.color, s.opacity]; });
+  ok(c[0] === 'rgb(236, 238, 241)' && c[1] === '1', 'the locked icon is ' + JSON.stringify(c));
   noErrors(p);
 });

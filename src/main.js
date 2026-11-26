@@ -2515,7 +2515,8 @@ function decorateSections(root) {
     if (closed[name] || (!(name in closed) && (SECS_FOLDED.includes(name) || sc.dataset.fold) && !sc.dataset.inuse)) sc.classList.add('closed');
     hd.addEventListener('click', () => {
       const on = sc.classList.toggle('closed'), now = { ...(getPref('closedSecs', {}) || {}) };
-      if (on) now[name] = true; else if (SECS_FOLDED.includes(name) || sc.dataset.fold) now[name] = false; else delete now[name];
+      if (on) now[name] = true; else if (SECS_FOLDED.includes(name) || sc.dataset.fold || name === 'Move & face') now[name] = false; /* unfolded on purpose is remembered, even on a person (the same name starts folded on a tree) */
+      else if (now[name] !== false) delete now[name]; /* "Move & face" is shared by people and still things: a stored "opened" stays */
       setPref('closedSecs', now);
     });
   }
@@ -3109,7 +3110,7 @@ function updateLabels() {
     const pt = new THREE.Vector3(v.group.position.x, v.group.position.y + H + 0.16, v.group.position.z).project(cam);
     const vis = pt.z < 1 && pt.z > -1;
     putStyle(el, 'display', vis ? 'block' : 'none');
-    el.classList.toggle('sel', selected === o.id);
+    if (el.classList.contains('sel') !== (selected === o.id)) { el.classList.toggle('sel', selected === o.id); el._w = 0; } /* the selected label is bolder, so wider */
     if (vis) todo.push({ el, x: (pt.x * 0.5 + 0.5) * w, y: (-pt.y * 0.5 + 0.5) * hh, sel: selected === o.id });
   }
   /* two names that would overlap: the later one moves up by its own height + 2 px (at most 6 steps); the selected one stays put (F17) */
@@ -3153,19 +3154,22 @@ function tickUI() {
     putStyle($('#hud'), 'left', (sp ? R.cam.x + R.cam.w / 2 : vpEl.clientWidth / 2) + 'px'); putStyle($('#hud'), 'maxWidth', (sp ? R.cam.w : vpEl.clientWidth) - 24 + 'px'); putStyle($('#hud'), 'top', (10 + bar.offsetHeight + 6) + 'px');
     putStyle($('#vpRight'), 'right', (sp ? vpEl.clientWidth - R.work.w + 10 : 10) + 'px'); putStyle(hint, 'maxWidth', sp ? (R.work.w - 30) + 'px' : ''); }
   if (camPane()) {
-    putHTML(hint, rec ? (rec.phase === 'rec' ? '<b style="color:#ff6b6b">● Recording</b> · steer the camera · <kbd>Esc</kbd> cancel' : 'Get ready… position the camera now')
-      : 'Drag: orbit · Right-drag: pan · Scroll: dolly · <kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd>: fly');
+    putHTML(hint, rec ? (rec.phase === 'rec' ? '<b style="color:#ff6b6b">● Recording</b> · <kbd>Esc</kbd>: cancel' : 'Get ready…')
+      : 'Drag: orbit · Scroll: dolly · <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>: fly');
   } else {
-    const nav = view === 'top' ? 'Drag: pan · Scroll: zoom · Click: select · Right-click: options' : 'Drag: orbit · Right-drag: pan · Scroll: zoom · Right-click: options';
-    putHTML(hint, placing || pathMode ? '<kbd>Esc</kbd> cancel' + (pathMode ? ' · <kbd>Enter</kbd> done · right-click removes the last point' : '')
-      : isMulti() ? 'Drag to move them all · Orange ring: turn · <kbd>Shift</kbd>-click: add or remove · <kbd>Ctrl</kbd> <kbd>G</kbd>: group'
-      : selected === 'export' ? 'Choose what to export in the panel on the right'
-      : selected === 'sun' ? 'Drag the yellow sun to turn the light · Right-click it: light presets'
+    const nav = view === 'top' ? 'Drag: pan · Scroll: zoom · Click: select' : 'Drag: orbit · Right-drag: pan · Scroll: zoom';
+    putHTML(hint, placing || pathMode ? pathMode ? 'Click: add point · <kbd>Enter</kbd>: done · <kbd>Esc</kbd>: cancel' : 'Click the floor · <kbd>Esc</kbd>: cancel'
+      : isMulti() ? 'Drag: move all · Orange ring: turn'
+      : selected === 'export' ? 'Choose what to export on the right'
+      : selected === 'sun' ? 'Drag the sun to turn the light'
       : selected && selected !== 'camera' && selected !== 'target'
         ? 'Drag to move · Orange ring: turn · Right-click: more'
-        : selected ? 'Drag the camera or its aim point · or use the panel'
+        : selected ? 'Drag the camera or its aim point'
           : nav);
   }
+  { /* the toast sits at the top (56 px); with the camera buttons showing it drops below the info pill so it never covers them */
+    const hu = $('#hud'), bar = $('#camBar'), vt = vpEl.getBoundingClientRect().top;
+    putStyle($('#toast'), 'top', camUI ? Math.round(vt + (hu.offsetHeight ? 10 + bar.offsetHeight + 6 + hu.offsetHeight : 10 + bar.offsetHeight) + 8) + 'px' : ''); }
   $('#bUndo').disabled = hi <= 0; $('#bRedo').disabled = hi >= hist.length - 1;
   undoTitles();
   const step = currentStep();
