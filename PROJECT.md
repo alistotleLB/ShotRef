@@ -12,10 +12,10 @@ Works:   ShotRef 1.7.0, RELEASED 2026-11-26 (https://github.com/alistotleLB/Shot
 Off:     the hands-on tour (built, tested, switched off). Turn on: HANDS_TOUR_DEFAULT in src/main.js + HANDS_TOUR in electron/main.cjs.
 Builds:  dist/ShotRef.html ~1086 KB; release/ShotRef-Setup-1.7.0.exe (122 MB), ShotRef-1.7.0-portable.exe (111 MB), unsigned.
 Tests:   npm test 377/377 (702 s), test:desktop 28/28, 0 Electron left (2026-11-26, release commit f61b3e1).
-Code:    PUBLIC GitHub main = 1.7.0. claude.ai artifact 6uRy4QMBjvK9Rn5PLedSUq still = 1.6.0 (version 11, private, Desert overlook demo kept).
+Code:    PUBLIC GitHub main = 1.7.0. claude.ai artifact 6uRy4QMBjvK9Rn5PLedSUq = 1.7.0 (version 12, private, Desert overlook demo kept).
 Known:   walking feet slide slightly at heel strike. Not checked: a real update from an installed copy to 1.7.0.
 Next:    Ali updates the installed app. Then UI phase 4 needs Ali's choices: camera tabs 5->3, one-click moves as 7 paired rows,
-         steps vs Editor/Top/Camera, motion feel off the timeline, Take menu placement. Republish the claude.ai artifact (needs Ali's yes).
+         steps vs Editor/Top/Camera, motion feel off the timeline, Take menu placement.
 Not yet tried by Ali: the 1.7.0 update itself; the quick tour.
 
 ## Ali's goals              (his exact words, dated; never reworded)
@@ -155,3 +155,4 @@ NEXT      Ali runs C6 on the web page (npm run build, open dist/ShotRef.html in 
 - 2026-11-26 1.6.0 RELEASED (Ali: "Yes, publish"): ui/refresh fast-forwarded into main, What's new + docs/RELEASE-NOTES-1.6.0.md, 6 README screenshots retaken (Sonnet). npm test 364/364 (659 s), test:desktop 28/28, 0 Electron. Installers 122/111 MB. Release has 5 assets; latest.yml serves 1.6.0. Not checked: update from an installed copy.
 - 2026-11-26 claude.ai artifact 6uRy4QMBjvK9Rn5PLedSUq republished from 1.6.0 (Ali: "Yes, republish"), version 11, Desert overlook embed (key desert-overlook-v2) carried over from the live page. Checked headless first: 23 objects + photo, 10 picture tiles, 0 console errors. Not checked: inside the real claude.ai frame.
 - 2026-11-26 1.7.0 RELEASED (Ali: "publish the new release"): Items list grouped by category (Ali approved a mockup, then asked for bigger category names), double-click rename fixed (the click's redraw wiped the rename box), hover previews. npm test 377/377 (702 s), test:desktop 28/28, 0 Electron. Installers 122/111 MB. Release has 5 assets; latest.yml serves 1.7.0. Not checked: update from an installed copy; claude.ai artifact not republished.
+- 2026-11-26 claude.ai artifact 6uRy4QMBjvK9Rn5PLedSUq republished from 1.7.0 (Ali: "Yes, update it"), version 12, Desert overlook embed (key desert-overlook-v2) carried over from the live page. Checked headless under the claude.ai CSP first: 23 objects + photo, grouped Items list, 0 console errors. Not checked: inside the real claude.ai frame.
