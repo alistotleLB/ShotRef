@@ -300,9 +300,8 @@ function createWindow(startFile) {
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false },
   });
   const wc = win.webContents;
-  if (start.maximized) win.maximize();
   for (const ev of ['resize', 'move', 'maximize', 'unmaximize']) win.on(ev, rememberWindowSoon);
-  win.once('ready-to-show', () => { win.show(); setTimeout(whatsNewOnLaunch, WHATS_NEW_DELAY_MS); });
+  win.once('ready-to-show', () => { if (start.maximized) win.maximize(); /* here, not earlier: maximize() would show the still empty window */ win.show(); setTimeout(whatsNewOnLaunch, WHATS_NEW_DELAY_MS); });
   win.on('page-title-updated', e => e.preventDefault()); /* the page's setTitle decides */
   wc.on('will-navigate', e => e.preventDefault());
   wc.setWindowOpenHandler(() => ({ action: 'deny' }));
