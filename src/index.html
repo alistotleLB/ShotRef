@@ -106,6 +106,9 @@ button.icon svg,.ib svg{width:17px;height:17px;stroke:currentColor;fill:none;str
 #hud b{color:var(--acc2);font-weight:600}
 #hud .rec{color:var(--red)}
 #hint{left:12px;bottom:10px;font-size:13px;color:#aab0b8;background:rgba(15,16,19,.7);padding:5px 9px;border-radius:6px;max-width:60%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* an empty stage says what to do: centred over the 3D view, never in the way of a click */
+#emptyHint{top:50%;transform:translate(-50%,-50%);font-size:15px;color:var(--ink);background:rgba(15,16,19,.7);padding:8px 14px;border-radius:8px;text-align:center;width:max-content;max-width:calc(100% - 32px);display:none}
+body:has(#tour) #emptyHint{display:none!important}
 #hint kbd,.kbd{font:12px ui-monospace,Consolas,monospace;background:#2a2d33;border:1px solid #444;border-bottom-width:2px;border-radius:4px;padding:0 4px;color:#e2e2e2}
 #props{padding:8px 8px 20px}
 .sec{border-bottom:1px solid var(--line);padding:10px 12px}
@@ -260,6 +263,7 @@ hr.div{border:0;border-top:1px solid var(--line);margin:8px 0 4px}
 .bar i{display:block;height:100%;width:0;background:var(--acc)}
 .sum{color:var(--mute);margin:2px 0 10px}
 .sum b{color:var(--ink);font-weight:600}
+.tabs.helptabs{padding:0;margin:0 0 4px}
 .help-grid{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin-top:10px}
 .help-grid div:nth-child(odd){text-align:right;white-space:nowrap}
 .steps{margin:10px 0 0;padding-left:20px;color:var(--ink2)}
@@ -350,10 +354,15 @@ hr.div{border:0;border-top:1px solid var(--line);margin:8px 0 4px}
 .btns.big2 button{padding:9px 6px;font-weight:600;font-size:13px}
 .btns + .btns{margin-top:4px}
 .bi svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.8;vertical-align:-3px;margin-right:5px}
-.startgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;margin-top:12px}
-.startgrid .card{display:flex;flex-direction:column;gap:4px;text-align:left;padding:12px;white-space:normal;min-height:84px}
-.startgrid .card b{font-size:15px}
-.startgrid .card small{color:var(--mute);font-size:12px;line-height:1.35}
+.startgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px;margin-top:12px}
+.startgrid .card{display:flex;flex-direction:column;justify-content:flex-start;gap:4px;text-align:left;padding:7px 7px 10px;white-space:normal;min-height:84px}
+.startgrid .card b{font-size:15px;padding:0 4px}
+.startgrid .card small{color:var(--mute);font-size:12px;line-height:1.35;padding:0 4px}
+/* the set's picture, or until it is ready a plain block of the same shape (Empty stage keeps the block, with a "+") */
+.startgrid .pic{width:100%;aspect-ratio:16/9;border-radius:6px;background:var(--bg);overflow:hidden;display:flex;align-items:center;justify-content:center;margin-bottom:3px;flex:none}
+.startgrid .pic img{width:100%;height:100%;object-fit:cover;display:block}
+.startgrid .pic svg{width:26px;height:26px;stroke:var(--mute);fill:none;stroke-width:1.7;stroke-linecap:round}
+.startgrid .card:hover .pic svg{stroke:var(--ink2)}
 body.simple #vpRight [data-g],body.simple #vpRight [data-g2]{display:none}
 body.simple .adv{display:none!important}
 /* top bar: project name, File menu, step bar */
@@ -510,6 +519,7 @@ button.on,.shotchip.on,button.on:hover{background:var(--sel);box-shadow:var(--ri
     <div id="camFrame" class="ov"><img class="plateImg" alt=""><svg id="guides" preserveAspectRatio="none" viewBox="0 0 100 100"></svg></div>
     <div id="hud" class="ov"></div>
     <div id="hint" class="ov"></div>
+    <div id="emptyHint" class="ov" role="status">Your stage is empty. Click a person or prop on the left, then click the floor.</div>
     <div id="drop" class="drop">Drop a .glb model, an image (in Camera view: a location photo), or a ShotRef project</div>
   </main>
 
@@ -627,16 +637,20 @@ button.on,.shotchip.on,button.on:hover{background:var(--sel);box-shadow:var(--ri
   <div class="dlgBody">
   <h2 id="mHelpT">Quick start</h2>
   <div class="btns" id="helpTour" style="margin:0 0 12px;justify-content:flex-start;align-items:center;flex-wrap:wrap"><span class="note" id="helpTourLead" style="margin:0 4px 0 0"></span><button id="helpTourQuick"></button><button id="helpTourHands"></button></div>
+  <div class="tabs helptabs" id="helpTabs" role="tablist"><button data-ht="quick" role="tab" id="htQuick" aria-controls="helpQuick" class="on" aria-selected="true">Quick start</button><button data-ht="keys" role="tab" id="htKeys" aria-controls="helpKeys" aria-selected="false">Shortcuts</button></div>
+  <div id="helpQuick" role="tabpanel" aria-labelledby="htQuick">
   <ol class="steps">
-    <li><b>Start from a set</b> (<b>File</b> then <b>New</b>), or click items on the Add tab on the left and then click on the floor to place them.</li>
-    <li><b>Block it.</b> Drag people and props across the floor; drag the orange ring to turn them (let go over a person or the camera and they face it). Shift-click picks several to move together; <span class="kbd">Ctrl G</span> groups them. <b>Top view</b> (<span class="kbd">T</span>) works like a floor plan.</li>
-    <li><b>Move people.</b> Select a person, press <b>Draw walk path</b> and click points on the floor, or send them to a floor mark with an arrival time. Drag them onto a chair, sofa or bed to sit them down (drag away to stand). Pick a pose later in the shot to change it mid-shot: it shows as a blue tag on the timeline. The eye button over a person makes them look at the camera.</li>
-    <li><b>Right-click</b> anything for what you can do with it: add a person here, walk them to a mark, frame a medium shot, face the camera, duplicate, hide. Right-click the floor to add things or aim the camera there. Right-drag still pans.</li>
-    <li><b>Frame the shot.</b> In <b>Camera view</b> (<span class="kbd">C</span>) drag to orbit, right-drag to pan, scroll to dolly, <span class="kbd">W A S D Q E</span> to fly. Or use a shot size: Wide, Medium, Close-up… The <b>split view</b> button (next to View, under the picture) puts the editor on the left and the camera on the right: whichever half the pointer is over is the one you steer.</li>
-    <li><b>Make the move.</b> Press <b>Set start</b>, reframe, press <b>Set end</b>. Or pick a one-click move, or <b>● Record</b> and operate the camera live.</li>
-    <li><b>Export</b> (step 3, or press <span class="kbd">3</span>): an MP4, the current frame, or a frame pack (start, middle and end frames plus the prompt) for image-to-video models. Several shots? Add them with + New shot.</li>
+    <li><b>Start.</b> Pick a starter set (File, then New), or add people and props from the Add tab: click a tile, then click the floor.</li>
+    <li><b>Block it.</b> Drag people and props across the floor. Drag the orange ring to turn them.</li>
+    <li><b>Move people.</b> Select a person, press Draw walk path, then click points on the floor.</li>
+    <li><b>Right-click anything</b> to see what you can do with it.</li>
+    <li><b>Frame the shot.</b> Go to step 2 Frame. Drag to look around, scroll to move in or out.</li>
+    <li><b>Make the move.</b> Press Set start, reframe, press Set end. Or pick a ready-made camera move.</li>
+    <li><b>Export.</b> Go to step 3 Export for a video, frames and a prompt for the AI model.</li>
   </ol>
-  <h2 style="margin-top:16px">Shortcuts</h2>
+  <p class="note">Autosaved <span data-where>in this browser</span>. Use <b>Save</b> for a file you can reopen anywhere.</p>
+  </div>
+  <div id="helpKeys" role="tabpanel" aria-labelledby="htKeys" hidden>
   <div class="help-grid">
     <div><span class="kbd">Space</span></div><div>Play / pause</div>
     <div><span class="kbd">1</span> <span class="kbd">2</span> <span class="kbd">3</span></div><div>Step 1 Build · step 2 Frame (camera view) · step 3 Export</div>
@@ -659,8 +673,11 @@ button.on,.shotchip.on,button.on:hover{background:var(--sel);box-shadow:var(--ri
     <div><span class="kbd">Ctrl S</span> · <span class="kbd">Ctrl O</span></div><div>Save · Open project</div>
     <div><span class="kbd">P</span> · <span class="kbd">Ctrl C</span></div><div>Save current frame as PNG · copy it to the clipboard</div>
     <div>Timeline</div><div>Click or drag to scrub · drag a ◆ (or a blue pose tag) to retime it · right-click it to delete it</div>
+    <div>Drag onto a chair, sofa or bed</div><div>Sit a person down (drag away to stand)</div>
+    <div>Pose later in the shot</div><div>Pick a pose with the playhead later in the shot: it shows as a blue tag on the timeline</div>
+    <div>Split view</div><div>The button next to View shows the editor and the camera side by side</div>
   </div>
-  <p class="note">Autosaved <span data-where>in this browser</span>. Use <b>Save</b> for a file you can reopen anywhere.</p>
+  </div>
   </div>
 </div></div>
 
@@ -671,7 +688,7 @@ button.on,.shotchip.on,button.on:hover{background:var(--sel);box-shadow:var(--ri
   <div class="btns" style="margin-top:14px;flex-wrap:wrap"><button id="tourQuick" class="primary"></button><button id="tourHands"></button><button id="tourNo"></button></div>
 </div></div>
 
-<div id="mStart" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mStartT"><div class="dlg" style="width:min(640px,94vw)">
+<div id="mStart" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mStartT"><div class="dlg" style="width:min(820px,94vw)">
   <button class="x" data-close aria-label="Close">×</button>
   <div class="starthead" id="startHead" style="display:none"><svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M5 12V5h7M20 27h7v-7" fill="none" stroke="#E7E9EC" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 23C13 15 19 22 24 9" fill="none" stroke="#FF9A3C" stroke-width="2.4" stroke-linecap="round"/><circle cx="8" cy="23" r="2.4" fill="#FF9A3C"/><circle cx="24" cy="9" r="2.4" fill="#FF9A3C"/></svg><div><b>Shot<span>Ref</span></b><small>Block the shot. Move the camera. Guide the AI.</small></div></div>
   <h2 id="mStartT">Starter sets</h2>

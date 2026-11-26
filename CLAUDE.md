@@ -87,6 +87,7 @@ Main sections of `main.js`, in file order:
 - **Rendering:**
   - Three views: `editor` (perspective orbit), `top` (orthographic plan view) and `camera` (the shot).
   - The sky is a world-anchored dome (`skyDome`, drawn at the far plane, rotation only), shown in the editor and in shaded shot renders. `withShotStyle()` and `draw` hide it in the top view, in clay, depth and normal styles and under the location photo (those keep the flat `skyTex` gradient, which is also the fog colour). Drift follows shot time (`applyAll` calls `skyDome.setTime`), so a frame always shows the same clouds. The depth of field pass tone-maps the dome like the old gradient. Studio has no sun glow (`glow` 0).
+  - Editor framing: on the first draw after boot and after every `replaceProject()` (never on undo, redo or a take or shot switch), `frameEditorView()` stands 8 m behind and 5 m above the shot camera's first position, looks at the middle of the people and pulls back until they and the camera icon fit; an empty stage keeps the default view. The Start window's pictures (`renderStarterPic()`) build each set aside and render it with the export renderer, never touching the user's scene, undo or autosave.
   - Shot renders always go through `withShotStyle()`. It hides helpers and marks, and applies the clay, depth or normal override, the location photo and the ground mode. `shotPass()` adds the depth-of-field post pass.
 - **People:**
   - `buildPerson()` makes a primitive mannequin.

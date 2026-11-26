@@ -1942,7 +1942,9 @@ check('quick start and hint talk about right-click and double-click lens focus',
   await p.waitForTimeout(600);
   const t = await p.evaluate(() => document.querySelector('#mHelp').textContent);
   ok(/right-click/i.test(t) && /double-click/i.test(t) && /focus the lens/i.test(t), 'help text lacks right-click / double-click focus');
-  ok(/right-click/i.test(await p.evaluate(() => document.querySelector('#hint').textContent)), 'hint should mention right-click');
+  /* the idle hint is three navigation tips; the hint for a selected item points to right-click */
+  await p.evaluate(() => { const S = window.__shotref; S.select(S.state.objects[0].id); }); await p.waitForTimeout(300);
+  ok(/right-click/i.test(await p.evaluate(() => document.querySelector('#hint').textContent)), 'the hint for a selected item should mention right-click');
 });
 
 check('dropdown menu component: button opens it, items run, click again closes, arrows move', async ({ open }) => {
@@ -2260,7 +2262,8 @@ check('Shift-drag on empty space draws a selection box and selects what it cover
   const x0 = Math.min(xy.person[0], xy.box[0]) - 50, y0 = Math.min(xy.person[1], xy.box[1]) - 90, x1 = Math.max(xy.person[0], xy.box[0]) + 50, y1 = Math.max(xy.person[1], xy.box[1]) + 90;
   ok(xy.tree[0] < x0 || xy.tree[0] > x1 || xy.tree[1] < y0 || xy.tree[1] > y1, 'test set-up: the tree must be outside the box ' + JSON.stringify({ x0, y0, x1, y1, tree: xy.tree }));
   await p.keyboard.down('Shift');
-  await p.mouse.move(x0, y0); await p.mouse.down(); await p.mouse.move((x0 + x1) / 2, (y0 + y1) / 2, { steps: 4 }); await p.mouse.move(x1, y1, { steps: 4 });
+  /* from the lower right corner (open floor; the framed view puts the tree near the upper left one) */
+  await p.mouse.move(x1, y1); await p.mouse.down(); await p.mouse.move((x0 + x1) / 2, (y0 + y1) / 2, { steps: 4 }); await p.mouse.move(x0, y0, { steps: 4 });
   const shown = await p.evaluate(() => { const b = document.querySelector('#boxSel'); return b && getComputedStyle(b).display !== 'none' && b.getBoundingClientRect().width > 50; });
   ok(shown, 'the dashed selection box should show while dragging');
   await p.mouse.up(); await p.keyboard.up('Shift');
@@ -7059,5 +7062,125 @@ check('colour: a locked lock and the menu tick are not orange', async ({ open })
   await p.click('#outliner .ol[data-id] .lockb'); await settle(p, 300);
   const c = await p.evaluate(() => { const e = document.querySelector('#outliner .lockb.on'); const s = getComputedStyle(e); return [s.color, s.opacity]; });
   ok(c[0] === 'rgb(236, 238, 241)' && c[1] === '1', 'the locked icon is ' + JSON.stringify(c));
+  noErrors(p);
+});
+
+/* ---- UI audit task 3: guidance for a first-time user ---- */
+const STARTER_ORDER = ['Two-person dialogue', 'Walk and talk', 'Living room', 'Café table', 'Street', 'Blocking practice', 'Empty stage'];
+const STARTER_KINDS = ['dialogue', 'walktalk', 'room', 'cafe', 'street', 'marks', 'empty'];
+/* each person's middle on screen, whether it is inside the 3D view, and what a click there picks */
+const personPicks = p => p.evaluate(() => {
+  const S = window.__shotref, r = document.querySelector('#vp').getBoundingClientRect();
+  return S.state.objects.filter(o => o.type === 'person').map(o => {
+    const m = S.midOf(o.id), xy = S.project(m[0], m[1], m[2]);
+    return { id: o.id, xy, inside: xy[0] > r.left && xy[0] < r.right && xy[1] > r.top && xy[1] < r.bottom, picked: S.pickAtScreen(xy[0], xy[1]) };
+  });
+});
+for (const [W, H] of [[1440, 900], [1100, 700]]) {
+  check('guidance: every starter set opens framed at ' + W + ' x ' + H + ': each person is in the editor view and picks itself', async ({ freshContext }) => {
+    const fc = await freshContext({ viewport: { width: W, height: H } }); const p = await fc.open(); await settle(p, 400);
+    for (const k of STARTER_KINDS) {
+      await p.evaluate(k => { window.__shotref.loadStarter(k); }, k); await settle(p, 350);
+      ok(await p.evaluate(() => window.__shotref.view) === 'editor', k + ': not in the editor view');
+      if (k === 'empty') { const e = await p.evaluate(() => window.__shotref.editCamPos()); ok(e.map(v => v.toFixed(3)).join() === '7.000,5.000,10.000', 'the empty stage lost the default view: ' + e); continue; }
+      const ps = await personPicks(p);
+      ok(ps.length > 0, k + ': no people');
+      for (const x of ps) {
+        ok(x.inside, k + ': a person is outside the view at ' + x.xy.map(Math.round));
+        ok(x.picked === x.id, k + ': a click on a person picks ' + x.picked);
+      }
+    }
+    noErrors(p);
+  }, { timeout: 90000 });
+}
+check('guidance: framing happens at boot and on a scene swap, not on undo, redo or a take switch', async ({ open }) => {
+  const p = await open(); await settle(p, 400);
+  const boot = await p.evaluate(() => window.__shotref.editCamPos());
+  ok(boot.join() !== '7,5,10', 'the first draw after boot did not frame the scene');
+  await p.evaluate(() => window.__shotref.loadStarter('street')); await settle(p, 350);
+  const framed = await p.evaluate(() => ({ top: window.__shotref.topTarget(), tg: window.__shotref.editTarget() }));
+  ok(Math.abs(framed.top[0] - framed.tg[0]) < 1e-6 && Math.abs(framed.top[2] - framed.tg[2]) < 1e-6, 'the top view is not centred on the same middle: ' + JSON.stringify(framed));
+  /* an edit, then the view moved by hand: undo, redo and a new take keep the view */
+  await p.evaluate(() => { const S = window.__shotref; S.state.objects[0].base.p[0] += 0.5; S.changed(true, true); }); await settle(p, 200);
+  await p.evaluate(() => { const S = window.__shotref, e = S.editCamPos(); S.setEditCam([e[0] + 1, e[1] + 1, e[2]]); }); await settle(p, 400);
+  const moved = await p.evaluate(() => window.__shotref.editCamPos().map(v => v.toFixed(3)).join());
+  await p.evaluate(() => document.activeElement && document.activeElement.blur && document.activeElement.blur());
+  await p.keyboard.press('Control+z'); await settle(p, 300); await p.keyboard.press('Control+y'); await settle(p, 300);
+  await p.evaluate(() => window.__shotref.newTake()); await settle(p, 300);
+  ok(await p.evaluate(() => window.__shotref.editCamPos().map(v => v.toFixed(3)).join()) === moved, 'undo, redo or a take switch moved the editor view');
+  noErrors(p);
+});
+check('guidance: an empty stage leads with Getting started and a centre line, both gone once an item is placed', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await loadEmptyStarter(p); await p.evaluate(() => window.__shotref.select(null)); await settle(p, 400);
+  const e = await p.evaluate(() => {
+    const first = document.querySelector('#props .sec h3'), eh = document.querySelector('#emptyHint'), s = getComputedStyle(eh), r = eh.getBoundingClientRect(), vp = document.querySelector('#vp').getBoundingClientRect();
+    return { first: first && first.firstChild.textContent.trim(), shown: s.display !== 'none' && r.width > 0, text: eh.textContent, size: s.fontSize, color: s.color, bg: s.backgroundColor, pe: s.pointerEvents, cx: (r.left + r.right) / 2, vcx: (vp.left + vp.right) / 2 };
+  });
+  ok(e.first === 'Getting started', 'the first section is ' + e.first);
+  ok(e.shown && e.text === 'Your stage is empty. Click a person or prop on the left, then click the floor.', 'the centre line is missing: ' + JSON.stringify(e));
+  ok(e.size === '15px' && e.color === 'rgb(236, 238, 241)' && e.bg === 'rgba(15, 16, 19, 0.7)' && e.pe === 'none', 'the centre line looks wrong: ' + JSON.stringify(e));
+  ok(Math.abs(e.cx - e.vcx) < 2, 'the centre line is not centred: ' + JSON.stringify(e));
+  const shown = () => p.evaluate(() => getComputedStyle(document.querySelector('#emptyHint')).display !== 'none');
+  await p.evaluate(() => window.__shotref.setView('camera')); await settle(p, 300);
+  ok(!(await shown()), 'the centre line shows in the camera view');
+  await p.evaluate(() => window.__shotref.setView('top')); await settle(p, 300);
+  ok(await shown(), 'the centre line is missing in the top view');
+  await p.evaluate(() => window.__shotref.setView('editor')); await settle(p, 300);
+  await p.click('#leftTabs [data-lt=add]'); await p.click('#addArea .tile[data-body=man]'); await settle(p, 200);
+  ok(!(await shown()), 'the centre line shows while placing');
+  const vp = await p.evaluate(() => { const r = document.querySelector('#vp').getBoundingClientRect(); return [r.left + r.width * 0.5, r.top + r.height * 0.7]; });
+  await p.mouse.move(vp[0] - 5, vp[1]); await p.mouse.click(vp[0], vp[1]); await settle(p, 400);
+  ok(await p.evaluate(() => window.__shotref.state.objects.length) === 1, 'the click did not place the person');
+  await p.evaluate(() => window.__shotref.select(null)); await settle(p, 300);
+  ok(!(await shown()), 'the centre line is still there with an item in the scene');
+  ok(!(await p.innerText('#props')).includes('Getting started'), 'Getting started is still there with an item in the scene');
+  noErrors(p);
+});
+check('guidance: the Start window lists seven sets in order, each with its picture within 3 s', async ({ open }) => {
+  const p = await open(); await settle(p, 400);
+  await fileCmd(p, 'new'); await p.waitForSelector('#mStart:not(.hidden)');
+  const names = await p.evaluate(() => [...document.querySelectorAll('#startGrid .card b')].map(b => b.textContent));
+  ok(JSON.stringify(names) === JSON.stringify(STARTER_ORDER), 'the cards are ' + JSON.stringify(names));
+  ok(await p.evaluate(() => [...document.querySelectorAll('#startGrid .card')].every(c => c.firstElementChild.classList.contains('pic'))), 'a card has no picture block on top');
+  await p.waitForFunction(() => [...document.querySelectorAll('#startGrid .pic')].filter(x => x.dataset.kind !== 'empty').every(x => { const i = x.querySelector('img'); return i && i.src.startsWith('data:image/jpeg') && i.naturalWidth === 320 && i.naturalHeight === 180; }), null, { timeout: 3000 }).catch(() => { throw new Error('the pictures were not all ready within 3 s'); });
+  const em = await p.evaluate(() => { const x = document.querySelector('#startGrid .pic[data-kind=empty]'); return { img: !!x.querySelector('img'), svg: !!x.querySelector('svg'), bg: getComputedStyle(x).backgroundColor }; });
+  ok(!em.img && em.svg && em.bg === 'rgb(14, 15, 18)', 'Empty stage should show the plain block with a +: ' + JSON.stringify(em));
+  const urls = await p.evaluate(() => Object.values(window.__shotref.starterPics()));
+  ok(urls.length === 6 && new Set(urls).size === 6, 'expected six different pictures, got ' + urls.length);
+  /* the second time the window opens the pictures are there at once */
+  await p.keyboard.press('Escape'); await settle(p, 200);
+  await fileCmd(p, 'new'); await p.waitForSelector('#mStart:not(.hidden)');
+  ok(await p.evaluate(() => document.querySelectorAll('#startGrid .pic img').length) === 6, 'the pictures were not kept for the session');
+  noErrors(p);
+});
+check('guidance: opening and closing the Start window leaves the scene, undo, autosave and Recent projects alone', async ({ open }) => {
+  const p = await open(); await settle(p, 400);
+  await p.evaluate(() => { const S = window.__shotref; S.addObject('car'); S.changed(true, true); }); await settle(p, 1800);
+  const snap = () => p.evaluate(() => { const S = window.__shotref; let a = null; try { a = localStorage.getItem('shotref.autosave'); } catch (e) { } return { st: JSON.stringify(S.stateForSave()), hist: S.history.length, at: S.history.at, auto: a, writes: S.recentStats.writes, views: S.state.objects.map(o => S.viewOf(o.id).p.join() + ':' + S.viewOf(o.id).size.join()).join('|'), ed: S.editCamPos().join() }; });
+  const a = await snap();
+  await fileCmd(p, 'new'); await p.waitForSelector('#mStart:not(.hidden)');
+  await p.waitForFunction(() => document.querySelectorAll('#startGrid .pic img').length === 6, null, { timeout: 3000 });
+  await p.click('#mStart .x'); await settle(p, 1500);
+  const b = await snap();
+  for (const k of Object.keys(a)) ok(a[k] === b[k], 'the Start window changed ' + k);
+  noErrors(p);
+});
+check('guidance: Quick start has two tabs, seven steps, and Shortcuts holds the grid', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await gearCmd(p, 'help'); ok(await isOpen(p, 'mHelp'), 'Quick start did not open');
+  const q = await p.evaluate(() => ({ tabs: [...document.querySelectorAll('#mHelp .tabs button')].map(b => b.textContent), on: document.querySelector('#mHelp .tabs button.on').textContent, steps: document.querySelectorAll('#helpQuick ol.steps > li').length, quick: !document.querySelector('#helpQuick').hidden, keys: document.querySelector('#helpKeys').hidden, tourAbove: !!(document.querySelector('#helpTour').compareDocumentPosition(document.querySelector('#helpTabs')) & Node.DOCUMENT_POSITION_FOLLOWING), note: /Autosaved/.test(document.querySelector('#helpQuick').textContent) }));
+  ok(JSON.stringify(q.tabs) === '["Quick start","Shortcuts"]' && q.on === 'Quick start', 'tabs: ' + JSON.stringify(q));
+  ok(q.steps === 7 && q.quick && q.keys && q.tourAbove && q.note, 'Quick start tab: ' + JSON.stringify(q));
+  const first = await p.evaluate(() => document.querySelector('#helpQuick ol.steps > li').textContent);
+  ok(first === 'Start. Pick a starter set (File, then New), or add people and props from the Add tab: click a tile, then click the floor.', 'step 1 reads ' + first);
+  await p.click('#htKeys'); await settle(p, 150);
+  const k = await p.evaluate(() => ({ grid: !!document.querySelector('#helpKeys:not([hidden]) .help-grid'), quick: document.querySelector('#helpQuick').hidden, rows: [...document.querySelectorAll('#helpKeys .help-grid > div:nth-child(odd)')].map(d => d.textContent) }));
+  ok(k.grid && k.quick, 'the Shortcuts tab does not show the grid: ' + JSON.stringify(k));
+  for (const r of ['Space', 'Right-click', 'Double-click', 'Drag onto a chair, sofa or bed', 'Pose later in the shot', 'Split view']) ok(k.rows.includes(r), 'the shortcuts lack ' + r);
+  /* it opens on Quick start every time */
+  await p.keyboard.press('Escape'); await settle(p, 200);
+  await p.keyboard.press('?'); await settle(p, 200);
+  ok(await isOpen(p, 'mHelp') && await p.evaluate(() => !document.querySelector('#helpQuick').hidden && document.querySelector('#helpKeys').hidden), '? did not open it on the Quick start tab');
   noErrors(p);
 });

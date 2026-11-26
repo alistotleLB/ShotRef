@@ -25,7 +25,9 @@ import { TOUR_COPY } from './tour-copy.js';
  * sizeWarned                     autosave size warning shown once: warnSize
  * autosaveReady, autosaveWaiting boot has loaded stored assets / a save is waiting for that: boot, writeAutosave
  * inlineTooBig, saveTimer        autosave fallback state and the debounce timer: writeAutosave, autosave, flushAutosave
- * topInit, skyTex                top view framed once: setView; flat sky gradient (fog colour and the backdrop where the dome is hidden): applyEnv
+ * topInit, skyTex                top view framed once: setView, frameEditorView; flat sky gradient (fog colour and the backdrop where the dome is hidden): applyEnv
+ * edFramePending                 frame the editor view on the next drawn frame (boot, replaceProject): frameEditorSoon, frame
+ * starterPicJob                  the Start window's picture run (a newer one stops the old): fillStarterPics (the pictures: the const starterPics)
  *                                (the sky dome, skyDome, is a const: its look follows applyEnv and placeSun, its clock applyAll)
  * camState, pilotActive          shot camera at the playhead: applyAll; user is steering it: fly, camControls, records
  * pathRev                        editRev the walk paths were last drawn at: updatePaths, select
@@ -1293,7 +1295,7 @@ function buildVisual(o) {
   if (res.aimY == null) { res.root.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(res.root); res.aimY = isFinite(bb.max.y) ? (bb.min.y + bb.max.y) / 2 : 0.5; }
   return res;
 }
-function syncScene() {
+function syncScene(prune = true) {
   const ids = new Set(state.objects.map(o => o.id));
   for (const [id, v] of views) if (!ids.has(id)) { scene.remove(v.group); disposeTree(v.group); views.delete(id); }
   for (const o of state.objects) {
@@ -1307,7 +1309,7 @@ function syncScene() {
     }
     v.group.visible = o.visible !== false;
   }
-  pruneModelCache();
+  if (prune) pruneModelCache();
 }
 
 /* ============================== animation apply ============================== */
@@ -1902,6 +1904,7 @@ function frame(now) {
     if ((groundDirty || groundMigrate.size) && !dragActive && !placing && !pathMode && !playing && !gizmo.dragging && !rec) { migrateGround(); if (groundDirty) settleGround(); } /* things come to rest on what is under them once the edit is over */
     if (rec && rec.phase === 'rec') recSample();
     updateHelpers(); updateSelBar();
+    if (edFramePending && vpEl.clientWidth > 0 && vpEl.clientHeight > 0) { edFramePending = false; frameEditorView(); updateHelpers(); } /* a scene just swapped in or restored */
     renderer.shadowMap.needsUpdate = true;
     draw();
   }
@@ -2542,6 +2545,13 @@ function renderPropsInner() {
 function propsScene(p) {
   const s = state.settings;
   const set = (k, v, c = true) => { s[k] = v; applyEnv(); changed(c); };
+  /* an empty stage leads with what to do first */
+  if (!state.objects.length) p.append(sec('Getting started', h('ol', { class: 'steps', style: 'font-size:12px;margin:0' },
+    h('li', null, 'Add people and props from the left: click a tile, then click where it goes, or drag the tile onto the view.'),
+    h('li', null, 'Drag them on the floor, turn them with the orange ring, draw walk paths.'),
+    h('li', null, 'Frame the shot: Set start, reframe, Set end. Or use a shot size or move.'),
+    h('li', null, 'Export the video or frames.')),
+    h('button', { style: 'margin-top:8px', onclick: () => openModal('mHelp') }, 'Quick start and shortcuts')));
   p.append(sec('Scene', h('p', { class: 'note', style: 'margin:0 0 8px' }, 'Nothing selected. Click an object, or click Shot camera in the list or the timeline.'),
     tileRow(Object.entries(ENV).map(([k, e]) => ({ key: 'env:' + k, label: e.label, title: e.label + ': sky and light', on: s.env === k, pick: () => pickEnv(k) })))));
   p.append(skySection(!simple));
@@ -2552,12 +2562,6 @@ function propsScene(p) {
       h('p', { class: 'note' }, 'Sky colours and fog are in Advanced mode (gear menu, top right).')));
   }
   p.append(sunSection(!simple));
-  if (!state.objects.length) p.append(sec('Getting started', h('ol', { class: 'steps', style: 'font-size:12px;margin:0' },
-    h('li', null, 'Add people and props from the left: click a tile, then click where it goes, or drag the tile onto the view.'),
-    h('li', null, 'Drag them on the floor, turn them with the orange ring, draw walk paths.'),
-    h('li', null, 'Frame the shot: Set start, reframe, Set end. Or use a shot size or move.'),
-    h('li', null, 'Export the video or frames.')),
-    h('button', { style: 'margin-top:8px', onclick: () => openModal('mHelp') }, 'Quick start and shortcuts')));
 }
 /* ---- shot description and move detection (the camera view's top line, the Camera move card) ---- */
 /* "Medium shot · 50 mm · eye level": the size is worked out from the person nearest the middle of the frame */
@@ -3152,7 +3156,11 @@ function tickUI() {
     putStyle(bar, 'left', (sp ? R.cam.x : 0) + 10 + 'px'); putStyle(bar, 'maxWidth', sp ? (R.cam.w - 20) + 'px' : '');
     /* the info pill is centred over the camera pane and sits 6 px below the buttons, whether they fill one row or wrap onto two */
     putStyle($('#hud'), 'left', (sp ? R.cam.x + R.cam.w / 2 : vpEl.clientWidth / 2) + 'px'); putStyle($('#hud'), 'maxWidth', (sp ? R.cam.w : vpEl.clientWidth) - 24 + 'px'); putStyle($('#hud'), 'top', (10 + bar.offsetHeight + 6) + 'px');
-    putStyle($('#vpRight'), 'right', (sp ? vpEl.clientWidth - R.work.w + 10 : 10) + 'px'); putStyle(hint, 'maxWidth', sp ? (R.work.w - 30) + 'px' : ''); }
+    putStyle($('#vpRight'), 'right', (sp ? vpEl.clientWidth - R.work.w + 10 : 10) + 'px'); putStyle(hint, 'maxWidth', sp ? (R.work.w - 30) + 'px' : '');
+    /* the empty stage's line: only while nothing is in the scene, in the editor or top view, not while placing or during a tour */
+    const eh = $('#emptyHint'), showEmpty = !state.objects.length && !!R.work && !placing && !tileDrag && !tourActive() && !practicing;
+    putStyle(eh, 'display', showEmpty ? 'block' : 'none');
+    if (showEmpty) { putStyle(eh, 'left', (R.work.x + R.work.w / 2) + 'px'); putStyle(eh, 'maxWidth', (R.work.w - 32) + 'px'); } }
   if (camPane()) {
     putHTML(hint, rec ? (rec.phase === 'rec' ? '<b style="color:#ff6b6b">● Recording</b> · <kbd>Esc</kbd>: cancel' : 'Get ready…')
       : 'Drag: orbit · Scroll: dolly · <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>: fly');
@@ -3167,9 +3175,10 @@ function tickUI() {
         : selected ? 'Drag the camera or its aim point'
           : nav);
   }
-  { /* the toast sits at the top (56 px); with the camera buttons showing it drops below the info pill so it never covers them */
+  { /* the toast sits at the top (56 px); with the camera buttons showing it drops below the info pill so it never covers them.
+       An open dialog covers those buttons anyway, so then it stays at 56 px. */
     const hu = $('#hud'), bar = $('#camBar'), vt = vpEl.getBoundingClientRect().top;
-    putStyle($('#toast'), 'top', camUI ? Math.round(vt + (hu.offsetHeight ? 10 + bar.offsetHeight + 6 + hu.offsetHeight : 10 + bar.offsetHeight) + 8) + 'px' : ''); }
+    putStyle($('#toast'), 'top', camUI && !openModals().length ? Math.round(vt + (hu.offsetHeight ? 10 + bar.offsetHeight + 6 + hu.offsetHeight : 10 + bar.offsetHeight) + 8) + 'px' : ''); }
   $('#bUndo').disabled = hi <= 0; $('#bRedo').disabled = hi >= hist.length - 1;
   undoTitles();
   const step = currentStep();
@@ -4136,29 +4145,77 @@ function focusSel() {
   edControls.target.copy(c); edCam.position.copy(c).addScaledVector(dir, rad * 3.2);
 }
 const STARTERS = [
-  ['empty', 'Empty stage', 'Just the floor and the camera.'],
   ['dialogue', 'Two-person dialogue', 'Two people facing each other, medium two-shot.'],
   ['walktalk', 'Walk and talk', 'Two people walking down a street, camera leading them.'],
   ['room', 'Living room', 'Sofa, coffee table and chair. One person sits, one stands.'],
   ['cafe', 'Café table', 'Two people seated across a small table.'],
   ['street', 'Street', 'Buildings, street lamps, a parked car and a passing car.'],
   ['marks', 'Blocking practice', 'One person and floor marks A, B and C.'],
+  ['empty', 'Empty stage', 'Just the floor and the camera.'],
 ];
+/* ---- starter pictures: each set seen through its shot camera, rendered live (320 x 180) one per frame after the Start window
+   opens, kept for the session as JPEG data: URLs (no blob: URLs). The set is built aside and shown to the export renderer for a
+   moment; the user's scene, its views, undo, autosave and Recent projects are never touched. ---- */
+const starterPics = new Map();
+let starterPicJob = 0;
+function renderStarterPic(kind) {
+  if (exporting || cmpBusy || swapping || practicing) return null;
+  const built = buildState(() => fillStarter(kind, () => { }));
+  const keep = { state, T }, mine = new Map(views), shown = new Map([...views].map(([id, v]) => [id, v.group.visible]));
+  let url = null;
+  swapping = true;
+  try {
+    for (const v of mine.values()) v.group.visible = false;
+    views.clear();
+    state = built; syncScene(false); applyEnv();
+    const w = 320, hh = Math.max(2, Math.round(w / arOf(state.settings.aspect) / 2) * 2), r = getExportRenderer(w, hh);
+    renderExportFrame(r, 0, w, hh);
+    url = r.domElement.toDataURL('image/jpeg', 0.8);
+  } catch (e) { console.error('ShotRef: could not make the starter picture', e); url = null; }
+  finally {
+    for (const v of views.values()) { scene.remove(v.group); disposeTree(v.group); }
+    views.clear(); for (const [id, v] of mine) { views.set(id, v); v.group.visible = shown.get(id); }
+    state = keep.state; swapping = false;
+    applyAll(keep.T); applyEnv(); requestRender();
+  }
+  return url;
+}
+function showStarterPic(slot, url) { slot.innerHTML = ''; slot.append(h('img', { src: url, alt: '' })); slot.classList.add('ready'); }
+/* one picture per frame while the window is open; a picture that failed leaves its plain block */
+function fillStarterPics(slots) {
+  const job = ++starterPicJob, todo = slots.filter(([k]) => !starterPics.has(k));
+  const step = () => {
+    if (job !== starterPicJob || $('#mStart').classList.contains('hidden') || !todo.length) return;
+    const [k, slot] = todo.shift(), url = renderStarterPic(k);
+    if (url) { starterPics.set(k, url); showStarterPic(slot, url); }
+    requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
 function openStarters(firstLaunch = false) {
   if (practicing) return endPracticeFirst(() => openStarters(firstLaunch));
   const g = $('#startGrid'); g.innerHTML = '';
+  const slots = [];
   /* first launch doubles as the welcome screen (branding/BRAND.md) */
   $('#startHead').style.display = firstLaunch ? '' : 'none';
   $('#mStartT').textContent = firstLaunch ? 'Start a shot' : 'Starter sets';
   $('#mStartP').textContent = firstLaunch ? 'Pick a starter set or start empty.' : 'Pick a ready-made layout.';
-  for (const [k, t, d] of STARTERS) g.append(h('button', { class: 'card', onclick: () => {
-    closeModal(g);
-    /* on first launch the scene is our sample, not the user's work: no replace question */
-    if (!firstLaunch && platform.kind === 'desktop' && platform.isDirty()) guardUnsaved(() => loadStarter(k));
-    else if (!firstLaunch && (state.objects.length || state.plate)) confirmBox('Replace the current scene?', 'Start from "' + t + '". You can undo this with Ctrl+Z.', () => loadStarter(k), 'Replace scene');
-    else loadStarter(k);
-  } }, h('b', null, t), h('small', null, d)));
+  for (const [k, t, d] of STARTERS) {
+    /* the picture's place is kept by a plain block of the same shape, so nothing jumps when it arrives; Empty stage shows a "+" */
+    const slot = h('div', { class: 'pic', 'data-kind': k, 'aria-hidden': 'true' });
+    if (k === 'empty') slot.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 7v10M7 12h10"/></svg>';
+    else if (starterPics.has(k)) showStarterPic(slot, starterPics.get(k));
+    else slots.push([k, slot]);
+    g.append(h('button', { class: 'card', 'data-kind': k, onclick: () => {
+      closeModal(g);
+      /* on first launch the scene is our sample, not the user's work: no replace question */
+      if (!firstLaunch && platform.kind === 'desktop' && platform.isDirty()) guardUnsaved(() => loadStarter(k));
+      else if (!firstLaunch && (state.objects.length || state.plate)) confirmBox('Replace the current scene?', 'Start from "' + t + '". You can undo this with Ctrl+Z.', () => loadStarter(k), 'Replace scene');
+      else loadStarter(k);
+    } }, slot, h('b', null, t), h('small', null, d)));
+  }
   openModal('mStart');
+  fillStarterPics(slots);
 }
 /* Builds a new state with the scene helpers (they work on the global `state`), then puts the old one back. */
 function buildState(fill) {
@@ -4179,7 +4236,7 @@ function replaceProject(newState, newAssets = {}, label) {
     assets = { ...assets, ...newAssets };
     recentSession = uid(); state = newState; cleanTakes(); selected = null; selIds = []; promptEdit = null; shotEditId = null; setTime(0); migrateAll();
     platform.startDoc(); /* Open, New and starters are a new document: Save must not reuse the previous file */
-    restore(snapshot()); pushHistory(); resetEditorCam();
+    restore(snapshot()); pushHistory(); frameEditorSoon();
     snapHold = false; if (snapLive > snapPruneAt) pruneSnapPool();
     if (label) toast(label);
   } catch (e) {
@@ -4251,7 +4308,7 @@ function fillStarter(kind, selectId) {
       street();
       add('car', [2.6, 0, -3], { color: '#2f5d8a' }); add('tree', [3.6, 0, -12]); add('tree', [-3.8, 0, -16]);
       const car = add('car', [-1.6, 0, -25]); car.opts.faceTravel = true; car.keys = [{ t: 0, p: [-1.6, 0, -25], r: [0, 0, 0], s: [1, 1, 1] }, { t: L, p: [-1.6, 0, 25], r: [0, 0, 0], s: [1, 1, 1] }];
-      const w = add('person', [3.4, 0, -4]); walk(w, [3.4, 0, -4], [3.4, 0, 3]);
+      const w = add('person', [3.8, 0, -4]); walk(w, [3.8, 0, -4], [3.8, 0, 3]); /* on the pavement, clear of the parked car */
       cam([-3.4, 1.6, 7.5], [1.5, 1.4, -3], 28); break;
     }
     case 'marks': {
@@ -4272,6 +4329,72 @@ function seedScene() {
   state.objects.push(p, t, b);
 }
 function resetEditorCam() { edCam.position.set(7, 5, 10); edControls.target.set(0, 1, 0); }
+/* A scene that was just swapped in (a starter set, Open, Recent projects, a dropped file) or restored at boot is framed on the next
+   drawn frame, when the view has its size: never on undo, redo or a take or shot switch. */
+let edFramePending = true;
+function frameEditorSoon() { resetEditorCam(); edFramePending = true; }
+/* Stand 8 m behind and 5 m above the shot camera's first position, look at the middle of the people (no people: of all items),
+   then pull straight back until every person and the camera icon fit with a 10% margin (at most 60 m away). From inside an item,
+   or with a person's middle hidden behind something, go 2 m higher and 2 m further back and try again (8 tries).
+   When every try is blocked, swing round 20 degrees at a time, then look down more steeply.
+   An empty stage keeps the default view. The top view centres on the same middle. Returns the middle, or null. */
+/* a person's middle is the middle of the torso (always on the body, even seated); anything else: the middle of its box */
+const midPoint = v => v.person ? v.person.spine.children[0].getWorldPosition(new THREE.Vector3()) : new THREE.Box3().setFromObject(v.group).getCenter(new THREE.Vector3());
+function frameEditorView() {
+  const vis = state.objects.map(o => [o, views.get(o.id)]).filter(([o, v]) => v && v.group.visible && o.visible !== false);
+  if (!vis.length) { resetEditorCam(); return null; }
+  scene.updateMatrixWorld(true);
+  const boxOf = v => new THREE.Box3().setFromObject(v.group);
+  const ppl = vis.filter(([o]) => o.type === 'person').map(([o, v]) => ({ id: o.id, box: boxOf(v), mid: midPoint(v) })).filter(x => !x.box.isEmpty());
+  const items = vis.map(([o, v]) => ({ id: o.id, box: boxOf(v), mid: midPoint(v) })).filter(x => !x.box.isEmpty());
+  const c0 = evalCam(0), cp = new THREE.Vector3().fromArray(c0.p), ctg = new THREE.Vector3().fromArray(c0.tg);
+  const avg = list => list.reduce((s, x) => s.add(x.mid), new THREE.Vector3()).multiplyScalar(1 / list.length);
+  const M = ppl.length ? avg(ppl) : items.length ? avg(items) : ctg.clone();
+  const back = cp.clone().sub(ctg).setY(0); if (back.lengthSq() < 1e-6) back.set(0, 0, 1); back.normalize(); /* opposite to where the camera looks, on the floor */
+  /* what must be in the picture: every corner of every person, and the camera icon */
+  const pts = [];
+  for (const x of ppl) { const b = x.box; for (const i of [0, 1]) for (const j of [0, 1]) for (const k of [0, 1]) pts.push(new THREE.Vector3(i ? b.max.x : b.min.x, j ? b.max.y : b.min.y, k ? b.max.z : b.min.z)); }
+  for (const d of [[-1, -1, -1], [1, 1, 1], [-1, 1, -1], [1, -1, 1]]) pts.push(cp.clone().add(new THREE.Vector3(...d).multiplyScalar(0.2)));
+  const R = viewRects(vpEl.clientWidth, vpEl.clientHeight), wr = R.work || { w: vpEl.clientWidth, h: vpEl.clientHeight };
+  edCam.aspect = wr.w > 0 && wr.h > 0 ? wr.w / wr.h : 16 / 9; edCam.updateProjectionMatrix();
+  const aim = eye => { edCam.position.copy(eye); edCam.up.set(0, 1, 0); edCam.lookAt(M); edCam.updateMatrixWorld(true); };
+  const fits = () => pts.every(p => { const v = p.clone().project(edCam); return v.z > -1 && v.z < 1 && Math.abs(v.x) <= 0.8 && Math.abs(v.y) <= 0.8; });
+  const rc = new THREE.Raycaster();
+  const hidden = eye => {
+    updateSunGizmo(); sunGrp.updateMatrixWorld(true);
+    const targets = vis.map(([, v]) => v.group); targets.push(camBody); if (sunGrp.visible) targets.push(sunBall);
+    return ppl.some(x => {
+      const mid = x.mid, dist = eye.distanceTo(mid);
+      rc.set(eye, mid.clone().sub(eye).normalize()); rc.far = dist + 0.5;
+      for (const hit of rc.intersectObjects(targets, true)) {
+        let ob = hit.object;
+        while (ob) { if (ob.userData.pick) return true; if (ob.userData.objId) return ob.userData.objId !== x.id; ob = ob.parent; }
+      }
+      return true; /* nothing reached: not on the body */
+    });
+  };
+  /* one ladder of tries from one direction; null when every try is blocked */
+  const startAt = (dir, tr) => { const s = cp.clone().addScaledVector(dir, 8 + 2 * tr); s.y += 5 + 2 * tr; return s; };
+  const fitFrom = start => {
+    const u = start.clone().sub(M); let d = Math.min(60, u.length()), eye; u.normalize();
+    for (;;) { eye = M.clone().addScaledVector(u, d); aim(eye); if (fits() || d >= 60) return eye; d = Math.min(60, d + 0.25); }
+  };
+  const ladder = dir => {
+    for (let tr = 0; tr < 8; tr++) { const eye = fitFrom(startAt(dir, tr)); if (clear(eye)) return eye; }
+    return null;
+  };
+  const clear = eye => !items.some(x => x.box.containsPoint(eye)) && !hidden(eye);
+  /* straight behind first; when buildings block every try (a camera looking across a street), swing round a little at a time */
+  let eye = null;
+  for (const deg of [0, -20, 20, -40, 40, -60, 60, -90, 90]) { eye = ladder(back.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), deg * D2R)); if (eye) break; }
+  /* still blocked (a person standing close beside a car): look down more steeply, from over the camera's side */
+  for (const up of [15, 25, 40]) { if (eye) break; const s = M.clone().addScaledVector(back, 8); s.y += up; const e = fitFrom(s); if (clear(e)) eye = e; }
+  if (!eye) fitFrom(startAt(back, 0)); /* nothing clear from anywhere: the plain start, pulled back to fit */
+  edControls.target.copy(M); edControls.update();
+  topInit = true; topControls.target.set(M.x, 0, M.z); topCam.position.set(M.x, 120, M.z); topCam.zoom = 1; topCam.updateProjectionMatrix();
+  updateSunGizmo(); requestRender();
+  return M.toArray();
+}
 /* Save (or Save as). On the web both download a new file; the desktop app writes back to the open file unless saveAs. */
 let saving = false;
 async function saveProject(saveAs = false) {
@@ -5357,9 +5480,15 @@ function openModal(id) {
   m.classList.remove('hidden'); requestRender();
   if (id === 'mExport') { $('#exProg').hidden = !exporting; renderExportDialog(); }
   if (exporting && id === 'mExport') return; /* the export lock owns focus */
+  if (id === 'mHelp') { setHelpTab('quick'); const b = m.querySelector('.dlgBody'); if (b) b.scrollTop = 0; } /* always opens on Quick start */
   /* the main button, else the first real control: the × only when there is nothing else (K6) */
   const f = m.querySelector('button.primary:not(:disabled)') || focusables(m).find(el => !el.hasAttribute('data-close')) || focusables(m)[0];
   if (f) f.focus();
+}
+/* the Quick start window's two tabs: Quick start (the seven steps) and Shortcuts */
+function setHelpTab(k) {
+  $$('#helpTabs button').forEach(b => { const on = b.dataset.ht === k; b.classList.toggle('on', on); b.setAttribute('aria-selected', String(on)); });
+  $('#helpQuick').hidden = k !== 'quick'; $('#helpKeys').hidden = k !== 'keys';
 }
 function closeModal(el) {
   const m = el.closest('.modal'); if (exporting && (m.id === 'mExport' || m.id === 'mCompare')) return;
@@ -5746,6 +5875,7 @@ function wire() {
   $('#bUndo').onclick = undo; $('#bRedo').onclick = redo;
   $$('#viewSeg button').forEach(b => b.onclick = () => setView(b.dataset.v));
   $('#stHelp').onclick = () => { closeModal($('#stHelp')); openModal('mHelp'); };
+  $$('#helpTabs button').forEach(b => b.onclick = () => setHelpTab(b.dataset.ht));
   $('#cbCopy').onclick = copyFrame; $('#exCopy').onclick = copyFrame;
   $('#copySave').onclick = () => { if (copyBlob) { const fr = Math.round(T * state.settings.fps) + 1; saveFile(outName('frame' + String(fr).padStart(4, '0'), state.settings.style) + '.png', copyBlob); } closeModal($('#copySave')); };
   $$('#vpRight [data-g]').forEach(b => b.onclick = () => setGizmoMode(b.dataset.g));
@@ -6245,6 +6375,8 @@ function boot() {
     sky: () => ({ visible: skyDome.mesh.visible, cover: skyDome.uniforms.uCover.value, time: skyDome.time }),
     get history() { return { at: hi, length: hist.length, bytes: hist[hi].length }; },
     /* batch F (camera UX and light) hooks for the smoke test */
+    midOf: id => { const v = views.get(id); if (!v) return null; v.group.updateMatrixWorld(true); return midPoint(v).toArray(); },
+    frameEditorView, loadStarter, setEditCam: q => { edCam.position.fromArray(q); edControls.update(); requestRender(); }, editTarget: () => edControls.target.toArray(), topTarget: () => topControls.target.toArray(), starterPics: () => Object.fromEntries(starterPics),
     editCamPos: () => edCam.position.toArray(), detectMove, describeShot, camToWorld, pointsVisible: () => ckPts.some(m => m.visible),
     sunInfo: () => ({ castShadow: sun.castShadow, radius: sun.shadow.radius, intensity: sun.intensity, color: '#' + sun.color.getHexString(), gizmo: { visible: sunGrp.visible, pos: sunGrp.position.toArray() } }),
     shotPixels: (t, w = 240) => { const hh = Math.max(2, Math.round(w / arOf(state.settings.aspect))), r = getExportRenderer(w, hh); renderExportFrame(r, t, w, hh); const c = document.createElement('canvas'); c.width = w; c.height = hh; const g = c.getContext('2d'); g.drawImage(r.domElement, 0, 0); const d = g.getImageData(0, 0, w, hh).data; applyAll(T); return d; },
