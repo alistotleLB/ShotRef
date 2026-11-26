@@ -6,21 +6,17 @@ Read this before doing anything. Claude updates it at the end of every session.
 A "very dumbed-down Blender" in one offline HTML file: block people and props, move the camera, export reference clips and frames for AI video models.
 
 ## Current state            (rewritten every session, 15 lines max)
-Works:   ShotRef 1.4.0, RELEASED 2026-11-24 (https://github.com/alistotleLB/ShotRef/releases/tag/v1.4.0): everything from 1.3.1 plus the
-         quick tour (10 stops, orange viewfinder corners), the first-run question "Take a look round the set?", tour items in the Help menus.
-Off:     the hands-on tour (16 stops, practice stage) is built and tested but switched off (Ali: needs a lot of improvement).
-         Turn on: HANDS_TOUR_DEFAULT in src/main.js + HANDS_TOUR in electron/main.cjs (or the hidden pref handsTour for one browser).
-Builds:  dist/ShotRef.html 1034 KB; release/ShotRef-Setup-1.5.0.exe (122 MB), ShotRef-1.5.0-portable.exe (111 MB), unsigned.
-Tests:   npm test 318/318 (631 s), npm run test:desktop 27/27, 0 Electron left (2026-11-24, 1.5.0 working copy).
-Code:    PUBLIC GitHub main = release 1.5.0. Branch feature/onboarding-tour merged (its GitHub copy is stale, 3 commits; PR #1 closed).
-Known:   walking feet slide slightly at heel strike. claude.ai artifact 6uRy4QMBjvK9Rn5PLedSUq republished from 1.4.0 (version 10, private).
-Built:   1.5.0 RELEASED 2026-11-24 (https://github.com/alistotleLB/ShotRef/releases/tag/v1.5.0): What's new box after an update (every version since the one you had) and ShotRef-styled
-         desktop message boxes with no Windows alert sound (electron/popup.cjs). npm test 318/318, test:desktop 27/27.
-Built:   drag and drop from the Add panel (2026-11-25, NOT committed): press a tile, drag it onto the view, it lands under the pointer. npm test 322/322, test:desktop 28/28.
-UI:      refresh on branch ui/refresh (2026-11-25): darker surfaces + section cards, calm buttons, orange only for main action/camera/keys,
-         decluttered Sun/Export/Person panels, shorter labels. npm test 362/362, test:desktop 28/28. Not merged. Ali: checklist C6.
-Next:    Ali runs C6 (UI refresh), then decides phase 4. Also C5 (update the installed app to 1.5.0). Also C4 (quick tour). Then: improve the hands-on tour (what Ali disliked: to ask), installable web app + website.
-Not yet tried by Ali: the quick tour; everything since 2026-11-22.
+Works:   ShotRef 1.6.0, RELEASED 2026-11-26 (https://github.com/alistotleLB/ShotRef/releases/tag/v1.6.0): UI refresh (section cards, one orange
+         selected look, decluttered panels, shorter labels), picture tiles (Scene, clouds, Light from; reference art in src/tile-pics.js),
+         right panel 336 px, skies with clouds, drag and drop from the Add panel, plus everything in 1.5.0 and earlier.
+Off:     the hands-on tour (built, tested, switched off). Turn on: HANDS_TOUR_DEFAULT in src/main.js + HANDS_TOUR in electron/main.cjs.
+Builds:  dist/ShotRef.html ~1074 KB; release/ShotRef-Setup-1.6.0.exe (122 MB), ShotRef-1.6.0-portable.exe (111 MB), unsigned.
+Tests:   npm test 364/364 (659 s), test:desktop 28/28, 0 Electron left (2026-11-26, release commit 40166b6).
+Code:    PUBLIC GitHub main = 1.6.0. Branch ui/refresh merged (kept locally). claude.ai artifact still 1.4.0 (republish needs Ali's yes).
+Known:   walking feet slide slightly at heel strike. Not checked: a real update from an installed copy to 1.6.0.
+Next:    Ali updates the installed app (C7). Then UI phase 4 needs Ali's choices: camera tabs 5->3, one-click moves as 7 paired rows,
+         steps vs Editor/Top/Camera, motion feel off the timeline, outliner grouping, Take menu placement.
+Not yet tried by Ali: the 1.6.0 update itself; the quick tour.
 
 ## Ali's goals              (his exact words, dated; never reworded)
 "Act as a principal software engineer leading a review of my application. Inspect the actual code, run the app and safe checks where possible, and give me a prioritized plan covering architecture, bugs and reliability, performance, and UI/UX." - Ali, 2026-11-22
@@ -156,3 +152,4 @@ NEXT      Ali runs C6 on the web page (npm run build, open dist/ShotRef.html in 
 - 2026-11-25 UI refresh phases 1-3 (N-018) on branch ui/refresh: 36da0ca (surfaces, cards, headings), a300f5a (button tiers, neutral .on, type scale 11.5/13/15, Add-panel cards, timeline clusters; Sun panel sun-only, simple sun = 3 controls, Getting started/Start from a set only on empty scene, Frame with camera… button replaces grid, Camera section removed, rare sections folded unless in use, Export format summary line, Items/Appearance renames, hint bar first 5 sessions, ground toggle only in Settings), abd3835 (~85 label rewrites, one name per thing, Opus review fixes x10, docs). Sonnet built, Opus reviewed. npm test 362/362 (678 s), test:desktop 28/28, 0 Electron left. Electron window/popup colours follow the new tokens. Not merged, not released.
 - 2026-11-26 tiles: Scene/Light rows are 5 picture tiles using Ali's reference art (src/tile-pics.js, 15 KB WebP data: URLs; an engine-rendered version was built and dropped at Ali's request); cloud tiles match; right panel 300->336 px. One selected look everywhere (Ali: "why is the scene selection in orange, while the cloud selection in white?"): --sel fill + 1.5px orange ring; tabs/steps orange underline/disc; outliner and timeline rows identical; white focus ring; --accd removed. npm test 364/364, test:desktop see commit.
 - 2026-11-26 token review: Higgsfield, Drive and DaVinci connectors blocked for this project (.claude/settings.local.json, git-ignored); design-council and colorist skills hidden; CLAUDE.md test rule changed to matching checks while working, full suite before done; Design rules section added to CLAUDE.md. 13 closed notes and 16 old log lines moved word for word to PROJECT-archive.md (PROJECT.md 4,300 -> about 3,000 words).
+- 2026-11-26 1.6.0 RELEASED (Ali: "Yes, publish"): ui/refresh fast-forwarded into main, What's new + docs/RELEASE-NOTES-1.6.0.md, 6 README screenshots retaken (Sonnet). npm test 364/364 (659 s), test:desktop 28/28, 0 Electron. Installers 122/111 MB. Release has 5 assets; latest.yml serves 1.6.0. Not checked: update from an installed copy.
