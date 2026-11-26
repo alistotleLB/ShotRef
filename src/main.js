@@ -2337,8 +2337,8 @@ function moveCard() {
     h('div', { class: 'mc-title' }, mv.title), h('div', { class: 'mc-sub' }, mv.sub),
     h('div', { class: 'mc-thumbs' }, thumb('Start', th.s, ends.s, 0), h('span', { class: 'mc-arrow' }, '→'), thumb('End', th.e, ends.e, lastT())),
     h('div', { class: 'btns big2' },
-      h('button', { class: ends.s ? 'on acc' : '', onclick: () => setShotEnd('start'), title: 'Save what the camera sees now as the first frame' }, 'Set start'),
-      h('button', { class: ends.e ? 'on acc' : '', onclick: () => setShotEnd('end'), title: 'Save what the camera sees now as the last frame' }, 'Set end')),
+      h('button', { class: ends.s ? 'on' : '', onclick: () => setShotEnd('start'), title: 'Save what the camera sees now as the first frame' }, 'Set start'),
+      h('button', { class: ends.e ? 'on' : '', onclick: () => setShotEnd('end'), title: 'Save what the camera sees now as the last frame' }, 'Set end')),
     keyed ? h('div', { class: 'btns' }, h('button', { onclick: () => { setTime(0); setPlaying(true); } }, '▶ Play'), h('button', { onclick: makeCameraStatic }, 'Clear move')) : null,
     h('p', { class: 'note' }, ends.s && ends.e ? 'Reframe at either end and press Set start or Set end again to change it.' : 'Frame the opening shot → Set start. Frame the closing shot → Set end.')));
 }

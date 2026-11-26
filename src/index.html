@@ -18,7 +18,7 @@ LAYOUT: add/scene list left, viewport centre, properties right, timeline across 
 :root{
   --bg:#0e0f12;--panel:#16181c;--panel2:#2a2d33;--card:#1f2227;--field:#121418;--ctlh:#34383f;--line:#2c3037;--line2:#44484f;
   --sel:#3a3f47;--sel2:#5a606a;--danger:#ff7a7a;--dangerbg:#3a1f1f;
-  --ink:#eceef1;--ink2:#c3c8cf;--mute:#8f959e;--dim:#62676f;--acc:#ff9a3c;--acc2:#ffb870;--accd:#5a3a1c;
+  --ink:#eceef1;--ink2:#c3c8cf;--mute:#8f959e;--dim:#62676f;--acc:#ff9a3c;--acc2:#ffb870;
   --blue:#5aa2ff;--red:#ff5d5d;--ok:#59d18a;
   color-scheme:dark;
 }
@@ -27,12 +27,9 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:13px/1
 button,select,input{font:inherit;color:inherit}
 button{background:var(--panel2);border:1px solid transparent;border-radius:7px;padding:6px 10px;cursor:pointer;white-space:nowrap;transition:background .12s,border-color .12s,color .12s}
 button:hover{background:var(--ctlh)}
-button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
+button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 button.primary{background:var(--acc);border-color:var(--acc);color:#1b1206;font-weight:600;padding:8px 12px}
 button.primary:hover{background:var(--acc2)}
-/* chosen = neutral. Orange (.acc, or the listed selectors) only for the primary action, the current tab or step, camera and keys, and the one key choice row of a panel */
-button.on{background:var(--sel);box-shadow:inset 0 0 0 1px var(--sel2);color:var(--ink)}
-button.on.acc,.posegrid button.on,.stylechips button.on,.styles button.on,.tabs button.on,.stepseg button.on,#camBar button.on,#bPlay.on{background:var(--accd);box-shadow:inset 0 0 0 1px var(--acc);color:var(--acc2)}
 button.quiet,button.ghost{background:transparent;color:var(--ink2)}
 button.quiet:hover,button.ghost:hover{background:var(--panel2);color:var(--ink)}
 button.danger{background:transparent;color:var(--danger)}
@@ -55,7 +52,6 @@ input[type=checkbox]{accent-color:var(--acc)}
 #top .seg,#tl .seg{background:var(--bg)}
 .seg button{border:0;border-radius:6px;background:transparent;padding:4px 12px;color:var(--ink2)}
 .seg button:hover{background:var(--ctlh);color:var(--ink)}
-.seg button.on:not(.acc){background:var(--sel);box-shadow:inset 0 0 0 1px var(--sel2);color:var(--ink)}
 .spacer{flex:1}
 aside{background:var(--panel);overflow:auto}
 #left{grid-area:left;border-right:1px solid var(--line)}
@@ -65,12 +61,11 @@ aside{background:var(--panel);overflow:auto}
 .addgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;padding:6px;margin:0 8px 6px;background:var(--card);border-radius:10px}
 .tile{display:flex;flex-direction:column;align-items:center;gap:3px;padding:7px 2px 6px;font-size:11.5px;color:var(--ink2);background:var(--panel2);border:1px solid transparent;border-radius:7px}
 .tile svg{width:24px;height:24px;stroke:var(--ink2);fill:none;stroke-width:1.5;stroke-linejoin:round;stroke-linecap:round}
-.tile:hover svg{stroke:var(--acc2)}
+.tile:hover svg{stroke:var(--ink)}
 .tile.big{grid-column:span 3;flex-direction:row;justify-content:center;gap:8px;font-size:13px;padding:8px}
 #outliner{padding:2px 6px 12px}
 .ol{display:flex;align-items:center;gap:7px;padding:5px 8px;border-radius:6px;cursor:pointer;color:var(--ink2)}
 .ol:hover{background:var(--panel2)}
-.ol.sel{background:var(--sel);color:var(--ink);box-shadow:inset 2px 0 0 var(--acc)}
 .ol .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ol .kd{color:var(--acc);font-size:11.5px}
 .ol .eye{opacity:.55;padding:0 3px;border:0;background:none}
@@ -84,7 +79,6 @@ aside{background:var(--panel);overflow:auto}
 #vpRight{top:10px;right:10px;display:flex;flex-direction:row;gap:3px;pointer-events:auto;background:rgba(22,24,28,.78);backdrop-filter:blur(6px);border:1px solid rgba(255,255,255,.08);border-radius:9px;padding:3px}
 #vpRight .ib{position:relative;display:inline-flex;align-items:center;justify-content:center;background:transparent;border:0;border-radius:6px;padding:5px 6px;color:var(--ink2)}
 #vpRight .ib:hover{background:rgba(255,255,255,.08)}
-#vpRight .ib.on{background:rgba(255,255,255,.16);color:var(--ink)}
 #vpRight .vsep{width:1px;background:rgba(255,255,255,.12);margin:4px 2px}
 button.icon svg,.ib svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 [data-tip]:hover::after,[data-tip]:focus-visible::after{content:attr(data-tip);position:absolute;top:calc(100% + 6px);right:0;white-space:nowrap;background:var(--bg);color:#e7e9ec;border:1px solid var(--line2);font-size:11.5px;font-weight:400;padding:4px 8px;border-radius:6px;pointer-events:none;z-index:20}
@@ -129,11 +123,8 @@ button.icon svg,.ib svg{width:17px;height:17px;stroke:currentColor;fill:none;str
 .chips{display:flex;flex-wrap:wrap;gap:2px;background:var(--field);border-radius:8px;padding:2px}
 .chips button{padding:4px 7px;font-size:13px;background:transparent;color:var(--ink2)}
 .chips button:hover{background:var(--ctlh);color:var(--ink)}
-.chips button.on{background:var(--sel);box-shadow:inset 0 0 0 1px var(--sel2);color:var(--ink)}
-.chips button.on.acc{background:var(--accd);box-shadow:inset 0 0 0 1px var(--acc);color:var(--acc2)}
 .row.chiprow{align-items:flex-start}
 .row.chiprow>label{padding-top:4px}
-.pictiles.skytiles button.on{box-shadow:0 0 0 1.5px var(--ink2)}
 .pictiles.skytiles .csw{border-radius:0;box-shadow:none;aspect-ratio:128/104}
 .pictiles{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:5px;margin:0 0 10px}
 .pictiles button{display:flex;flex-direction:column;align-items:stretch;gap:0;padding:0;border:0;border-radius:7px;overflow:hidden;font-size:11.5px;line-height:1.15;text-align:center;min-width:0;background:var(--field);box-shadow:inset 0 0 0 1px rgba(255,255,255,.06)}
@@ -141,9 +132,6 @@ button.icon svg,.ib svg{width:17px;height:17px;stroke:currentColor;fill:none;str
 .pictiles button:hover{background:var(--ctlh)}
 .pictiles button:hover>span{color:var(--ink)}
 .pictiles button:hover .tpic{filter:brightness(1.08)}
-.pictiles button.on{box-shadow:0 0 0 1.5px var(--acc)}
-.pictiles button.on>span{color:var(--ink)}
-.pictiles button:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
 .pictiles .tpic{display:block;width:100%;aspect-ratio:128/104;object-fit:cover;background-size:cover}
 .csw{display:block;width:100%;aspect-ratio:3/2;border-radius:4px;flex:none;background-color:#7fb0e0;background-repeat:no-repeat;box-shadow:inset 0 0 0 1px rgba(255,255,255,.14)}
 .csw.clear{background-image:linear-gradient(#4f90d6,#8fc0ee)}
@@ -161,7 +149,6 @@ hr.div{border:0;border-top:1px solid var(--line);margin:8px 0 4px}
 .posegrid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
 .posegrid button{padding:6px 2px;font-size:13px}
 .posegrid button i{display:block;font-style:normal;font-size:11.5px;color:var(--mute)}
-.posegrid button.on i{color:var(--acc2)}
 .movegrid{display:grid;grid-template-columns:1fr 1fr;gap:4px}
 .movegrid button{text-align:left;padding:5px 7px;font-size:13px;display:flex;gap:6px;align-items:center}
 .movegrid button b{color:var(--acc2);font-weight:600;width:14px;text-align:center}
@@ -188,8 +175,6 @@ hr.div{border:0;border-top:1px solid var(--line);margin:8px 0 4px}
 #shotBar input{width:130px;padding:2px 6px;font-size:13px}
 .shotchip{display:flex;align-items:center;gap:6px;padding:3px 10px;border-radius:14px;font-size:13px;background:var(--panel2);white-space:nowrap}
 .shotchip small{color:var(--mute);font-size:11.5px}
-.shotchip.on{background:var(--sel);box-shadow:inset 0 0 0 1px var(--sel2);color:var(--ink)}
-.shotchip.on small{color:var(--ink2)}
 .shotchip.add{background:transparent;border-style:dashed;color:var(--mute)}
 .promptbox{width:100%;min-height:150px;resize:vertical;background:var(--field);border:1px solid var(--line2);border-radius:7px;color:#e7e9ec;font:13px/1.5 "Segoe UI",system-ui,sans-serif;padding:8px 9px}
 .expgrid{display:grid;grid-template-columns:1fr 1fr;gap:5px}
@@ -212,10 +197,8 @@ hr.div{border:0;border-top:1px solid var(--line);margin:8px 0 4px}
 .tlr{display:flex;height:24px;align-items:stretch}
 .tlr .lab{width:160px;flex:none;display:flex;align-items:center;gap:6px;padding:0 10px;color:var(--ink2);border-right:1px solid var(--line);cursor:pointer;overflow:hidden;white-space:nowrap}
 .tlr .lab .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.tlr .lab:focus-visible,.ol:focus-visible{outline:2px solid var(--acc);outline-offset:-2px}
-.tlr.sel .lab{color:var(--acc2);background:#24201b}
+.tlr .lab:focus-visible,.ol:focus-visible{outline:2px solid var(--ink);outline-offset:-2px}
 .tlr .lane{position:relative;flex:1;margin:0 14px 0 8px;border-bottom:1px solid #24262b;cursor:pointer}
-.tlr.sel .lane{background:rgba(255,154,60,.05)}
 #tlRuler{height:22px;position:sticky;top:0;z-index:2;background:var(--panel)}
 #tlRuler .lane{border-bottom:1px solid var(--line)}
 .tick{position:absolute;bottom:0;width:1px;background:#4a4e56;height:5px}
@@ -308,7 +291,6 @@ hr.div{border:0;border-top:1px solid var(--line);margin:8px 0 4px}
 .drop{position:absolute;inset:0;border:3px dashed var(--acc);background:rgba(255,154,60,.08);display:none;align-items:center;justify-content:center;font-size:18px;color:var(--acc2)}
 #camBar{top:10px;left:10px;display:none;gap:4px;flex-wrap:wrap;pointer-events:auto}
 #camBar button{background:rgba(25,27,31,.88);backdrop-filter:blur(6px);padding:6px 12px;font-weight:600}
-#camBar button.on{background:rgba(90,58,28,.95);border-color:var(--acc);color:var(--acc2)}
 .recbtn{color:#ff8080}
 .recbtn.on{background:#5a1c1c!important;border-color:#ff5d5d!important;color:#ffd0d0!important}
 /* selection model: group tag, lock button, Locked line, floating toolbar, selection box */
@@ -317,7 +299,6 @@ hr.div{border:0;border-top:1px solid var(--line);margin:8px 0 4px}
 .ol.ingrp{box-shadow:inset 2px 0 0 #8f7aff}
 .ol .lockb svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:1.8;display:block}
 .ol .lockb{opacity:.3}
-.ol .lockb.on{opacity:1;color:var(--acc2)}
 .ol:hover .lockb,.ol .lockb:focus-visible{opacity:.75}
 .ol .lockb.on:hover{opacity:1}
 .lockline{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--acc2);margin-top:6px}
@@ -326,9 +307,7 @@ hr.div{border:0;border-top:1px solid var(--line);margin:8px 0 4px}
 #boxSel{display:none;border:1px dashed var(--acc);background:rgba(255,154,60,.08)}
 #selBar{display:none;pointer-events:auto;gap:2px;background:rgba(22,24,28,.92);backdrop-filter:blur(6px);border:1px solid rgba(255,154,60,.45);border-radius:9px;padding:3px;transform:translate(-50%,-100%);box-shadow:0 6px 22px rgba(0,0,0,.45);z-index:4}
 #selBar button{position:relative;background:transparent;border:0;border-radius:6px;padding:4px 6px;color:#e3e6ea;display:flex;align-items:center}
-#selBar button:hover{background:rgba(255,154,60,.18);color:#ffe3c6}
 #selBar button.danger:hover{background:rgba(255,93,93,.18);color:#ffbdbd}
-#selBar button.on{color:var(--acc2)}
 #selBar svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 #selBar [data-tip]:hover::after,#selBar [data-tip]:focus-visible::after{top:auto;bottom:calc(100% + 7px);right:auto;left:50%;transform:translateX(-50%)}
 #selBar .sb-sep{width:1px;background:rgba(255,255,255,.12);margin:3px 2px}
@@ -343,7 +322,6 @@ hr.div{border:0;border-top:1px solid var(--line);margin:8px 0 4px}
 .lenset span{margin-right:3px}
 .lenset button{padding:3px 9px;background:transparent;color:var(--ink2)}
 .lenset button:hover{background:var(--ctlh);color:var(--ink)}
-.lenset button.on{background:var(--sel);box-shadow:inset 0 0 0 1px var(--sel2);color:var(--ink)}
 .lenset input{width:54px;margin-left:3px}
 .feelbar button{padding:4px 9px}
 .seg.feel{width:100%}
@@ -355,7 +333,6 @@ hr.div{border:0;border-top:1px solid var(--line);margin:8px 0 4px}
 .startgrid .card{display:flex;flex-direction:column;gap:4px;text-align:left;padding:12px;white-space:normal;min-height:84px}
 .startgrid .card b{font-size:15px}
 .startgrid .card small{color:var(--mute);font-size:11.5px;line-height:1.35}
-.startgrid .card:hover{border-color:var(--acc)}
 body.simple #vpRight [data-g],body.simple #vpRight [data-g2]{display:none}
 body.simple .adv{display:none!important}
 /* top bar: project name, File menu, step bar */
@@ -377,13 +354,10 @@ button.icon{padding:5px 8px;min-width:32px;display:inline-flex;align-items:cente
 .stepseg button{border:0;border-radius:16px;background:transparent;padding:4px 14px 4px 6px;display:flex;align-items:center;gap:7px;color:var(--ink2)}
 .stepseg button b{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:#2a2d33;font-size:11.5px;color:var(--ink2)}
 .stepseg button:hover{background:var(--ctlh)}
-.stepseg button.on{background:var(--accd);color:#ffe3c6}
-.stepseg button.on b{background:var(--acc);color:#1b1206}
 /* left panel tabs: Add | Scene */
 #left{display:flex;flex-direction:column;overflow:hidden}
 .tabs{display:flex;gap:2px;padding:8px 10px 0;border-bottom:1px solid var(--line);flex:none;background:var(--panel)}
 .tabs button{flex:1;border:0;border-radius:6px 6px 0 0;background:transparent;padding:7px 2px;color:var(--mute);position:relative;font-size:13px}
-.tabs button.on{background:var(--panel2);color:var(--acc2);box-shadow:inset 0 -2px 0 var(--acc)}
 .tabs .cnt{font-size:11.5px;color:var(--mute);margin-left:3px}
 #props .tabs{position:sticky;top:0;z-index:2;margin:0 0 8px;padding-left:0;padding-right:0}
 .tabs .tdot{position:absolute;top:5px;right:6px;width:6px;height:6px;border-radius:50%;background:var(--acc)}
@@ -395,7 +369,6 @@ button.icon{padding:5px 8px;min-width:32px;display:inline-flex;align-items:cente
 .mthumb{display:flex;flex-direction:column;gap:4px;padding:3px;border-radius:7px;background:var(--card);font-size:11.5px;color:var(--mute)}
 .mthumb img,.mthumb .noimg{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:5px;display:block;background:var(--bg)}
 .mthumb.ok span{color:var(--acc2)}
-.mthumb:hover{border-color:var(--acc)}
 #hud .shotdesc{color:#fff}
 #addArea,#outliner{flex:1;overflow:auto;min-height:0}
 #addArea{padding-bottom:12px}
@@ -414,8 +387,6 @@ body.tiledrag #c{cursor:copy!important}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 .recgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-top:12px}
 .rcard{position:relative;display:flex;flex-direction:column;gap:3px;padding:6px;border:1px solid transparent;border-radius:9px;background:var(--card);cursor:pointer;text-align:left;font:inherit;color:inherit}
-.rcard:hover{border-color:var(--acc)}
-.rcard.cur{border-color:var(--acc)}
 .rcard.bad{opacity:.75}
 .rcard img,.rcard .noimg{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:6px;background:var(--bg);display:block}
 .rcard b{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -431,11 +402,32 @@ body.tiledrag #c{cursor:copy!important}
 .setile .tile{flex:1;min-width:0}
 .setile .tile{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .setile .setdel{background:transparent;border:0;border-radius:4px;line-height:1.2}
-button.icon.on{background:var(--sel);color:var(--ink)}
 .setile .setdel{position:absolute;top:2px;right:4px;font-style:normal;color:var(--mute);opacity:0;padding:0 3px;cursor:pointer}
 .setile:hover .setdel,.setile:focus-within .setdel{opacity:1}
 .setile .setdel:hover{color:#ff9c9c}
 #splitLine{top:0;bottom:0;width:2px;background:#2c2f35;display:none;pointer-events:none}
+/* ONE "chosen" look everywhere (families A and C): raised neutral fill, orange ring, ink text. Orange never means hover.
+   B (tabs, steps) = ink text plus one orange mark. E (list rows) = same fill with an orange left bar. Class names stay on / sel / cur. */
+:root{--ring-on:inset 0 0 0 1.5px var(--acc)}
+button.on,.shotchip.on,button.on:hover{background:var(--sel);box-shadow:var(--ring-on);color:var(--ink)}
+.shotchip.on small{color:var(--ink2)}
+.pictiles button.on,.pictiles button.on:hover{background:var(--field);box-shadow:0 0 0 1.5px var(--acc)}
+.pictiles button.on>span{color:var(--ink)}
+#vpRight .ib.on,#selBar button.on,#camBar button.on,#vpRight .ib.on:hover,#selBar button.on:hover,#camBar button.on:hover{background:rgba(255,255,255,.16);box-shadow:var(--ring-on);color:var(--ink)}
+#camBar button.on{border-color:transparent}
+.ol .lockb.on,.ol .lockb.on:hover{background:none;box-shadow:none;color:var(--acc);opacity:1}
+.recbtn.on,.recbtn.on:hover{background:#5a1c1c!important;box-shadow:inset 0 0 0 1.5px var(--red)!important;border-color:transparent!important;color:#ffd0d0!important}
+.tabs button:hover{color:var(--ink)}
+.tabs button.on,.tabs button.on:hover{background:var(--panel2);box-shadow:inset 0 -2px 0 var(--acc);color:var(--ink)}
+.stepseg button.on,.stepseg button.on:hover{background:var(--sel);box-shadow:var(--ring-on);color:var(--ink)}
+.stepseg button.on b{background:var(--acc);color:#1b1206}
+.ol.sel,.tlr.sel .lab{background:var(--sel);color:var(--ink);box-shadow:inset 2px 0 0 var(--acc)}
+.tlr.sel .lane{background:rgba(255,255,255,.04)}
+#selBar button:hover{background:rgba(255,255,255,.1);color:var(--ink)}
+#selBar button.danger:hover{background:rgba(255,93,93,.18);color:#ffbdbd}
+#camBar button:hover{background:rgba(52,56,63,.95)}
+.startgrid .card:hover,.rcard:hover{border-color:var(--line2);background:var(--ctlh)}
+.rcard.cur,.rcard.cur:hover{border-color:var(--acc);box-shadow:inset 0 0 0 1px var(--acc)}
 /* phase 2 */
 .xofmt.hidden{display:none}
 </style>
