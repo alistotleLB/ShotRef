@@ -3602,13 +3602,13 @@ check('time of day: renders differently in the exported frame', async ({ open })
   noErrors(p);
 });
 
-check('light the shot from: Front, Side left, Side right, Backlight, Top place the sun relative to the camera', async ({ open }) => {
+check('light the shot from: Front, Left, Right, Back, Top place the sun relative to the camera', async ({ open }) => {
   const p = await open(); await settle(p, 300);
   await p.evaluate(() => window.__shotref.select(null)); await settle(p, 200);
   const az = await p.evaluate(() => { const c = window.__shotref.evalCam(window.__shotref.T); return Math.atan2(c.p[0] - c.tg[0], c.p[2] - c.tg[2]) * 180 / Math.PI; });
   const wrap = d => ((d % 360) + 360) % 360, near360 = (a, b) => Math.abs(((a - b + 540) % 360) - 180) < 1.01;
-  for (const [label, d, el] of [['Front', 25, 35], ['Side left', -90, 22], ['Side right', 90, 22], ['Backlight', 180, 16], ['Top', 0, 82]]) {
-    await p.click('#props .chips button:text-is("' + label + '")'); await settle(p, 200);
+  for (const [label, d, el] of [['Front', 25, 35], ['Left', -90, 22], ['Right', 90, 22], ['Back', 180, 16], ['Top', 0, 82]]) {
+    await p.locator('#props .pictiles').getByRole('button', { name: label, exact: true }).click(); await settle(p, 200);
     const s = await p.evaluate(() => JSON.parse(JSON.stringify(window.__shotref.state.settings)));
     ok(near360(s.sunAz, wrap(az + d)) && s.sunEl === el, label + ': ' + s.sunAz + ' / ' + s.sunEl + ' expected ' + wrap(az + d) + ' / ' + el);
   }
@@ -6520,4 +6520,39 @@ check('declutter: the Sun panel link to the Scene panel works from the Camera vi
   await p.evaluate(() => { __shotref.select('sun'); __shotref.setView('camera'); }); await settle(p, 300);
   await p.click('#props [data-role="to-scene"]'); await settle(p, 300);
   ok(await p.evaluate(() => __shotref.view) !== 'camera' && (await p.innerText('#props')).includes('Sky'), 'did not reach the Scene panel');
+});
+
+check('picture tiles: the Scene presets and Light the shot from show 10 pictures as data: URLs without errors', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => window.__shotref.select(null));
+  await p.waitForFunction(() => window.__shotref.tiles().n === 10, null, { timeout: 15000 });
+  await settle(p, 200);
+  const r = await p.evaluate(() => ({ rows: [...document.querySelectorAll('#props .pictiles:not(.skytiles)')].map(row => [...row.querySelectorAll('button')].map(b => b.textContent.trim()).join()),
+    srcs: [...document.querySelectorAll('#props .pictiles img[data-tile]')].map(i => i.getAttribute('src') || ''),
+    on: [...document.querySelectorAll('#props .pictiles button.on')].map(b => b.textContent.trim()), env: window.__shotref.state.settings.env }));
+  ok(r.rows.join('|') === 'Studio,Day,Overcast,Sunset,Night|Front,Left,Right,Back,Top', 'tile rows: ' + r.rows.join('|'));
+  ok(r.srcs.length === 10 && r.srcs.every(s => /^data:image\/webp;base64,.{200}/.test(s)), 'tile pictures: ' + r.srcs.map(s => s.slice(0, 30)).join());
+  ok(r.on.length === 1 && r.on[0].toLowerCase() === r.env, 'selected preset tile: ' + r.on + ' / ' + r.env);
+  /* the pictures differ: Day is bluer than Studio, Back is darker in the middle than Front */
+  const px = await p.evaluate(async () => { const out = {}; for (const im of document.querySelectorAll('#props .pictiles img[data-tile]')) { await im.decode(); const c = document.createElement('canvas'); c.width = im.naturalWidth; c.height = im.naturalHeight; const g = c.getContext('2d'); g.drawImage(im, 0, 0);
+    const a = g.getImageData(4, 4, 1, 1).data, m = g.getImageData(c.width >> 1, Math.round(c.height * 0.32), 1, 1).data; out[im.dataset.tile] = { corner: [...a], mid: [...m], w: c.width }; } return out; });
+  ok(px['env:day'].corner[2] > px['env:day'].corner[0] + 30, 'Day corner is not sky blue: ' + px['env:day'].corner);
+  ok(px['light:back'].mid[0] + 40 < px['light:front'].mid[0], 'Back face should be darker than Front: ' + px['light:back'].mid + ' / ' + px['light:front'].mid);
+  /* a rebuilt panel shows the pictures straight away; picking a tile keeps working */
+  await p.locator('#props .pictiles').getByRole('button', { name: 'Night', exact: true }).click(); await settle(p, 200);
+  const after = await p.evaluate(() => ({ env: window.__shotref.state.settings.env, srcs: [...document.querySelectorAll('#props .pictiles img[data-tile]')].map(i => (i.getAttribute('src') || '').slice(0, 22)) }));
+  ok(after.env === 'night' && after.srcs.every(s => s === 'data:image/webp;base64'), 'after picking Night: ' + JSON.stringify(after));
+  await p.evaluate(() => window.__shotref.select('sun')); await settle(p, 200);
+  ok((await p.locator('#props .pictiles img[src^="data:image/webp"]').count()) === 5, 'sun panel tiles');
+  noErrors(p);
+});
+
+check('picture tiles: shown under the claude.ai CSP (app.html) with no console errors', async ({ open }) => {
+  const p = await open('app.html'); await settle(p, 300);
+  await p.evaluate(() => window.__shotref.select(null));
+  await p.waitForFunction(() => window.__shotref.tiles().n === 10, null, { timeout: 15000 });
+  await settle(p, 300);
+  const r = await p.evaluate(async () => { const ims = [...document.querySelectorAll('#props .pictiles img[data-tile]')]; await Promise.all(ims.map(i => i.decode().catch(() => null))); return ims.map(i => (i.getAttribute('src') || '').slice(0, 22) + ':' + i.naturalWidth); });
+  ok(r.length === 5 + 5 && r.every(s => s === 'data:image/webp;base64:128'), 'CSP tiles: ' + r.join());
+  noErrors(p, 'CSP page');
 });

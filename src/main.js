@@ -8,6 +8,7 @@ import * as K from './keys.js';
 import { platform } from './platform.js';
 import { CLOUDS_NEW, COVER, DRIFTS, LOOKS, cleanClouds, cloudLight, makeSkyDome, nearestCover, skyPhrase, skyWording } from './sky.js';
 import { runTour, tourActive, tourTick } from './tour.js';
+import { TILE_PICS } from './tile-pics.js';
 import { TOUR_COPY } from './tour-copy.js';
 
 /* ---- shared values: every module-level `let`, what it holds, and what changes it ----
@@ -719,6 +720,13 @@ function lightFrom(kind) {
   applyEnv(); changed(true, true); toast(d[2] + ' (relative to the shot camera)');
 }
 function setShadows(on) { state.settings.shadows = on; applyEnv(); changed(true, true); toast(on ? 'Shadows on' : 'Shadows off'); }
+
+/* ---- picture tiles: the Scene presets and "Light the shot from" ----
+   Fixed pictures from src/tile-pics.js (data: URLs). [stored value, tile label, full name] */
+const LIGHT_TILES = [['front', 'Front', 'Front light'], ['left', 'Left', 'Side light from the left'], ['right', 'Right', 'Side light from the right'], ['back', 'Back', 'Backlight'], ['top', 'Top', 'Top light']];
+const tilePic = key => h('img', { class: 'tpic', alt: '', draggable: 'false', 'data-tile': key, src: TILE_PICS[key] || '' });
+/* a row of five picture tiles (Scene presets, Light the shot from) */
+const tileRow = items => h('div', { class: 'pictiles' }, items.map(t => h('button', { class: t.on ? 'on' : '', title: t.title, 'aria-pressed': t.on ? 'true' : null, onclick: t.pick }, tilePic(t.key), h('span', null, t.label))));
 
 /* ---- materials for render styles ---- */
 const clayMat = new THREE.MeshStandardMaterial({ color: 0xd9d9d9, roughness: 0.9 });
@@ -2235,7 +2243,7 @@ function propsScene(p) {
   const s = state.settings;
   const set = (k, v, c = true) => { s[k] = v; applyEnv(); changed(c); };
   p.append(sec('Scene', h('p', { class: 'note', style: 'margin:0 0 8px' }, 'Nothing selected. Click an object, or click Shot camera in the list or the timeline.'),
-    h('div', { class: 'chips' }, Object.entries(ENV).map(([k, e]) => h('button', { class: s.env === k ? 'on acc' : '', onclick: () => pickEnv(k) }, e.label)))));
+    tileRow(Object.entries(ENV).map(([k, e]) => ({ key: 'env:' + k, label: e.label, title: e.label + ': sky and light', on: s.env === k, pick: () => pickEnv(k) })))));
   p.append(skySection(!simple));
   if (!state.objects.length) p.append(sec('Start from a set', h('p', { class: 'note', style: 'margin:0 0 6px' }, 'Ready-made layouts for common blocking situations.'),
     h('button', { style: 'width:100%', onclick: () => openStarters() }, 'Starter sets…')));
@@ -2349,7 +2357,7 @@ function skySection(adv) {
     return svg; };
   return sec('Sky',
     h('div', { class: 'lbl', style: 'width:auto;margin:2px 0 6px' }, 'Clouds'),
-    h('div', { class: 'skytiles' }, COVER.map(e => h('button', { class: nearest === e[0] ? 'on' : '', title: e[2], onclick: () => setC({ cover: e[1] }) }, h('i', { class: 'csw ' + e[0] }), h('span', null, e[2])))),
+    h('div', { class: 'pictiles skytiles' }, COVER.map(e => h('button', { class: nearest === e[0] ? 'on' : '', title: e[2], 'aria-label': e[2], onclick: () => setC({ cover: e[1] }) }, h('i', { class: 'csw tpic ' + e[0] }), h('span', null, e[0] === 'mostly' ? 'Cloudy' : e[2])))),
     cover ? h('hr', { class: 'div', style: 'margin:0 0 8px' }) : null,
     cover ? seg('Look', LOOKS, cl().look, k => setC({ look: k })) : null,
     cover ? seg('Drift', DRIFTS, cl().drift, k => setC({ drift: k })) : null,
@@ -2375,7 +2383,7 @@ function sunSection(adv) {
   const note = h('span', { class: 'note', style: 'margin:0' }); live.push(() => putText(note, sunWording()));
   return sec('Sun & shadows',
     h('div', { class: 'lbl', style: 'width:auto;margin-bottom:4px' }, 'Light the shot from'),
-    h('div', { class: 'chips' }, [['front', 'Front'], ['left', 'Side left'], ['right', 'Side right'], ['back', 'Backlight'], ['top', 'Top']].map(([k, l]) => h('button', { onclick: () => lightFrom(k), title: 'Place the sun relative to where the camera looks' }, l))),
+    tileRow(LIGHT_TILES.map(([k, l, full]) => ({ key: 'light:' + k, label: l, title: full + ': places the sun relative to where the camera looks', pick: () => lightFrom(k) }))),
     slider('Time of day', () => typeof s.tod === 'number' ? s.tod : 14, (v, c) => { const a = todSun(v); s.tod = v; s.sunEl = a.el; s.sunColor = a.color; s.sunInt = a.int; applyEnv(); changed(c); }, { min: 5, max: 20, step: 0.25, fmt: todLabel }),
     h('div', { class: 'row' }, note),
     adv ? slider('Direction', () => s.sunAz, (v, c) => set('sunAz', v, c), { min: 0, max: 360, step: 1, fmt: v => v.toFixed(0) + '\u00b0' }) : null,
@@ -5911,6 +5919,7 @@ function boot() {
     addPerson, sitPerson, standPerson, setLookAt, setPoseAt, nearestSeat, freeSeat, actLayer, poseAt, applyAll: t => applyAll(t),
     rig: id => { const v = views.get(id), P = v && v.person; if (!P) return null; const r = j => [j.rotation.x, j.rotation.y, j.rotation.z]; return { H: P.H, neck: r(P.neck), spine: r(P.spine), head: r(P.head), lSh: r(P.lSh), rSh: r(P.rSh), lEl: r(P.lEl), rEl: r(P.rEl), lHip: r(P.lHip), rHip: r(P.rHip), lKnee: r(P.lKnee), rKnee: r(P.rKnee), shoulderX: P.lSh.position.x, hipX: P.lHip.position.x, headScale: P.head.scale.x, headParts: P.head.children.length, pelvisY: P.pelvis.position.y, group: { p: v.group.position.toArray(), yaw: v.group.rotation.y } }; },
     soles: id => { const v = views.get(id); if (!v || !v.person) return null; v.group.updateMatrixWorld(true); return v.person.soles.map(s => s.getWorldPosition(new THREE.Vector3()).toArray()); },
+    tiles: () => ({ n: Object.keys(TILE_PICS).length }),
     renderStats: () => ({ shadows: renderer.shadowMap.enabled, pixelRatio: renderer.getPixelRatio(), split: splitOn(), frame: renderer.info.render.frame, calls: renderer.info.render.calls, draws: drawCount, lastDraw, lastAsync, geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures }) };
 }
 boot();
