@@ -114,6 +114,15 @@ Main sections of `main.js`, in file order:
 - UI text: plain English and sentence case. Use the real terms an operator knows (dolly, truck, rack focus) with short notes.
 - After a change, rebuild and run the matching checks; run the full `npm test` (and `npm run test:desktop` for desktop changes) before finishing. For visible changes, also check the page in Chrome: the camera view and an export too.
 
+## Design rules
+
+- Subtract first: if removing a control breaks nothing, remove it or move it behind Advanced mode. A new panel should make sense to a first-time user in about 3 seconds.
+- Design every state: empty (no objects, keys or shots), loading, error and over-long text, not just the full panel.
+- The scene and camera view are the star: secondary controls stay quiet and come forward on hover, selection or when relevant.
+- One cue, one meaning: a colour or icon always means the same thing, and nothing that can't be clicked gets a hover effect.
+- About three text sizes (heading, label, note); don't add in-between sizes. Choosing the right word is part of the design.
+- Motion or flourish only when it tells the user something (a key was set, an export finished), never just for decoration.
+
 ## Ideas discussed but not built yet
 
 - Photo to scene: send a photo to Claude, using the artifact's `sample` capability with images, to recreate the people, props and camera match.
