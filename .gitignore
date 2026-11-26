@@ -8,3 +8,4 @@ sandbox/app.html
 .DS_Store
 Thumbs.db
 reference/
+.claude/settings.local.json

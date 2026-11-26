@@ -17,7 +17,7 @@ ShotRef is a "very dumbed-down Blender" for **blocking and camera moves only**. 
 ## Testing
 
 - `npm test` runs `test/smoke.cjs`: headless Edge or Chrome (playwright-core) against the built `dist/ShotRef.html`: about 260 checks, about 8 to 9 minutes. It also serves the page as `app.html` under a strict claude.ai-like content security policy.
-- Run `npm run build && npm test` after every change, and `npm run test:desktop` too when you touch `src/platform.js`, `electron/` or anything that differs on the desktop. Never finish with a failing test.
+- While working, run `npm run build` and only the checks that cover what you changed (`node test/smoke.cjs --only <name>`). Before finishing a task, run the full `npm run build && npm test` once, and `npm run test:desktop` too when you touched `src/platform.js`, `electron/` or anything that differs on the desktop. Never finish with a failing test.
 - `node test/smoke.cjs --only <part of a check name>` runs single checks. To add one, append a `check('what it proves', async ({ open }) => …)` at the end; the header of the file explains the helpers.
 - Browser: `SHOTREF_BROWSER`, else the system Edge, else Chrome. The test file uses LF line endings only.
 - `node test/perf.cjs` prints performance numbers by hand. It isn't part of `npm test`.
@@ -112,7 +112,7 @@ Main sections of `main.js`, in file order:
 - Units are metres and degrees. +Y is up, and characters face +Z.
 - Camera lens maths uses a 36 mm (full-frame) sensor across the frame's long side, via `filmGauge = 36`.
 - UI text: plain English and sentence case. Use the real terms an operator knows (dolly, truck, rack focus) with short notes.
-- After a change, rebuild and run `npm test` (and `npm run test:desktop` for desktop changes). For visible changes, also check the page in Chrome: the camera view and an export too.
+- After a change, rebuild and run the matching checks; run the full `npm test` (and `npm run test:desktop` for desktop changes) before finishing. For visible changes, also check the page in Chrome: the camera view and an export too.
 
 ## Ideas discussed but not built yet
 
