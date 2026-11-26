@@ -83,6 +83,9 @@ export const TOUR_COPY = {
       title: 'That is the lot',
       text: 'The hands-on tour has you try each part for real. Both tours are in the Help menu whenever you want them.',
       textSolo: 'You know where everything is now. The tour is in the Help menu whenever you want it again.',
+      // the web and claude.ai pages have no Help menu
+      textWeb: 'The hands-on tour has you try each part for real. Both tours are under the gear button, top right, whenever you want them.',
+      textSoloWeb: 'You know where everything is now. The tour is under the gear button, top right, whenever you want it again.',
     },
   },
 

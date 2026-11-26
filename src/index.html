@@ -275,7 +275,8 @@ hr.div{border:0;border-top:1px solid var(--line);margin:8px 0 4px}
 #toast{position:fixed;left:50%;top:56px;transform:translateX(-50%);background:#2a2d33;border:1px solid var(--line2);padding:8px 14px;border-radius:8px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:60;box-shadow:0 8px 30px rgba(0,0,0,.4)}
 #toast.show{opacity:1}
 #toast.ok::before{content:'\2713';color:var(--ok);font-weight:700;margin-right:8px}
-#toast.bad{border-left:3px solid var(--danger);pointer-events:auto;cursor:pointer}
+#toast.show.bad{pointer-events:auto;cursor:pointer}
+#toast.bad{border-left:3px solid var(--danger)}
 #ctxMenu{position:fixed;display:none;z-index:70;min-width:220px;background:#1f2125;border:1px solid var(--line2);border-radius:9px;padding:5px;box-shadow:0 14px 40px rgba(0,0,0,.55)}
 #ctxMenu:focus{outline:none}
 /* tour: dimmed screen, viewfinder corners and a bubble (src/tour.js). Layers: #movePeek 45, .modal 50, #tour 55, #toast 60, #ctxMenu 70 */

@@ -646,6 +646,15 @@ const ok = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
     await kill(app);
   });
 
+  await check('the first-run tour question and the end-of-tour words say "Help menu" on the Windows app', async () => {
+    const { app, page } = await launch([], { raw: true });
+    await page.waitForFunction(() => !document.querySelector('#mTour').classList.contains('hidden'), null, { timeout: 8000 });
+    const t = await page.evaluate(() => ({ q: document.querySelector('#mTourP').textContent, stops: JSON.stringify(window.__shotref.basicStops()) }));
+    ok(/Help menu/.test(t.q) && !/gear button/.test(t.q), 'first-run question: ' + t.q);
+    ok(/Help menu/.test(t.stops) && !/gear button, top right, whenever/.test(t.stops), 'end of tour: ' + t.stops);
+    await kill(app);
+  });
+
   for (const a of apps) await kill(a);
   try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (e) { /* leftover temp folder is harmless */ }
   const bad = results.filter(r => !r[1]).length;

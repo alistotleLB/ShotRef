@@ -6073,7 +6073,7 @@ check('the hands-on tour is switched off: the quick tour ends with one-tour word
   for (let i = 0; i < 12 && id !== 'b-bye'; i++) { await p.click('#tourNext'); await settle(p, 120); id = await p.evaluate(() => (window.__shotref.tour.current() || { stop: {} }).stop.id); }
   ok(id === 'b-bye', 'never reached the last stop');
   const txt = await p.evaluate(() => document.querySelector('#tour .tour-bubble').textContent);
-  ok(!/hands-on/i.test(txt) && /Help menu/.test(txt), 'last stop text: ' + txt);
+  ok(!/hands-on/i.test(txt) && /gear button, top right/.test(txt) && !/Help menu/.test(txt), 'last stop text: ' + txt);
   await p.click('#tourNext'); await settle(p, 200);
   noErrors(p);
 });
@@ -7261,12 +7261,14 @@ check('names: Render style, Constant/Gentle/Strong, Full cover, and people named
   const tiles = await p.evaluate(() => [...document.querySelectorAll('#props .skytiles button')].map(b => b.textContent.trim()));
   ok(tiles.join() === 'Clear,Few,Scattered,Cloudy,Full cover', 'cloud tiles: ' + tiles.join());
   await p.evaluate(() => window.__shotref.loadStarter('dialogue')); await settle(p, 500);
-  const names = await p.evaluate(() => window.__shotref.state.objects.filter(o => o.type === 'person').map(o => o.name));
-  ok(names.join() === 'Man 1,Woman 1', 'dialogue names: ' + names.join());
+  const people = await p.evaluate(() => window.__shotref.state.objects.filter(o => o.type === 'person').map(o => ({ name: o.name, body: (o.opts && o.opts.body) || 'man' })));
+  const LAB = { man: 'Man', woman: 'Woman', child: 'Child' };
+  ok(people.length === 2 && people.every(q => !/Person/.test(q.name) && q.name.startsWith(LAB[q.body] + ' ')), 'dialogue names: ' + JSON.stringify(people));
+  ok(people.map(q => q.name).join() === 'Man 1,Man 2', 'two men are numbered per kind: ' + JSON.stringify(people));
   await p.evaluate(() => window.__shotref.addPerson('child')); await settle(p, 200);
   await p.evaluate(() => window.__shotref.addPerson('man')); await settle(p, 200);
   const n2 = await p.evaluate(() => window.__shotref.state.objects.filter(o => o.type === 'person').map(o => o.name));
-  ok(n2.join() === 'Man 1,Woman 1,Child 1,Man 2', 'numbered per kind: ' + n2.join());
+  ok(n2.join() === 'Man 1,Man 2,Child 1,Man 3', 'numbered per kind: ' + n2.join());
   ok(!/Person [0-9]/.test(await text()), 'a person is still called "Person n"');
   noErrors(p);
 });
@@ -7286,8 +7288,8 @@ check('tooltips: no button under #app keeps a title, every one has data-tip, and
     ok(t.show && t.txt, id + ': no tooltip');
     ok(t.l >= 5.5 && t.r <= t.W - 5.5, id + ': the tooltip runs off the side: ' + JSON.stringify(t));
     ok(t.t >= 0 && t.b <= t.H, id + ': the tooltip runs off the top or bottom: ' + JSON.stringify(t));
-    if (t.bb > t.H - 160) ok(t.b <= t.bt, id + ': a button near the bottom should get its tip above: ' + JSON.stringify(t));
-    else ok(t.t >= t.bb, id + ': the tip should open below: ' + JSON.stringify(t));
+    if (/^#b(Key|End|Start|Loop|Split)$/.test(id)) ok(t.b <= t.bt && t.bb > t.H - 160, id + ': a timeline button must open its tip ABOVE it, and sit in the bottom 160 px: ' + JSON.stringify(t));
+    else ok(t.t >= t.bb, id + ': a top-bar button opens its tip below: ' + JSON.stringify(t));
   }
   await p.mouse.move(5, 300); await settle(p, 100);
   await p.focus('#bStart'); await p.keyboard.press('Shift+Tab'); await p.keyboard.press('Tab'); await settle(p, 150);
@@ -7312,5 +7314,46 @@ check('first run: the tour question names the gear button on the web page', asyn
   const p = await open(); await settle(p, 400);
   const t = await p.evaluate(() => document.querySelector('#mTourP').textContent);
   ok(/gear button, top right/.test(t) && !/Help menu/.test(t), 'welcome text: ' + t);
+  noErrors(p);
+});
+check('messages: a faded bad message no longer blocks clicks, and neither does one just dismissed', async ({ open }) => {
+  const p = await open(); await settle(p, 400);
+  const probe = () => p.evaluate(() => { const t = document.querySelector('#toast'), r = t.getBoundingClientRect(); return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) === t; });
+  await p.evaluate(() => window.__shotref.toast('Could not do that', 8000, 'bad')); await settle(p, 300);
+  ok(await probe(), 'test set-up: a showing bad message should take the click');
+  await p.evaluate(() => document.querySelector('#toast').click()); await settle(p, 400);
+  ok(!(await probe()), 'a dismissed bad message still blocks clicks');
+  await p.evaluate(() => window.__shotref.toast('Could not do that', null, 'bad')); await settle(p, 8600);
+  ok(await p.evaluate(() => !document.querySelector('#toast').classList.contains('show')), 'the bad message did not fade');
+  ok(!(await probe()), 'a faded bad message still blocks clicks');
+  noErrors(p);
+});
+check('tooltips: a removed button takes its tooltip away, an empty title clears the tip, and a disabled button shows no stale tip', async ({ open }) => {
+  const p = await open(); await settle(p, 400);
+  await p.hover('#bKey'); await settle(p, 150);
+  ok(await p.evaluate(() => document.querySelector('#tip').classList.contains('show')), 'set-up: no tip');
+  await p.evaluate(() => document.querySelector('#bKey').remove()); await settle(p, 100);
+  ok(await p.evaluate(() => !document.querySelector('#tip').classList.contains('show')), 'the tip stayed after its button was removed');
+  const r = await p.evaluate(async () => {
+    const b = document.createElement('button'); b.className = 'icon'; b.title = 'First'; document.querySelector('#app').appendChild(b);
+    await new Promise(r => setTimeout(r, 50));
+    const one = { tip: b.dataset.tip, label: b.getAttribute('aria-label') };
+    b.title = 'Second'; await new Promise(r => setTimeout(r, 50));
+    const two = { tip: b.dataset.tip, label: b.getAttribute('aria-label') };
+    b.title = ''; await new Promise(r => setTimeout(r, 50));
+    const three = { tip: b.dataset.tip === undefined, label: b.getAttribute('aria-label') };
+    b.remove(); return { one, two, three };
+  });
+  ok(r.one.tip === 'First' && r.one.label === 'First' && r.two.tip === 'Second' && r.two.label === 'Second' && r.three.tip && r.three.label === null, 'tip or label did not follow the title: ' + JSON.stringify(r));
+  await p.hover('#bUndo', { force: true }).catch(() => { }); await settle(p, 150);
+  const u = await p.evaluate(() => ({ dis: document.querySelector('#bUndo').disabled, show: document.querySelector('#tip').classList.contains('show'), txt: document.querySelector('#tip').textContent, own: document.querySelector('#bUndo').dataset.tip }));
+  ok(!u.show || u.txt === u.own, 'a stale tip is on screen: ' + JSON.stringify(u));
+  noErrors(p);
+});
+check('first run: the end-of-tour words on the web page point to the gear button, not a Help menu', async ({ open }) => {
+  const p = await open(); await settle(p, 400);
+  const t = await p.evaluate(() => JSON.stringify(window.__shotref.basicStops ? window.__shotref.basicStops() : []));
+  ok(t.length > 10, 'no basicStops hook: ' + t);
+  ok(/gear button, top right/.test(t) && !/Help menu/.test(t), 'tour words: ' + t);
   noErrors(p);
 });

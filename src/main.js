@@ -128,16 +128,28 @@ function toast(msg, ms, kind = 'info') {
 /* One tooltip for every button. A button's title is moved to data-tip (and kept as its accessible name), and #tip shows it at once on
    hover and on keyboard focus: below the button, above it in the bottom 160 px of the window, and never past the left or right edge.
    Inputs, dropdowns and labels keep their native title. */
+function tourText(c) {
+  const desk = platform.kind === 'desktop', solo = !handsTourOn() && c.textSolo;
+  if (desk && c.textDesk) return c.textDesk;
+  const key = solo ? 'textSolo' : 'text';
+  return (!desk && c[key + 'Web']) || c[key];
+}
+let tipFor = null;
 function tipify(el) {
   if (el.tagName !== 'BUTTON' || !el.hasAttribute('title')) return;
-  const t = el.getAttribute('title'); el.removeAttribute('title');
-  if (!t) return;
+  const t = el.getAttribute('title'), auto = el.hasAttribute('data-auto-label'); el.removeAttribute('title');
+  if (!t) { /* code cleared the title: the tip and the words made from it go too */
+    el.removeAttribute('data-tip'); el.removeAttribute('aria-description');
+    if (auto) { el.removeAttribute('aria-label'); el.removeAttribute('data-auto-label'); }
+    if (tipFor === el) tipHide();
+    return;
+  }
   el.setAttribute('data-tip', t);
-  if (el.hasAttribute('aria-label')) return;
-  if (el.textContent.trim()) el.setAttribute('aria-description', t); else el.setAttribute('aria-label', t);
+  if (el.hasAttribute('aria-label') && !auto) return; /* the author's own label keeps its words */
+  if (el.textContent.trim()) el.setAttribute('aria-description', t);
+  else { el.setAttribute('aria-label', t); el.setAttribute('data-auto-label', ''); }
 }
 function tipifyTree(root) { if (root.nodeType !== 1) return; tipify(root); root.querySelectorAll('button[title]').forEach(tipify); }
-let tipFor = null;
 function tipHide() { tipFor = null; const t = $('#tip'); if (t) t.classList.remove('show'); }
 function tipShow(btn) {
   const text = btn.getAttribute('data-tip'), t = $('#tip'); if (!text) { tipHide(); return; }
@@ -151,7 +163,7 @@ function tipShow(btn) {
 const tipTarget = e => { const b = e.target && e.target.closest ? e.target.closest('[data-tip]') : null; return b && b.closest('#app') ? b : null; };
 function wireTips() {
   const app = $('#app'); tipifyTree(app);
-  new MutationObserver(ms => { for (const m of ms) { if (m.type === 'attributes') tipify(m.target); else m.addedNodes.forEach(tipifyTree); } })
+  new MutationObserver(ms => { for (const m of ms) { if (m.type === 'attributes') tipify(m.target); else m.addedNodes.forEach(tipifyTree); } if (tipFor && !tipFor.isConnected) tipHide(); })
     .observe(app, { subtree: true, childList: true, attributes: true, attributeFilter: ['title'] });
   document.addEventListener('mouseover', e => { const b = tipTarget(e); if (b) { if (b !== tipFor) tipShow(b); } else if (tipFor) tipHide(); });
   document.addEventListener('focusin', e => { const b = tipTarget(e); if (b && b.matches(':focus-visible')) tipShow(b); });
@@ -1110,7 +1122,7 @@ function loadModel(id) {
       const saved = window.createImageBitmap;
       try { window.createImageBitmap = undefined; } catch (e) { }
       let skipped = false;
-      try { const ld = new GLTFLoader(); ld.register(p => embeddedTexturePlugin(p, () => { skipped = true; })); ld.parse(buf, '', gl => { if (skipped) toast(TEX_SKIPPED, 5000); res(gl.scene); }, rej); }
+      try { const ld = new GLTFLoader(); ld.register(p => embeddedTexturePlugin(p, () => { skipped = true; })); ld.parse(buf, '', gl => { if (skipped) toast(TEX_SKIPPED, 5000, 'bad'); res(gl.scene); }, rej); }
       catch (e) { rej(e); }
       finally { try { window.createImageBitmap = saved; } catch (e) { } }
     }));
@@ -3888,6 +3900,7 @@ function migrateGround() {
     if ((o.keys.length ? o.keys : [o.base]).some(k => Math.abs(groundYFor(o, v, k) - k.p[1]) > 2e-3)) { o.opts.free = true; n++; }
   }
   if (n) { hist[hi] = snapshot(); autosave(); uiDirty = true; propsDirty = true; if (!floatQuiet) toast(n === 1 ? 'A raised item was set to "Can float", so it stays where it is.' : n + ' raised items were set to "Can float", so they stay where they are.', 4500); }
+  if (!groundMigrate.size) floatQuiet = false; /* the starter's own items are settled: later migrations (a take switch, an older file) may speak */
 }
 function settleGround() {
   groundDirty = false;
@@ -4284,7 +4297,7 @@ function replaceProject(newState, newAssets = {}, label, quiet = false) {
     platform.startDoc(); /* Open, New and starters are a new document: Save must not reuse the previous file */
     restore(snapshot()); pushHistory(); frameEditorSoon();
     snapHold = false; if (snapLive > snapPruneAt) pruneSnapPool();
-    if (label) toast(label, null, 'ok');
+    if (label) toast(label, null, quiet ? 'info' : 'ok');
   } catch (e) {
     snapHold = false;
     state = prev.state; assets = prev.assets; selected = prev.selected; selIds = prev.selIds; setTime(prev.T); hist = prev.hist; histDoc = prev.histDoc; platform.restoreDoc(prev.doc); hi = prev.hi;
@@ -4303,11 +4316,7 @@ function fillStarter(kind, selectId) {
   const L = snapT(lastT());
   const add = (type, pos, mod = {}) => {
     const o = makeObject(type, pos);
-    if (type === 'person') {
-      o.color = SHIRTS[persons().length % SHIRTS.length];
-      if (mod.opts && mod.opts.height) { const b = BODIES.woman; Object.assign(o.opts, { body: 'woman', pants: b.pants, skin: b.skin }); }
-      o.name = nextName(BODIES[bodyOf({ opts: mod.opts && mod.opts.height ? { body: 'woman' } : {} })].label);
-    }
+    if (type === 'person') o.color = SHIRTS[persons().length % SHIRTS.length];
     if (type === 'mark') { o.opts.letter = nextMarkLetter(); o.name = 'Mark ' + o.opts.letter; }
     if (mod.r) o.base.r = mod.r; if (mod.s) o.base.s = mod.s; if (mod.color) o.color = mod.color;
     if (mod.opts) Object.assign(o.opts, mod.opts);
@@ -5426,7 +5435,7 @@ const HANDS_TOUR_DEFAULT = false;
 const handsTourOn = () => !!getPref('handsTour', HANDS_TOUR_DEFAULT);
 const basicStops = () => BASIC_STOPS.filter(([id]) => !(id === 'b-file' && platform.kind === 'desktop')).map(([id, target, before]) => {
   const c = TOUR_COPY.basic[id];
-  return { id, target, before, title: c.title, text: platform.kind === 'desktop' && c.textDesk ? c.textDesk : !handsTourOn() && c.textSolo ? c.textSolo : c.text };
+  return { id, target, before, title: c.title, text: tourText(c) };
 });
 /* The hands-on tour: each "try" stop waits for a change made through the real UI, on the practice stage (enterPractice). snap() records what its waitFor
    compares against when the stop begins, so something already true never skips a stop. before() puts the screen where the stop needs it (these view, step
@@ -6425,7 +6434,7 @@ function boot() {
   });
   window.addEventListener('pagehide', () => { flushAutosave(); recentFlush(); });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') recentFlush(); });
-  window.__shotref = { toast, practice: { enter: () => enterPractice(), enterEarly: () => enterPractice(true), leave: leavePractice, active: () => !!practicing }, practicing: () => !!practicing, stateForSave, docInfo: () => ({ dirty: platform.isDirty(), name: platform.currentName(), path: platform.currentPath(), doc: platform.getDoc() }), tour: { run: runStops, active: tourActive, end: r => tourHandle && tourHandle.end(r), current: () => tourHandle }, startTour, setHandsTour, handsTourOn, setSimple, promptText, ensureDof, get selection() { return selIds; }, layout: () => layout, gizmoNdc: (x, y) => { const q = gizmo._getPointer({ clientX: x, clientY: y, button: 0 }); return { x: q.x, y: q.y }; }, arrowsVisible: () => [...arrows.values()].some(a => a.visible), videoBitrate, snapValue: snapWith, rotSnapDeg: () => pref('rotSnap'), controlSpeeds: () => ({ orbit: edControls.rotateSpeed, zoom: edControls.zoomSpeed, cam: camControls.rotateSpeed }), flySpeedNow, walkSpeedNow: () => pathSpeedOf({ type: 'person', opts: { pose: 'stand' } }), buildAddPanel: () => buildAddPanel(), saveRecentNow, recentFlush, recentStats, recentBusy, selectMany: ids => { selIds = ids.slice(); selected = selIds[selIds.length - 1] || null; updateGizmo(); uiDirty = true; propsDirty = true; requestRender(); }, pickAtScreen: (x, y) => { const rc = rayFromEvent({ clientX: x, clientY: y }); const h = rc && pickAt(rc); return h ? h.id : null; }, settleTime: () => { const t0 = performance.now(); solveGround(); return performance.now() - t0; }, groundMigrate: () => groundMigrate.size, liftKnob: () => { if (!liftGrp.visible) return null; const q = liftPick.getWorldPosition(new THREE.Vector3()); return window.__shotref.project(q.x, q.y, q.z); }, attachTo, setMount, writeCam, shownObj: (id, t) => shownObj(getObj(id), t), viewOf: id => { const v = views.get(id); if (!v) return null; v.group.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(v.group), sz = bb.getSize(new THREE.Vector3()); return { p: v.group.position.toArray(), yaw: v.group.rotation.y * R2D, s: v.group.scale.toArray(), size: sz.toArray(), wheels: v.wheels ? v.wheels.list.map(w => ({ spin: w.spin.rotation.x, steer: w.piv.rotation.y, front: w.front })) : null }; }, ringKnob: () => ringGrp.visible ? ringKnob.getWorldPosition(new THREE.Vector3()).toArray() : null, getPref, setPref, showMenu, menuButton, hideMenu, project: (x, y, z) => { const r = canvas.getBoundingClientRect(), R = viewRects(r.width, r.height); let cam = view === 'top' ? topCam : edCam, rr = R.work || { x: 0, y: 0, w: r.width, h: r.height }; if (camPane() && R.frame) { cam = renderCam; rr = R.frame; } const v = new THREE.Vector3(x, y, z).project(cam); return [r.left + rr.x + (v.x * 0.5 + 0.5) * rr.w, r.top + rr.y + (-v.y * 0.5 + 0.5) * rr.h]; }, get view() { return view; }, get placing() { return placing; }, get playing() { return playing; }, get step() { return currentStep(); }, get selected() { return selected; }, get state() { return state; }, get assets() { return assets; }, setT: t => setTime(t, false), applyMove, planMove, peek: () => ({ open: peek.open, src: peek.src, arg: peek.arg, kind: peek.src === 'move' ? peek.arg : null, demo: !!(peek.s && peek.s.demo), frames: peek.frames, endPose: (peek.s && peek.s.endPose) || null, poseRoot: peek.s && peek.s.P ? peek.s.P.pelvis.getWorldPosition(new THREE.Vector3()).toArray() : null }), addObject, select, setView, evalCam, exportVideo, exportPNG, pickCodec, _exportCanvas: () => exRenderer ? exRenderer.domElement : null, changed, writeObj, evalObj, setKey, get T() { return T; },
+  window.__shotref = { toast, basicStops, practice: { enter: () => enterPractice(), enterEarly: () => enterPractice(true), leave: leavePractice, active: () => !!practicing }, practicing: () => !!practicing, stateForSave, docInfo: () => ({ dirty: platform.isDirty(), name: platform.currentName(), path: platform.currentPath(), doc: platform.getDoc() }), tour: { run: runStops, active: tourActive, end: r => tourHandle && tourHandle.end(r), current: () => tourHandle }, startTour, setHandsTour, handsTourOn, setSimple, promptText, ensureDof, get selection() { return selIds; }, layout: () => layout, gizmoNdc: (x, y) => { const q = gizmo._getPointer({ clientX: x, clientY: y, button: 0 }); return { x: q.x, y: q.y }; }, arrowsVisible: () => [...arrows.values()].some(a => a.visible), videoBitrate, snapValue: snapWith, rotSnapDeg: () => pref('rotSnap'), controlSpeeds: () => ({ orbit: edControls.rotateSpeed, zoom: edControls.zoomSpeed, cam: camControls.rotateSpeed }), flySpeedNow, walkSpeedNow: () => pathSpeedOf({ type: 'person', opts: { pose: 'stand' } }), buildAddPanel: () => buildAddPanel(), saveRecentNow, recentFlush, recentStats, recentBusy, selectMany: ids => { selIds = ids.slice(); selected = selIds[selIds.length - 1] || null; updateGizmo(); uiDirty = true; propsDirty = true; requestRender(); }, pickAtScreen: (x, y) => { const rc = rayFromEvent({ clientX: x, clientY: y }); const h = rc && pickAt(rc); return h ? h.id : null; }, settleTime: () => { const t0 = performance.now(); solveGround(); return performance.now() - t0; }, groundMigrate: () => groundMigrate.size, liftKnob: () => { if (!liftGrp.visible) return null; const q = liftPick.getWorldPosition(new THREE.Vector3()); return window.__shotref.project(q.x, q.y, q.z); }, attachTo, setMount, writeCam, shownObj: (id, t) => shownObj(getObj(id), t), viewOf: id => { const v = views.get(id); if (!v) return null; v.group.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(v.group), sz = bb.getSize(new THREE.Vector3()); return { p: v.group.position.toArray(), yaw: v.group.rotation.y * R2D, s: v.group.scale.toArray(), size: sz.toArray(), wheels: v.wheels ? v.wheels.list.map(w => ({ spin: w.spin.rotation.x, steer: w.piv.rotation.y, front: w.front })) : null }; }, ringKnob: () => ringGrp.visible ? ringKnob.getWorldPosition(new THREE.Vector3()).toArray() : null, getPref, setPref, showMenu, menuButton, hideMenu, project: (x, y, z) => { const r = canvas.getBoundingClientRect(), R = viewRects(r.width, r.height); let cam = view === 'top' ? topCam : edCam, rr = R.work || { x: 0, y: 0, w: r.width, h: r.height }; if (camPane() && R.frame) { cam = renderCam; rr = R.frame; } const v = new THREE.Vector3(x, y, z).project(cam); return [r.left + rr.x + (v.x * 0.5 + 0.5) * rr.w, r.top + rr.y + (-v.y * 0.5 + 0.5) * rr.h]; }, get view() { return view; }, get placing() { return placing; }, get playing() { return playing; }, get step() { return currentStep(); }, get selected() { return selected; }, get state() { return state; }, get assets() { return assets; }, setT: t => setTime(t, false), applyMove, planMove, peek: () => ({ open: peek.open, src: peek.src, arg: peek.arg, kind: peek.src === 'move' ? peek.arg : null, demo: !!(peek.s && peek.s.demo), frames: peek.frames, endPose: (peek.s && peek.s.endPose) || null, poseRoot: peek.s && peek.s.P ? peek.s.P.pelvis.getWorldPosition(new THREE.Vector3()).toArray() : null }), addObject, select, setView, evalCam, exportVideo, exportPNG, pickCodec, _exportCanvas: () => exRenderer ? exRenderer.domElement : null, changed, writeObj, evalObj, setKey, get T() { return T; },
     get rebuilds() { return rebuilds; }, urlCacheIds: () => [...urlCache.keys()],
     /* batch H (takes) hooks for the smoke test */
     switchTake, newTake, snapPoolSize: () => snapLive, snapPruned: () => snapPruned,
