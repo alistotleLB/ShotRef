@@ -473,7 +473,9 @@ const EMBED = (() => {
 })();
 const AUTOSAVE_KEY = 'shotref.autosave' + (EMBED && EMBED.key ? '.' + EMBED.key : '');
 const IDB_NAME = EMBED && EMBED.key ? 'shotref-' + EMBED.key : 'shotref';
-const SIZE_WARNING = 'Photos and models are too big to autosave in this browser. Use Save to keep them.';
+/* where ShotRef keeps things, in the user's words: the Windows app is not a browser */
+const whereSaved = () => platform.kind === 'desktop' ? 'on this computer' : 'in this browser';
+const sizeWarning = () => 'Photos and models are too big to autosave ' + whereSaved() + '. Use Save to keep them.';
 const NO_AUTOSAVE = "Autosave isn't available here. Use Save to keep your work.";
 /* true when this page can't use localStorage at all (claude.ai sandbox): autosave is skipped, boot says so once */
 let autosaveOff = false;
@@ -575,7 +577,7 @@ function idbSync(ids) {
   }).then(ok => { if (!ok && ids.length && isQuota(idb.lastErr)) warnSize(); })); /* other failures: console only (C6) */
 }
 let sizeWarned = false;
-function warnSize() { if (autosaveOff) return; if (!sizeWarned) { sizeWarned = true; toast(SIZE_WARNING, 6000); } }
+function warnSize() { if (autosaveOff) return; if (!sizeWarned) { sizeWarned = true; toast(sizeWarning(), 6000); } }
 let autosaveReady = false; /* false until boot has fetched the stored assets: saving earlier would drop them */
 /* writes the localStorage part now; in IndexedDB mode also queues the asset write */
 let autosaveWaiting = false;
@@ -3244,6 +3246,9 @@ function fileMenuItems() {
     { id: 'export', label: 'Export\u2026', fn: () => goStep('export'), key: '3' }];
 }
 function gearMenuItems() {
+  if (platform.kind === 'desktop') return [ /* the Windows menu bar has File and Help: only these two live here */
+    { id: 'advanced', label: 'Advanced mode', check: !simple, fn: () => setSimple(!simple) },
+    { id: 'settings', label: 'Settings\u2026', fn: openSettings }];
   return [{ id: 'advanced', label: 'Advanced mode', check: !simple, fn: () => setSimple(!simple) },
     { id: 'settings', label: 'Settings\u2026', fn: openSettings },
     '-',
@@ -5238,9 +5243,9 @@ const BASIC_STOPS = [
    handsTour = true, or HANDS_TOUR_DEFAULT below. While it is off, the copy that talks about two tours uses its one-tour wording (textSolo / bodySolo). */
 const HANDS_TOUR_DEFAULT = false;
 const handsTourOn = () => !!getPref('handsTour', HANDS_TOUR_DEFAULT);
-const basicStops = () => BASIC_STOPS.map(([id, target, before]) => {
+const basicStops = () => BASIC_STOPS.filter(([id]) => !(id === 'b-file' && platform.kind === 'desktop')).map(([id, target, before]) => {
   const c = TOUR_COPY.basic[id];
-  return { id, target, before, title: c.title, text: !handsTourOn() && c.textSolo ? c.textSolo : c.text };
+  return { id, target, before, title: c.title, text: platform.kind === 'desktop' && c.textDesk ? c.textDesk : !handsTourOn() && c.textSolo ? c.textSolo : c.text };
 });
 /* The hands-on tour: each "try" stop waits for a change made through the real UI, on the practice stage (enterPractice). snap() records what its waitFor
    compares against when the stop begins, so something already true never skips a stop. before() puts the screen where the stop needs it (these view, step
@@ -5411,6 +5416,8 @@ function onDesktopMenu(cmd) {
   else if (cmd === 'open') openDialog();
   else if (cmd === 'save') saveProject(false);
   else if (cmd === 'save-as') saveProject(true);
+  else if (cmd === 'recent') openRecent();
+  else if (cmd === 'export') goStep('export');
   else if (cmd === 'help') openModal('mHelp');
   else if (cmd === 'tour-basic') startTour('basic');
   else if (cmd === 'tour-hands') startTour('hands');
@@ -5499,7 +5506,7 @@ function buildSettings() {
         prefCheck('recentOn', 'Keep recent projects'),
         prefSelect('keepRecent', 'How many to keep', PREF_LISTS.keepRecent.map(v => [v, String(v)])),
         h('div', { class: 'btns', style: 'margin-top:6px' },
-          h('button', { onclick: () => { closeModal($('#mSettings')); confirmBox('Clear recent projects?', 'This removes the list of recent projects stored in this browser. Your current scene stays open.', async () => { const r = await clearRecents(); toast(r === null ? 'Recent projects are not available in this browser window.' : 'Recent projects cleared'); }, 'Clear'); } }, 'Clear recent projects'),
+          h('button', { onclick: () => { closeModal($('#mSettings')); confirmBox('Clear recent projects?', 'This removes the list of recent projects stored ' + whereSaved() + '. Your current scene stays open.', async () => { const r = await clearRecents(); toast(r === null ? recentGone() + '.' : 'Recent projects cleared'); }, 'Clear'); } }, 'Clear recent projects'),
           h('button', { onclick: () => { closeModal($('#mSettings')); openModal('mHelp'); } }, 'Open quick start')))),
     h('div', { class: 'btns', style: 'margin-top:4px' }, h('button', { onclick: resetPrefs }, 'Reset all settings')));
 }
@@ -5673,12 +5680,13 @@ async function openRecent() {
   openModal('mRecent');
   await renderRecent();
 }
+const recentGone = () => platform.kind === 'desktop' ? 'Recent projects are not available in this window' : 'Recent projects are not available in this browser window';
 async function renderRecent() {
   const g = $('#recentGrid'), note = $('#recNote'), rows = await recentRows();
   g.innerHTML = '';
-  if (rows === null) { note.textContent = 'Recent projects are not available in this browser window. Use Save, then "Open a file…", instead.'; return; }
+  if (rows === null) { note.textContent = recentGone() + '. Use Save, then "Open a file…", instead.'; return; }
   if (!rows.length) { note.textContent = 'No recent projects yet. Projects you work on appear here automatically.'; return; }
-  note.textContent = 'Recent projects are saved automatically in this browser.';
+  note.textContent = 'Recent projects are saved automatically ' + whereSaved() + '.';
   rows.sort((a, b) => (b.updated || 0) - (a.updated || 0));
   for (const r of rows) {
     const cur = r.id === recentId(), readable = (() => { try { normalizeProject(JSON.parse(r.data), projectDefaults()); return true; } catch (e) { return false; } })();
@@ -5718,6 +5726,8 @@ function wire() {
   setLeftTab(getPref('leftTab', 'add'), false);
   $$('#leftTabs button').forEach(b => b.onclick = () => setLeftTab(b.dataset.lt));
   $$('#stepSeg button').forEach(b => b.onclick = () => goStep(b.dataset.step));
+  if (platform.kind === 'desktop') $('#bFile').style.display = 'none'; /* the Windows File menu does this job */
+  $$('[data-where]').forEach(e => { e.textContent = whereSaved(); });
   menuButton($('#bFile'), fileMenuItems); menuButton($('#bMenu'), gearMenuItems); wireTakes();
   $('#bTracks').onclick = () => { tracksMode = tracksOpen() ? 'closed' : 'open'; syncTracks(); uiDirty = true; requestRender(); };
   const pn = $('#projName');

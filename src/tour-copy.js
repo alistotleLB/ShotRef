@@ -74,6 +74,7 @@ export const TOUR_COPY = {
       title: 'Settings and help',
       text: 'Switch on Advanced mode for more detail, reopen the Quick start page or run these tours again.',
       textSolo: 'Switch on Advanced mode for more detail, reopen the Quick start page or take this tour again.',
+      textDesk: 'Switch on Advanced mode for more detail, or open Settings. The File and Help menus are in the bar at the top of the window.',
     },
     'b-bye': {
       title: 'That is the lot',
