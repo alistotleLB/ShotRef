@@ -144,7 +144,8 @@ const noPageErrors = (page, what) => { const e = page.__errors.filter(x => x.sta
 const stateOf = page => page.evaluate(() => JSON.parse(JSON.stringify(window.__shotref.state)));
 /* menu helpers: open a dropdown button, then pick an item by its data-cmd (File menu #bFile, gear menu #bMenu) */
 const menuCmd = async (p, opener, cmd) => { await p.click(opener); await p.click('#ctxMenu [data-cmd="' + cmd + '"]'); };
-const fileCmd = (p, cmd) => menuCmd(p, '#bFile', cmd);
+/* on the desktop (fake bridge) the page has no File button: send the menu command the Windows menu would */
+const fileCmd = async (p, cmd) => { if (await p.evaluate(() => !!window.__dsk)) return p.evaluate(c => window.__dsk.menu(c === 'saveas' ? 'save-as' : c), cmd); return menuCmd(p, '#bFile', cmd); };
 const gearCmd = (p, cmd) => menuCmd(p, '#bMenu', cmd);
 /* Advanced mode on (the gear menu checkbox) */
 const goAdvanced = async p => { if (await p.evaluate(() => document.body.classList.contains('simple'))) await gearCmd(p, 'advanced'); };

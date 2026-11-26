@@ -3242,7 +3242,6 @@ function fileMenuItems() {
   return [{ head: 'Project' },
     { id: 'new', label: 'New\u2026', fn: () => openStarters() },
     { id: 'open', label: 'Open\u2026', fn: openProjectUI, key: 'Ctrl O' },
-    ...(platform.kind === 'desktop' ? [{ id: 'recent', label: 'Recent projects\u2026', fn: openRecent }] : []), /* on the web, Open\u2026 already shows the recent projects */
     '-',
     { id: 'save', label: 'Save', fn: () => saveProject(false), key: 'Ctrl S' },
     { id: 'saveas', label: 'Save as\u2026', fn: () => saveProject(true), key: 'Ctrl Shift S' },
@@ -3250,11 +3249,10 @@ function fileMenuItems() {
     { id: 'export', label: 'Export\u2026', fn: () => goStep('export'), key: '3' }];
 }
 function gearMenuItems() {
-  if (platform.kind === 'desktop') return [ /* the Windows menu bar has File and Help: only these two live here */
-    { id: 'advanced', label: 'Advanced mode', check: !simple, fn: () => setSimple(!simple) },
+  const shared = [{ id: 'advanced', label: 'Advanced mode', check: !simple, fn: () => setSimple(!simple) },
     { id: 'settings', label: 'Settings\u2026', fn: openSettings }];
-  return [{ id: 'advanced', label: 'Advanced mode', check: !simple, fn: () => setSimple(!simple) },
-    { id: 'settings', label: 'Settings\u2026', fn: openSettings },
+  if (platform.kind === 'desktop') return shared; /* the Windows menu bar has File and Help: only these two live here */
+  return [...shared,
     '-',
     { head: TOUR_COPY.menu.heading },
     { id: 'tour-basic', label: TOUR_COPY.menu.quick, check: !!getPref('tourBasicDone', false), fn: () => startTour('basic') },

@@ -580,12 +580,13 @@ const ok = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
     const dir = seedWindow('win-off', { x: 90000, y: 90000, width: 1200, height: 700, maximized: false });
     const a = await launch([], { userData: dir });
     const w = await winInfo(a.app);
-    ok(w.bounds.x < 20000 && w.bounds.y < 20000, 'still off screen: ' + JSON.stringify(w.bounds));
+    const wa = await a.app.evaluate(({ screen }) => screen.getPrimaryDisplay().workArea);
+    ok(w.bounds.x >= wa.x - 16 && w.bounds.y >= wa.y - 16 && w.bounds.x + w.bounds.width <= wa.x + wa.width + 16 && w.bounds.y + w.bounds.height <= wa.y + wa.height + 16, 'not inside the primary work area ' + JSON.stringify(wa) + ': ' + JSON.stringify(w.bounds));
     ok(w.max || (w.bounds.width === 1440 && w.bounds.height === 900), 'not the default: ' + JSON.stringify(w));
     await kill(a.app);
   });
 
-  await check('moving or resizing the window is remembered (debounced) in the settings file, and so is closing it', async () => {
+  await check('moving or resizing the window is remembered (debounced) in the settings file', async () => {
     const { app, userData } = await launch();
     await app.evaluate(({ BrowserWindow }) => { const w = BrowserWindow.getAllWindows()[0]; if (w.isMaximized()) w.unmaximize(); w.setBounds({ x: 30, y: 40, width: 1150, height: 650 }); });
     await sleep(1200);
