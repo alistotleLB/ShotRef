@@ -29,8 +29,9 @@ async function launch(args = [], opts = {}) {
   await page.evaluate(() => { window.__edit = () => { window.__shotref.addObject('box'); window.__shotref.changed(true); }; });
   return { app, page, errors, userData };
 }
-/* File menu item by its data-cmd (the top bar has no Save button any more) */
-const fileCmd = async (page, cmd) => { await page.click('#bFile'); await page.click('#ctxMenu [data-cmd="' + cmd + '"]'); };
+/* a File menu item as a Windows user uses it: the application menu's item (the page has no File button on the desktop) */
+const FILE_LABELS = { new: 'New', open: 'Open…', save: 'Save', saveas: 'Save as…', recent: 'Recent projects…', export: 'Export…' };
+const fileCmd = (app, cmd) => app.evaluate(({ Menu }, l) => { Menu.getApplicationMenu().items.find(i => i.label === 'File').submenu.items.find(i => i.label === l).click(); }, FILE_LABELS[cmd]);
 /* stub the native dialogs: each call takes the next answer from the queue and counts calls */
 async function stubDialogs(app, saveAnswers, openAnswers = []) {
   await app.evaluate(({ dialog }, [s, o]) => {
@@ -79,6 +80,7 @@ async function waitMsgs(app, n, ms = 15000) {
   const t0 = Date.now();
   for (;;) { const m = await msgs(app); if (m.length >= n) return m; if (Date.now() - t0 > ms) throw new Error('expected ' + n + ' message box(es), got: ' + JSON.stringify(m)); await sleep(150); }
 }
+const readSettingsFile = ud => JSON.parse(fs.readFileSync(path.join(ud, 'shotref-settings.json'), 'utf8'));
 const helpClick = (app, label) => app.evaluate(({ Menu }, l) => { Menu.getApplicationMenu().items.find(i => i.label === 'Help').submenu.items.find(i => i.label === l).click(); }, label);
 
 const results = [];
@@ -111,7 +113,7 @@ const ok = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
     await stubDialogs(app, [file1, file2]);
     await page.evaluate(() => window.__edit());
     savedObjects = await objCount(page);
-    await fileCmd(page, 'save');
+    await fileCmd(app, 'save');
     await sleep(600);
     ok(fs.existsSync(file1), 'file not written');
     const j = JSON.parse(fs.readFileSync(file1, 'utf8'));
@@ -122,7 +124,7 @@ const ok = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
     fs.unlinkSync(file1);
     await page.evaluate(() => window.__edit());
     savedObjects = await objCount(page);
-    await fileCmd(page, 'save'); await sleep(600);
+    await fileCmd(app, 'save'); await sleep(600);
     ok(fs.existsSync(file1), 'second save did not rewrite the file');
     ok((await dlgCounts(app)).save === 1, 'second save showed a dialog');
     await page.keyboard.press('Control+Shift+S'); await sleep(600);
@@ -137,7 +139,7 @@ const ok = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
     const missing = path.join(tmp, 'no-such-folder', 'x.shotref');
     await stubDialogs(app, [missing]);
     await page.evaluate(() => window.__edit());
-    await fileCmd(page, 'save'); await sleep(700);
+    await fileCmd(app, 'save'); await sleep(700);
     const t = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getTitle());
     ok(t.startsWith('•'), 'dirty mark lost: ' + t);
     ok(!fs.existsSync(missing), 'file should not exist');
@@ -192,11 +194,11 @@ const ok = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
     const target = path.join(dir, 'keep.shotref');
     const { app, page } = await launch();
     await stubDialogs(app, [target]);
-    await fileCmd(page, 'save'); await page.waitForFunction(() => /Saved/.test(document.querySelector('#toast').textContent), null, { timeout: 8000 });
+    await fileCmd(app, 'save'); await page.waitForFunction(() => /Saved/.test(document.querySelector('#toast').textContent), null, { timeout: 8000 });
     const before = fs.readFileSync(target, 'utf8');
     fs.chmodSync(target, 0o444); /* the final rename over a read-only file fails on Windows */
     await page.evaluate(() => window.__edit());
-    await fileCmd(page, 'save'); await sleep(1200);
+    await fileCmd(app, 'save'); await sleep(1200);
     const t = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getTitle());
     ok(t.startsWith('•'), 'dirty mark lost: ' + t);
     ok(fs.readFileSync(target, 'utf8') === before, 'previous file was changed');
@@ -256,7 +258,7 @@ const ok = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
     const named = path.join(tmp, 'real-project.shotref');
     await stubDialogs(app, [named]);
     await page.evaluate(() => window.__edit());
-    await fileCmd(page, 'save'); await sleep(700); /* the real project has a name now */
+    await fileCmd(app, 'save'); await sleep(700); /* the real project has a name now */
     await page.evaluate(() => window.__edit()); /* ... and unsaved changes */
     const realCount = await objCount(page);
     await page.evaluate(() => window.__shotref.practice.enter());
@@ -546,6 +548,100 @@ const ok = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
     const m2 = await waitMsgs(app, 2);
     ok(/Updates work in the installed ShotRef/.test(m2[1][0]), 'update check box: ' + JSON.stringify(m2[1]));
     ok(!errors.length, 'page errors: ' + errors.join(' | '));
+    await kill(app);
+  });
+
+  const winInfo = app => app.evaluate(({ BrowserWindow }) => { const w = BrowserWindow.getAllWindows()[0]; return { min: w.getMinimumSize(), bounds: w.getBounds(), normal: w.getNormalBounds(), max: w.isMaximized() }; });
+  const seedWindow = (name, win) => { const dir = path.join(tmp, name); fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, 'shotref-settings.json'), JSON.stringify({ folders: {}, recent: [], window: win })); return dir; };
+
+  await check('the window cannot shrink below 1100 x 600, and the title bar and menu are always dark', async () => {
+    const { app } = await launch();
+    const w = await winInfo(app);
+    ok(w.min[0] === 1100 && w.min[1] === 600, 'minimum size: ' + w.min.join(' x '));
+    ok(await app.evaluate(({ nativeTheme }) => nativeTheme.themeSource) === 'dark', 'themeSource is not dark');
+    await kill(app);
+  });
+
+  await check('a saved window position and size is restored; a maximized one comes back maximized', async () => {
+    const dir = seedWindow('win-saved', { x: 40, y: 50, width: 1200, height: 700, maximized: false });
+    const a = await launch([], { userData: dir });
+    const w = await winInfo(a.app);
+    ok(!w.max && w.bounds.x === 40 && w.bounds.y === 50 && w.bounds.width === 1200 && w.bounds.height === 700, 'restored: ' + JSON.stringify(w.bounds));
+    await kill(a.app);
+    const dir2 = seedWindow('win-max', { x: 60, y: 70, width: 1250, height: 720, maximized: true });
+    const b = await launch([], { userData: dir2 });
+    const w2 = await winInfo(b.app);
+    ok(w2.max, 'not maximized');
+    ok(w2.normal.width === 1250 && w2.normal.height === 720, 'the un-maximized size was lost: ' + JSON.stringify(w2.normal));
+    await kill(b.app);
+  });
+
+  await check('a saved window that is off every display falls back to the default', async () => {
+    const dir = seedWindow('win-off', { x: 90000, y: 90000, width: 1200, height: 700, maximized: false });
+    const a = await launch([], { userData: dir });
+    const w = await winInfo(a.app);
+    ok(w.bounds.x < 20000 && w.bounds.y < 20000, 'still off screen: ' + JSON.stringify(w.bounds));
+    ok(w.max || (w.bounds.width === 1440 && w.bounds.height === 900), 'not the default: ' + JSON.stringify(w));
+    await kill(a.app);
+  });
+
+  await check('moving or resizing the window is remembered (debounced) in the settings file, and so is closing it', async () => {
+    const { app, userData } = await launch();
+    await app.evaluate(({ BrowserWindow }) => { const w = BrowserWindow.getAllWindows()[0]; if (w.isMaximized()) w.unmaximize(); w.setBounds({ x: 30, y: 40, width: 1150, height: 650 }); });
+    await sleep(1200);
+    const w = readSettingsFile(userData).window;
+    ok(w && w.x === 30 && w.y === 40 && w.width === 1150 && w.height === 650 && w.maximized === false, 'saved: ' + JSON.stringify(w));
+    await kill(app);
+  });
+
+  await check('on the desktop the File button is gone and the gear menu has just Advanced mode and Settings', async () => {
+    const { page, app } = await launch();
+    ok(await page.evaluate(() => document.querySelector('#bFile').offsetParent === null), 'File button is shown');
+    await page.click('#bMenu');
+    const items = await page.$$eval('#ctxMenu button', b => b.map(x => x.textContent.replace(/\s+/g, ' ').trim()));
+    ok(items.length === 2 && /^.?\s?Advanced mode/.test(items[0]) && /^Settings/.test(items[1]), 'gear menu: ' + items.join(' | '));
+    ok(await page.$$eval('#ctxMenu .head', h => h.length) === 0, 'a heading is left in the gear menu');
+    await kill(app);
+  });
+
+  await check('the Windows File menu offers Recent projects… and Export…, and each one works', async () => {
+    const { app, page } = await launch();
+    const labels = await app.evaluate(({ Menu }) => Menu.getApplicationMenu().items.find(i => i.label === 'File').submenu.items.map(i => i.label));
+    ok(labels.includes('Recent projects…') && labels.includes('Export…'), 'File menu: ' + labels.join(' | '));
+    await fileCmd(app, 'recent');
+    await page.waitForSelector('#mRecent:not(.hidden)', { timeout: 5000 });
+    ok(!/browser/.test(await page.textContent('#recNote')), 'the Recent projects note still says browser');
+    await page.evaluate(() => document.querySelector('#mRecent').classList.add('hidden'));
+    await fileCmd(app, 'export');
+    await page.waitForFunction(() => window.__shotref.step === 'export', null, { timeout: 5000 });
+    await kill(app);
+  });
+
+  await check('Settings says "Saved on this computer." and no page text says "in this browser"', async () => {
+    const { app, page } = await launch();
+    await page.click('#bMenu'); await page.click('#ctxMenu [data-cmd="settings"]');
+    await page.waitForSelector('#mSettings:not(.hidden)', { timeout: 5000 });
+    ok(/Saved on this computer\./.test(await page.textContent('#mSettings')), 'Settings note: ' + (await page.textContent('#mSettings')).slice(0, 120));
+    const left = await page.evaluate(() => [...document.querySelectorAll('[data-where]')].map(e => e.textContent).filter(t => /browser/.test(t)));
+    ok(!left.length, 'static lines still say browser: ' + left.join(' | '));
+    ok(!/in this browser/.test(await page.evaluate(() => document.body.innerText)), 'some text in the page still says "in this browser"');
+    await kill(app);
+  });
+
+  await check('the quick tour on the desktop has no File stop and counts its stops without it', async () => {
+    const { app, page } = await launch();
+    await helpClick(app, 'Take the quick tour');
+    await page.waitForFunction(() => window.__shotref.tour.active(), null, { timeout: 5000 });
+    const seen = [];
+    for (let i = 0; i < 14 && await page.evaluate(() => window.__shotref.tour.active()); i++) {
+      const o = await page.evaluate(() => { const h = window.__shotref.tour.current(); return { id: h.stop.id, target: h.stop.target, count: (document.querySelector('.tour-count') || {}).textContent || '' }; });
+      seen.push(o);
+      await page.evaluate(() => window.__shotref.tour.current().next());
+      await sleep(120);
+    }
+    ok(seen.length === 9, 'stops: ' + seen.map(x => x.id).join(','));
+    ok(!seen.some(x => x.id === 'b-file' || x.target === '#bFile'), 'the tour still points at the File button');
+    ok(/9/.test(seen[0].count) && !/10/.test(seen[0].count), 'count: ' + seen[0].count);
     await kill(app);
   });
 
