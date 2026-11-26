@@ -1018,7 +1018,7 @@ check('toast shows above an open dialog', async ({ open }) => {
   await p.evaluate(() => window.__shotref.exportPNG(0));
   await p.waitForTimeout(300);
   const top = await p.evaluate(() => document.querySelector('#toast').getBoundingClientRect().top);
-  ok(top < 40, 'toast top is at ' + top + ' px, expected near the top while a dialog is open');
+  ok(Math.abs(top - 56) < 1.5, 'toast top is at ' + top + ' px, expected 56 while a dialog is open');
 });
 
 check('quick start fits a 720 px window', async ({ freshContext }) => {
@@ -6844,5 +6844,141 @@ check('items list: objects sit under folding category headings; folds are rememb
   await p.keyboard.type('Hero car'); await p.keyboard.press('Enter'); await settle(p, 300);
   ok(await p.evaluate(i => window.__shotref.state.objects.find(o => o.id === i).name, ids.c) === 'Hero car', 'the rename did not save');
   ok(await p.evaluate(() => !document.querySelector('#outliner input')), 'the rename box stayed after Enter');
+  noErrors(p);
+});
+
+/* ---------------- UI audit, task 1: colour, text and clarity ---------------- */
+check('colour: "chosen" is a light grey ring; orange stays for selection, tabs, camera and the main button', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const scan = () => p.evaluate(() => {
+    const bad = [], grey = [];
+    for (const e of document.querySelectorAll('#app .on')) {
+      if (!e.offsetParent && getComputedStyle(e).position !== 'fixed') continue;
+      const sh = getComputedStyle(e).boxShadow;
+      if (e.matches('.pictiles button')) grey.push(sh);
+      if (/255, 154, 60/.test(sh) && !e.matches('.tabs button')) bad.push((e.className || e.tagName) + ' ' + (e.textContent || '').slice(0, 20) + ' ' + sh);
+    }
+    return { bad, grey };
+  });
+  await p.evaluate(() => { const S = window.__shotref; S.addObject('person'); S.select(null); }); await settle(p, 300);
+  let r = await scan();
+  ok(r.grey.length > 0 && r.grey.every(s => s.includes('rgb(195, 200, 207)')), 'a chosen tile ring is not light grey: ' + JSON.stringify(r.grey));
+  ok(!r.bad.length, 'orange "chosen" ring: ' + r.bad.join(' | '));
+  await p.evaluate(() => { const S = window.__shotref; S.select(S.state.objects[0].id); }); await settle(p, 300);
+  r = await scan(); ok(!r.bad.length, 'orange "chosen" ring with a person selected: ' + r.bad.join(' | '));
+  await camTab(p, 'Move'); r = await scan(); ok(!r.bad.length, 'orange "chosen" ring in the Move tab: ' + r.bad.join(' | '));
+  const st = await p.evaluate(() => ({ a: getComputedStyle(document.querySelector('#stepSeg button.on')).boxShadow, b: getComputedStyle(document.querySelector('#stepSeg button.on b')).backgroundColor, t: getComputedStyle(document.querySelector('#bTake')).color, f: getComputedStyle(document.querySelector('#bFile')).color }));
+  ok(st.a.includes('rgb(195, 200, 207)') && st.b === 'rgb(255, 154, 60)', 'the step button is a grey ring with an orange disc: ' + JSON.stringify(st));
+  ok(st.t === st.f, 'the Take button is not the same colour as File: ' + JSON.stringify(st));
+  noErrors(p);
+});
+
+check('one main button: Group, Copy prompt and a tree\'s Draw path are plain; a person\'s Draw walk path is the main one', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => { const S = window.__shotref; S.addObject('person'); S.addObject('person'); S.addObject('tree'); S.select(S.state.objects[S.state.objects.length - 1].id); }); await settle(p, 300);
+  const head = () => p.evaluate(() => { const h = [...document.querySelectorAll('#props .sec > h3')].find(x => x.textContent.trim().startsWith('Move & face')); return h ? h.parentElement.classList.contains('closed') : null; });
+  const tree = await p.evaluate(() => { const b = [...document.querySelectorAll('#props button')].find(x => /^\s*Draw path/.test(x.textContent)); return b ? b.classList.contains('primary') : null; });
+  ok(tree === false, 'a tree\'s Draw path is ' + (tree === null ? 'missing' : 'primary'));
+  ok(await head() === true, 'a tree\'s Move & face does not start folded: ' + await p.evaluate(() => JSON.stringify({ sel: window.__shotref.selected, types: window.__shotref.state.objects.map(o => o.type), secs: [...document.querySelectorAll('#props .sec > h3')].map(x => x.textContent.trim()), pref: window.__shotref.getPref('closedSecs', {}) })));
+  await p.evaluate(() => { const S = window.__shotref; S.select(S.state.objects[0].id); }); await settle(p, 300);
+  const person = await p.evaluate(() => { const b = [...document.querySelectorAll('#props button')].find(x => /Draw walk path/.test(x.textContent)); return b ? b.classList.contains('primary') : null; });
+  ok(person === true, 'a person\'s Draw walk path is not the main button');
+  ok(await head() === false, 'a person\'s Move & face is folded');
+  await p.evaluate(() => { const S = window.__shotref; S.select(S.state.objects[1].id, 'toggle'); }); await settle(p, 300);
+  const grp = await p.evaluate(() => { const b = [...document.querySelectorAll('#props button')].find(x => x.textContent.trim() === 'Group'); return b ? b.classList.contains('primary') : null; });
+  ok(grp === false, 'Group is ' + (grp === null ? 'missing' : 'primary'));
+  await exportDialog(p); await settle(p, 300);
+  const cp = await p.evaluate(() => document.querySelector('#xoCopyPrompt') ? document.querySelector('#xoCopyPrompt').classList.contains('primary') : null);
+  ok(cp === false, 'Copy prompt is ' + (cp === null ? 'missing' : 'primary'));
+  ok(await p.evaluate(() => document.querySelector('#xoVideo').classList.contains('primary')), 'Export video is no longer the main button');
+  noErrors(p);
+});
+
+check('text is never below 12 px, and the small click targets are at least 24 x 24', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const small = () => p.evaluate(() => {
+    const out = [];
+    for (const e of document.querySelectorAll('#app *')) {
+      if (![...e.childNodes].some(n => n.nodeType === 3 && n.textContent.trim())) continue;
+      const cs = getComputedStyle(e); if (cs.display === 'none' || (!e.offsetParent && cs.position !== 'fixed')) continue;
+      if (parseFloat(cs.fontSize) < 12) out.push((e.className || e.tagName) + ':' + cs.fontSize + ' "' + e.textContent.trim().slice(0, 16) + '"');
+    }
+    return out;
+  });
+  const none = async what => { const s = await small(); ok(!s.length, 'text below 12 px (' + what + '): ' + s.join(' | ')); };
+  await none('scene');
+  await p.evaluate(() => { const S = window.__shotref; S.addObject('person'); S.addObject('tree'); S.select(S.state.objects[0].id); }); await settle(p, 300);
+  await p.click('#leftTabs [data-lt=scene]'); await settle(p, 300);
+  await none('person and the Items list');
+  const sz = await p.evaluate(() => { const m = s => { const e = document.querySelector(s); if (!e) return null; const r = e.getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)]; }; return { qtip: m('#props .qtip'), eye: m('#outliner .ol .eye:not(.lockb)'), lock: m('#outliner .ol .lockb') }; });
+  for (const k of ['qtip', 'eye', 'lock']) ok(sz[k] && sz[k][0] >= 24 && sz[k][1] >= 24, k + ' is ' + JSON.stringify(sz[k]));
+  await camTab(p, 'Move'); await none('camera Move tab');
+  await p.evaluate(() => window.__shotref.setSimple(false)); await settle(p, 300);
+  await none('Advanced mode');
+  noErrors(p);
+});
+
+check('the Items eye is an eye, slashed once the item is hidden', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => { window.__shotref.addObject('tree'); }); await p.click('#leftTabs [data-lt=scene]'); await settle(p, 300);
+  const eye = '#outliner .ol[data-id] .eye:not(.lockb)';
+  const n1 = await p.evaluate(s => document.querySelector(s + ' svg').children.length, eye);
+  await p.click(eye); await settle(p, 300);
+  const n2 = await p.evaluate(s => document.querySelector(s + ' svg').children.length, eye);
+  ok(n2 === n1 + 1, 'hidden eye has ' + n2 + ' shapes, shown eye has ' + n1);
+  ok(await p.evaluate(s => getComputedStyle(document.querySelector(s)).color === 'rgb(170, 176, 184)', eye), 'eye colour is not #aab0b8');
+  noErrors(p);
+});
+
+check('scroll bars are thin', async ({ open }) => {
+  const p = await open(); await settle(p, 200);
+  ok(await p.evaluate(() => getComputedStyle(document.querySelector('#props')).scrollbarWidth === 'thin'), 'scrollbar-width is not thin');
+});
+
+check('the info line is a backed pill clear of the buttons, the toast is at the top and the hint is one line', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.setViewportSize({ width: 1100, height: 700 }); await settle(p, 300);
+  const hint1 = await p.evaluate(() => { const e = document.querySelector('#hint'); return { h: e.getBoundingClientRect().height, ws: getComputedStyle(e).whiteSpace }; });
+  ok(hint1.ws === 'nowrap' && hint1.h < 34, 'the hint is not one line: ' + JSON.stringify(hint1));
+  await p.evaluate(() => { const S = window.__shotref; S.addObject('person'); S.select(S.state.objects[0].id); }); await settle(p, 300);
+  const hint2 = await p.evaluate(() => document.querySelector('#hint').getBoundingClientRect().height);
+  ok(hint2 < 34, 'the hint with a person selected is ' + hint2 + ' px high');
+  await p.evaluate(() => window.__shotref.setView('camera')); await settle(p, 400);
+  const g = await p.evaluate(() => { const hu = document.querySelector('#hud'), hr = hu.getBoundingClientRect(), br = document.querySelector('#camBar').getBoundingClientRect(), vr = document.querySelector('#vpRight').getBoundingClientRect(), pr = document.querySelector('#vp').getBoundingClientRect(); return { bg: getComputedStyle(hu).backgroundColor, hudTop: hr.top, barBottom: br.bottom, hudL: hr.left, hudR: hr.right, vp: [pr.left, pr.right], barR: br.right, vpL: vr.left, hint: document.querySelector('#hint').getBoundingClientRect().height, txt: hu.textContent }; });
+  ok(g.bg === 'rgba(15, 16, 19, 0.7)' && g.txt.length > 0, 'the info line has no backing: ' + JSON.stringify(g));
+  ok(g.hudTop >= g.barBottom + 5, 'the info line is not below the buttons: ' + JSON.stringify(g));
+  ok(g.hudL >= g.vp[0] && g.hudR <= g.vp[1], 'the info line sticks out of the view: ' + JSON.stringify(g));
+  ok(g.barR <= g.vpL, 'the buttons run into the icon cluster: ' + JSON.stringify(g));
+  ok(g.hint < 34, 'the camera view hint is ' + g.hint + ' px high');
+  await p.evaluate(() => window.__shotref.addObject('box')); await settle(p, 400);
+  const top = await p.evaluate(() => document.querySelector('#toast').getBoundingClientRect().top);
+  ok(Math.abs(top - 56) < 1.5, 'the toast top is at ' + top);
+  noErrors(p);
+});
+
+check('camera moves sit in pairs: Static alone, seven pairs, then three', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await camTab(p, 'Move');
+  const res = await p.evaluate(() => {
+    const out = [];
+    for (const b of document.querySelectorAll('#props .movegrid button')) { const r = b.getBoundingClientRect(), name = b.lastChild.textContent.trim(), row = out.find(x => Math.abs(x.y - r.top) < 4); if (row) row.names.push(name); else out.push({ y: r.top, names: [name], w: r.width }); }
+    return { rows: out.map(x => x.names), firstW: out[0].w, gw: document.querySelector('#props .movegrid').getBoundingClientRect().width };
+  });
+  ok(res.firstW > res.gw - 4, 'Static is not full width: ' + JSON.stringify(res));
+  const want = [['Static'], ['Dolly in', 'Dolly out'], ['Orbit left', 'Orbit right'], ['Truck left', 'Truck right'], ['Crane up', 'Crane down'], ['Pan left', 'Pan right'], ['Tilt up', 'Tilt down'], ['Zoom in', 'Dolly zoom'], ['Arc + push', 'Drone rise', 'Reveal']];
+  ok(JSON.stringify(res.rows) === JSON.stringify(want), 'move rows: ' + JSON.stringify(res.rows));
+  noErrors(p);
+});
+
+check('name labels in the 3D view do not overlap, and the selected one stays put', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => { const S = window.__shotref; S.addObject('person'); S.addObject('person'); const [a, b] = S.state.objects.slice(-2); a.name = 'Aaaa'; b.name = 'Bbbb'; a.base.p = [-2.5, 0, -1.5]; b.base.p = [-2.3, 0, -1.5]; S.changed(true, true); S.select(null); }); await settle(p, 500);
+  const rects = () => p.evaluate(() => [...document.querySelectorAll('#labels .lbl3d')].filter(e => e.style.display !== 'none' && /^(Aaaa|Bbbb)$/.test(e.textContent)).sort((x, y) => x.textContent < y.textContent ? -1 : 1).map(e => { const r = e.getBoundingClientRect(); return [r.left, r.top, r.right, r.bottom]; }));
+  const hit = (a, b) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1];
+  const r = await rects(); ok(r.length === 2, 'expected 2 labels, got ' + r.length);
+  ok(!hit(r[0], r[1]), 'the labels overlap: ' + JSON.stringify(r));
+  await p.evaluate(() => { const S = window.__shotref; S.select(S.state.objects[S.state.objects.length - 2].id); }); await settle(p, 400);
+  const r2 = await rects(); ok(!hit(r2[0], r2[1]), 'the labels overlap with one selected: ' + JSON.stringify(r2));
+  ok(Math.abs(r2[0][1] - r[0][1]) < 1, 'the selected label moved: ' + JSON.stringify([r[0], r2[0]]));
   noErrors(p);
 });

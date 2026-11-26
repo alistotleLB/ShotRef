@@ -113,9 +113,8 @@ function pref(k) {
   return v;
 }
 let toastTimer;
-/* while a dialog is open the toast moves to the top of the window, so the dialog doesn't hide it (U7) */
-function placeToast() { const t = $('#toast'); if (t) t.classList.toggle('top', $$('.modal').some(m => !m.classList.contains('hidden'))); }
-function toast(msg, ms = 2400) { const t = $('#toast'); t.textContent = msg; placeToast(); t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), ms); }
+/* the toast always shows at the top centre (CSS), above dialogs, so it is never hidden by one */
+function toast(msg, ms = 2400) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), ms); }
 function b64ToBuf(b64) { const bin = atob(b64); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u.buffer; }
 function bufToB64(buf) { const u = new Uint8Array(buf); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); }
 /* text fields only: a focused dropdown, slider, checkbox or colour still lets shortcuts like Space work (U5) */
@@ -2321,7 +2320,7 @@ function renderOutliner() {
     o && parentOf(o) ? h('span', { class: 'ptag', title: 'Rides with ' + parentOf(o).name }, '↳ ' + parentOf(o).name) : null,
     nk ? h('span', { class: 'kd', title: nk + (nk === 1 ? ' key' : ' keys') }, '◆' + nk) : null,
     o ? h('button', { class: 'eye lockb' + (o.locked ? ' on' : ''), title: o.locked ? 'Locked: click to unlock' : 'Lock (stops it being moved by accident)', 'aria-label': o.locked ? 'Unlock ' + name : 'Lock ' + name, html: svgI(o.locked ? 'lock' : 'unlock'), onclick: e => { e.stopPropagation(); lockObjs([o], !o.locked); } }) : null,
-    onEye ? h('button', { class: 'eye', title: hidden ? 'Show' : 'Hide', onclick: e => { e.stopPropagation(); onEye(); } }, hidden ? '◌' : '●') : null);
+    onEye ? h('button', { class: 'eye', title: hidden ? 'Show' : 'Hide', 'aria-label': (hidden ? 'Show ' : 'Hide ') + name, html: '<svg viewBox="0 0 24 24">' + IC.eye + (hidden ? '<path d="M4 4l16 16"/>' : '') + '</svg>', onclick: e => { e.stopPropagation(); onEye(); } }) : null);
   el.append(row('camera', svgI('camera'), 'Shot camera', state.camera.keys.length));
   el.append(row('sun', svgI('sun'), 'Sun', 0));
   if (state.objects.length) el.append(h('div', { class: 'olsep' }));
@@ -2494,6 +2493,8 @@ function keySection(kind) {
 /* the right panel's sections: explanatory notes fold into a "?" on the heading, and clicking a heading folds the section (remembered per heading in prefs.closedSecs) */
 /* rare sections start folded; opening one is remembered (false) and wins over this default */
 const SECS_FOLDED = ['Animation', 'Attach', 'Save as set', 'Mount'];
+/* things that do not move by themselves: their "Move & face" section starts folded unless they already have a move (sec.dataset.fold) */
+const STILL_TYPES = ['tree', 'building', 'house', 'rock', 'wall', 'stairs', 'plane', 'lamp', 'cactus'];
 function decorateSections(root) {
   const closed = getPref('closedSecs', {}) || {};
   for (const sc of root.querySelectorAll('.sec')) {
@@ -2509,10 +2510,10 @@ function decorateSections(root) {
     if (!name) continue;
     /* the first heading is a title, not a toggle: it never folds, and a stale folded entry for it is dropped */
     if (sc === root.querySelector(':scope > .sec')) { if (closed[name]) { const now = { ...closed }; delete now[name]; setPref('closedSecs', now); } continue; }
-    if (closed[name] || (!(name in closed) && SECS_FOLDED.includes(name) && !sc.dataset.inuse)) sc.classList.add('closed');
+    if (closed[name] || (!(name in closed) && (SECS_FOLDED.includes(name) || sc.dataset.fold) && !sc.dataset.inuse)) sc.classList.add('closed');
     hd.addEventListener('click', () => {
       const on = sc.classList.toggle('closed'), now = { ...(getPref('closedSecs', {}) || {}) };
-      if (on) now[name] = true; else if (SECS_FOLDED.includes(name)) now[name] = false; else delete now[name];
+      if (on) now[name] = true; else if (SECS_FOLDED.includes(name) || sc.dataset.fold) now[name] = false; else delete now[name];
       setPref('closedSecs', now);
     });
   }
@@ -2689,7 +2690,7 @@ function sunSection(adv) {
     adv ? slider('Shadow depth', () => clamp(1 - (s.ambInt - 0.2) / 2.3, 0, 1), (v, c) => set('ambInt', r4(0.2 + (1 - v) * 2.3), c), { min: 0, max: 1, step: 0.01, fmt: v => v < 0.35 ? 'light' : v < 0.7 ? 'normal' : 'deep' }) : null,
     adv ? slider('Sun strength', () => s.sunInt, (v, c) => set('sunInt', v, c), { min: 0, max: 5, step: 0.05 }) : null,
     adv ? colorRow('Sun colour', () => s.sunColor, (v, c) => set('sunColor', v, c)) : null,
-    adv ? null : h('div', { class: 'note keep', style: 'opacity:.7' }, 'Strength, softness and shadow depth: Advanced'),
+    adv ? null : h('div', { class: 'note keep' }, 'Strength, softness and shadow depth: Advanced'),
     h('p', { class: 'note' }, 'Tip: drag the yellow sun in the editor or top view and watch the shadows move. Shadows follow the area the camera is looking at.'));
 }
 /* the panel for the Sun row (and the sun in the 3D view) */
@@ -2805,7 +2806,7 @@ function propsMulti(p) {
   const allLocked = list.every(o => o.locked), people = list.filter(o => o.type === 'person');
   p.append(sec('Arrange',
     h('div', { class: 'btns' },
-      whole ? h('button', { onclick: ungroupSel }, 'Ungroup') : h('button', { class: 'primary', onclick: groupSel, title: 'Keep these together: clicking one selects them all (Ctrl+G)' }, 'Group'),
+      whole ? h('button', { onclick: ungroupSel }, 'Ungroup') : h('button', { onclick: groupSel, title: 'Keep these together: clicking one selects them all (Ctrl+G)' }, 'Group'),
       h('button', { onclick: () => lockObjs(list, !allLocked), title: 'Ctrl+L' }, allLocked ? 'Unlock' : 'Lock')),
     h('div', { class: 'btns' },
       h('button', { onclick: dropToFloor }, 'Drop to floor'),
@@ -2857,7 +2858,7 @@ function propsObject(p, o) {
   // ---- movement
   const who = o.type === 'person' ? 'walk ' : '';
   const moveKids = [
-    h('div', { class: 'btns' }, h('button', { class: 'primary', onclick: () => startPath(o.id), title: 'Click points on the floor; ' + (o.type === 'person' ? 'they walk' : 'it moves') + ' through them' }, h('span', { html: svgI('path'), class: 'bi' }), 'Draw ' + who + 'path')),
+    h('div', { class: 'btns' }, h('button', { class: o.type === 'person' ? 'primary' : '', onclick: () => startPath(o.id), title: 'Click points on the floor; ' + (o.type === 'person' ? 'they walk' : 'it moves') + ' through them' }, h('span', { html: svgI('path'), class: 'bi' }), 'Draw ' + who + 'path')),
     slider('Speed', () => pathSpeedOf(o), (v, cm) => { o.opts.pathSpeed = v; changed(cm); }, { min: 0.3, max: o.type === 'car' ? 30 : 8, step: 0.1, fmt: v => v.toFixed(1) + ' m/s' }),
     check('Fit path to shot length', () => pathFit, v => { pathFit = v; }, 'Ignore the speed: arrive exactly on the last frame'),
     h('p', { class: 'note' }, 'Starts at the playhead (' + snapT(T).toFixed(2) + ' s). Walking ≈ ' + pref('walkSpeed') + ' m/s, jogging ≈ 3 m/s.'),
@@ -2878,6 +2879,7 @@ function propsObject(p, o) {
   if (o.type === 'car') moveKids.push(h('p', { class: 'note' }, 'Wheels roll with the distance driven and the front wheels steer into the curves.'));
   if (o.type === 'person') moveKids.push(h('div', { class: 'btns' }, h('button', { 'data-role': 'frame-cam', title: 'Opens the shot camera, ready to frame ' + o.name, onclick: () => frameWithCamera(o) }, 'Frame with camera…')));
   const moveSec = sec('Move & face', ...moveKids), staticProp = o.type !== 'person' && o.type !== 'car';
+  if (STILL_TYPES.includes(o.type)) { moveSec.dataset.fold = '1'; if (o.keys.length) moveSec.dataset.inuse = '1'; }
   if (!staticProp) p.append(moveSec);
   if (o.type === 'person') {
     const targets = [...state.objects.filter(x => x !== o && x.type === 'person'), ...state.objects.filter(x => x !== o && x.type !== 'person' && x.type !== 'mark')];
@@ -3094,17 +3096,29 @@ function updateLabels() {
   if (view === 'camera' || !pref('showLabels')) { box.style.display = 'none'; return; }
   box.style.display = 'block';
   const cam = view === 'top' ? topCam : edCam, wr = viewRects(vpEl.clientWidth, vpEl.clientHeight).work, w = wr ? wr.w : vpEl.clientWidth, hh = vpEl.clientHeight, seen = new Set();
+  const todo = [];
   for (const o of state.objects) {
     if (o.type !== 'person') continue;
     const v = views.get(o.id); if (!v || !v.group.visible) continue;
     seen.add(o.id);
     let el = labelEls.get(o.id); if (!el) { el = h('div', { class: 'lbl3d' }); box.append(el); labelEls.set(o.id, el); }
-    if (el.textContent !== o.name) el.textContent = o.name;
+    if (el.textContent !== o.name) { el.textContent = o.name; el._w = 0; }
     const H = (o.opts.height || 1.75) * v.group.scale.y;
     const pt = new THREE.Vector3(v.group.position.x, v.group.position.y + H + 0.16, v.group.position.z).project(cam);
-    el.style.display = pt.z < 1 && pt.z > -1 ? 'block' : 'none';
-    el.style.transform = `translate(${((pt.x * 0.5 + 0.5) * w).toFixed(1)}px, ${((-pt.y * 0.5 + 0.5) * hh).toFixed(1)}px) translate(-50%,-100%)`;
+    const vis = pt.z < 1 && pt.z > -1;
+    putStyle(el, 'display', vis ? 'block' : 'none');
     el.classList.toggle('sel', selected === o.id);
+    if (vis) todo.push({ el, x: (pt.x * 0.5 + 0.5) * w, y: (-pt.y * 0.5 + 0.5) * hh, sel: selected === o.id });
+  }
+  /* two names that would overlap: the later one moves up by its own height + 2 px (at most 6 steps); the selected one stays put (F17) */
+  const placed = [];
+  todo.sort((a, b) => (b.sel ? 1 : 0) - (a.sel ? 1 : 0));
+  for (const t of todo) {
+    if (!t.el._w) { t.el._w = t.el.offsetWidth; t.el._h = t.el.offsetHeight; }
+    const lw = t.el._w, lh = t.el._h; let y = t.y;
+    for (let n = 0; n < 6 && placed.some(r => t.x - lw / 2 < r.x1 && t.x + lw / 2 > r.x0 && y - lh < r.y1 && y > r.y0); n++) y -= lh + 2;
+    placed.push({ x0: t.x - lw / 2, x1: t.x + lw / 2, y0: y - lh, y1: y });
+    t.el.style.transform = `translate(${t.x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%,-100%)`;
   }
   for (const [id, el] of labelEls) if (!seen.has(id)) { el.remove(); labelEls.delete(id); }
 }
@@ -3133,21 +3147,22 @@ function tickUI() {
   /* the overlays sit over the half they belong to */
   { const sp = splitOn(), R = viewRects(vpEl.clientWidth, vpEl.clientHeight), bar = $('#camBar');
     putStyle(bar, 'left', (sp ? R.cam.x : 0) + 10 + 'px'); putStyle(bar, 'maxWidth', sp ? (R.cam.w - 20) + 'px' : '');
-    putStyle($('#hud'), 'left', sp ? R.cam.x + 'px' : '0px'); putStyle($('#hud'), 'top', sp ? (10 + bar.offsetHeight + 6) + 'px' : '');
+    /* the info pill is centred over the camera pane and sits 6 px below the buttons, whether they fill one row or wrap onto two */
+    putStyle($('#hud'), 'left', (sp ? R.cam.x + R.cam.w / 2 : vpEl.clientWidth / 2) + 'px'); putStyle($('#hud'), 'maxWidth', (sp ? R.cam.w : vpEl.clientWidth) - 24 + 'px'); putStyle($('#hud'), 'top', (10 + bar.offsetHeight + 6) + 'px');
     putStyle($('#vpRight'), 'right', (sp ? vpEl.clientWidth - R.work.w + 10 : 10) + 'px'); putStyle(hint, 'maxWidth', sp ? (R.work.w - 30) + 'px' : ''); }
   if (camPane()) {
     putHTML(hint, rec ? (rec.phase === 'rec' ? '<b style="color:#ff6b6b">● Recording</b> · steer the camera · <kbd>Esc</kbd> cancel' : 'Get ready… position the camera now')
-      : 'Drag: orbit · Right-drag: pan · Scroll: dolly · <kbd>Alt</kbd>+scroll: lens · <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> <kbd>Q</kbd><kbd>E</kbd> fly · <kbd>K</kbd> key camera');
+      : 'Drag: orbit · Right-drag: pan · Scroll: dolly · <kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd>: fly');
   } else {
-    const nav = view === 'top' ? 'Drag empty space: pan · Scroll: zoom' : 'Drag empty space: orbit · Right-drag: pan · Scroll: zoom';
+    const nav = view === 'top' ? 'Drag: pan · Scroll: zoom · Click: select · Right-click: options' : 'Drag: orbit · Right-drag: pan · Scroll: zoom · Right-click: options';
     putHTML(hint, placing || pathMode ? '<kbd>Esc</kbd> cancel' + (pathMode ? ' · <kbd>Enter</kbd> done · right-click removes the last point' : '')
-      : isMulti() ? 'Drag any of them to move them all · drag the orange ring to turn them together · <kbd>Shift</kbd> click adds or removes · <kbd>Ctrl</kbd><kbd>G</kbd> group · <kbd>Ctrl</kbd><kbd>L</kbd> lock'
+      : isMulti() ? 'Drag to move them all · Orange ring: turn · <kbd>Shift</kbd>-click: add or remove · <kbd>Ctrl</kbd> <kbd>G</kbd>: group'
       : selected === 'export' ? 'Choose what to export in the panel on the right'
-      : selected === 'sun' ? 'Drag the yellow sun to turn the light and the shadows · right-click it for light-from presets · or use the panel'
+      : selected === 'sun' ? 'Drag the yellow sun to turn the light · Right-click it: light presets'
       : selected && selected !== 'camera' && selected !== 'target'
-        ? 'Drag it on the floor to move · drag the orange ring to turn · right-click for more · <kbd>K</kbd> key · <kbd>Del</kbd> delete'
-        : selected ? 'Drag the camera or its aim point on the floor · or use the panel'
-          : nav + ' · Click something to select it · right-click for options · double-click an object to focus the lens · <kbd>T</kbd> top view · <kbd>C</kbd> camera view');
+        ? 'Drag to move · Orange ring: turn · Right-click: more'
+        : selected ? 'Drag the camera or its aim point · or use the panel'
+          : nav);
   }
   $('#bUndo').disabled = hi <= 0; $('#bRedo').disabled = hi >= hist.length - 1;
   undoTitles();
@@ -4609,7 +4624,7 @@ function propsExport(p) {
     check('Grid in export', () => s.exportGrid, v => { s.exportGrid = v; changed(true); }));
   const tog = h('button', { id: 'xoChange', 'aria-expanded': String(exportFmtOpen), 'aria-controls': 'xoFormat', onclick: () => { exportFmtOpen = !exportFmtOpen; fmt.classList.toggle('hidden', !exportFmtOpen); tog.setAttribute('aria-expanded', String(exportFmtOpen)); tog.textContent = exportFmtOpen ? 'Done' : 'Change'; } }, exportFmtOpen ? 'Done' : 'Change');
   p.append(sec('Export',
-    h('div', { class: 'row' }, h('span', { id: 'xoSummary', class: 'grow', style: 'font-size:12.5px;color:#cfd3d8' }, `${w}×${hh} · ${asp} · ${sty}`), tog),
+    h('div', { class: 'row' }, h('span', { id: 'xoSummary', class: 'grow', style: 'font-size:13px;color:#cfd3d8' }, `${w}×${hh} · ${asp} · ${sty}`), tog),
     h('p', { class: 'note keep', style: 'margin:0 0 8px' }, `${s.fps} fps · ${s.duration.toFixed(1)} s` + (sn ? ' · ' + sn : '')),
     fmt));
   p.append(sec('Export video', h('div', { class: 'expgrid' },
@@ -4627,7 +4642,7 @@ function propsExport(p) {
   box.addEventListener('input', () => { promptEdit = box.value; });
   box.addEventListener('keydown', e => e.stopPropagation());
   p.append(sec('Prompt for the AI model', box,
-    h('div', { class: 'btns', style: 'margin-top:6px' }, h('button', { id: 'xoCopyPrompt', class: 'primary', onclick: () => copyPromptText(box.value, box) }, 'Copy prompt'),
+    h('div', { class: 'btns', style: 'margin-top:6px' }, h('button', { id: 'xoCopyPrompt', onclick: () => copyPromptText(box.value, box) }, 'Copy prompt'),
       h('button', { id: 'xoRewrite', onclick: () => { promptEdit = null; box.value = promptText(); toast('Prompt rewritten from the scene'); } }, 'Rewrite from scene')),
     h('p', { class: 'note' }, 'Written from the scene: framing, lens, camera move, who does what, and the light. Edit it freely; your edits stay until you press Rewrite.')));
 }
@@ -5334,7 +5349,6 @@ function openModal(id) {
   if (!openModals().length && ae && ae !== document.body) modalReturn = ae;
   m.classList.remove('hidden'); requestRender();
   if (id === 'mExport') { $('#exProg').hidden = !exporting; renderExportDialog(); }
-  placeToast();
   if (exporting && id === 'mExport') return; /* the export lock owns focus */
   /* the main button, else the first real control: the × only when there is nothing else (K6) */
   const f = m.querySelector('button.primary:not(:disabled)') || focusables(m).find(el => !el.hasAttribute('data-close')) || focusables(m)[0];
@@ -5342,7 +5356,7 @@ function openModal(id) {
 }
 function closeModal(el) {
   const m = el.closest('.modal'); if (exporting && (m.id === 'mExport' || m.id === 'mCompare')) return;
-  m.classList.add('hidden'); placeToast(); requestRender();
+  m.classList.add('hidden'); requestRender();
   if (m.id === 'mTour' && tourAsk) { tourAsk = false; openStarters(true); }
   if (!openModals().length && modalReturn) { const r = modalReturn; modalReturn = null; if (r.isConnected && !r.closest('.modal')) r.focus(); }
 }
