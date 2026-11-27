@@ -58,7 +58,8 @@ import { TOUR_COPY } from './tour-copy.js';
  * copyBlob                       last copied frame: copyFrame
  * exCancel, exporting            export cancel request and export running: exportVideo, #exCancel
  * exFrom, exSaved                where a video export started ('panel' or 'options') and the files it saved: exportVideo (shown by exEnd, showExDone)
- * foldStep, foldHand, leftTouchAt  the step the left panel's fold was decided for, a hand choice in it (null = the step's default), the last press in the panel: syncFold, openLeft, foldLeft, wire
+ * leftFold, vpDown              the left panel should be folded (null until boot decides): foldForStep (goStep, navView), openLeft, foldLeft;
+ *                                a pointer is down in the 3D view (the fold waits for its release): wire
  * revealSec                      a panel section to open and scroll to on the next panel build: showPhotoSettings, importPlate (renderProps clears it)
  * modalReturn, cfCb             focus to return to after dialogs: openModal, closeModal; confirm callback: confirmBox
  */
@@ -2339,28 +2340,29 @@ function setLeftTab(t, save = true) {
   $('#addArea').style.display = t === 'add' ? '' : 'none'; $('#outliner').style.display = t === 'scene' ? '' : 'none';
   $$('#leftTabs button').forEach(b => { const on = b.dataset.lt === t; b.classList.toggle('on', on); b.setAttribute('aria-selected', String(on)); });
 }
-/* In step 2 Frame and step 3 Export the left panel folds to a 44 px strip (#app.lfold) so the picture gets the width; step 1 Build opens it.
-   The strip's Add and Items buttons open it, « folds it again: that hand choice holds until the step changes. Picking something inside
-   the open panel (Shot camera in the Items list, say) counts as a hand choice to keep it open in the step that pick leads to.
-   Decided from currentStep(), not the view. Runs at the top of frame(), before the draw, so the 3D view re-fits in the same frame. */
-let foldStep = null, foldHand = null, leftTouchAt = -1e9;
+/* The left panel folds to a 44 px strip (#app.lfold) so the picture gets the width in step 2 Frame and step 3 Export.
+   A selection never folds or opens it. It is decided only when the user navigates on purpose (foldForStep, called by goStep: the step pills
+   and keys 1/2/3, and by navView: the View buttons, keys C and T, Look through camera / Back to editor): folded if the step right after is
+   Frame or Export, open if it is Build. Split view on or off does not decide it. The strip's Add and Items buttons and « work at any time; that
+   choice holds until the next such navigation. Boot: open, unless the app starts in the camera view.
+   The fold never changes while a pointer is down in the 3D view or a drag runs (vpDown, dragActive, the gizmo): it waits for the release.
+   syncFold() applies leftFold at the top of frame(), before the draw, so the 3D view re-fits in the same frame. */
+let leftFold = null, vpDown = false;
 function syncFold() {
-  const step = currentStep(), app = $('#app');
-  if (step !== foldStep) {
-    const first = foldStep === null; foldStep = step;
-    foldHand = !first && !app.classList.contains('lfold') && performance.now() - leftTouchAt < 600 ? true : null;
-  }
-  const fold = foldHand !== null ? !foldHand : step !== 'build';
-  if (app.classList.contains('lfold') !== fold) {
-    const had = document.activeElement, inLeft = had && had !== document.body && $('#left').contains(had);
-    app.classList.toggle('lfold', fold); requestRender();
-    if (inLeft && !had.getClientRects().length) (fold ? $('#stripAdd') : $('#leftTabs .on') || $('#leftTabs button')).focus(); /* keyboard focus never falls out of the panel */
-  }
-  putStyle($('#bFold'), 'display', step === 'build' ? 'none' : '');
+  const app = $('#app');
+  if (leftFold === null) leftFold = view === 'camera';
+  putStyle($('#bFold'), 'display', currentStep() === 'build' && !leftFold ? 'none' : '');
+  if (app.classList.contains('lfold') === leftFold || vpDown || dragActive || gizmo.dragging) return;
+  const had = document.activeElement, inLeft = had && had !== document.body && $('#left').contains(had);
+  app.classList.toggle('lfold', leftFold); requestRender();
+  if (inLeft && !had.getClientRects().length) (leftFold ? $('#stripAdd') : $('#leftTabs .on') || $('#leftTabs button')).focus(); /* keyboard focus never falls out of the panel */
 }
+const foldForStep = () => { leftFold = currentStep() !== 'build'; syncFold(); };
+/* a deliberate view change (View buttons, C, T, Look through camera, Back to editor) */
+function navView(v) { setView(v); foldForStep(); }
 /* the strip's two buttons and « */
-function openLeft(tab) { syncFold(); foldHand = true; if (tab) setLeftTab(tab); syncFold(); }
-function foldLeft() { syncFold(); foldHand = false; syncFold(); }
+function openLeft(tab) { leftFold = false; if (tab) setLeftTab(tab); syncFold(); }
+function foldLeft() { leftFold = true; syncFold(); }
 function buildAddPanel() {
   const area = $('#addArea'); area.innerHTML = '';
   const cats = { People: [], Shapes: [], Props: [], Import: [], Blocking: [] };
@@ -2805,7 +2807,7 @@ function propsCamera(p) {
   const c = state.camera, dof = ensureDof();
   p.append(sec('Shot camera',
     h('div', { class: 'btns' },
-      h('button', { class: view === 'camera' ? 'quiet' : '', onclick: () => setView(view === 'camera' ? 'editor' : 'camera') }, view === 'camera' ? 'Back to editor' : 'Look through camera'),
+      h('button', { class: view === 'camera' ? 'quiet' : '', onclick: () => navView(view === 'camera' ? 'editor' : 'camera') }, view === 'camera' ? 'Back to editor' : 'Look through camera'),
       view === 'editor' ? h('button', { onclick: camToEditorView, title: 'Place the camera where the editor view is' }, 'Camera to editor view') : null),
   ));
   const saved = getPref('camTab'), tab = saved === 'photo' || saved === 'output' ? 'shot' : CAM_TABS.some(t => t[0] === saved) ? saved : 'move';
@@ -3252,11 +3254,13 @@ function tickUI() {
     putStyle($('#hud'), 'display', 'flex');
   } else putStyle($('#hud'), 'display', 'none');
   /* the overlays sit over the half they belong to */
-  if (view === 'camera') { const a = state.settings.aspect; putText($('#aspectTxt'), a); if ($('#bAspect').getAttribute('aria-label') !== 'Aspect ' + a) $('#bAspect').setAttribute('aria-label', 'Aspect ' + a); }
-  { const sp = splitOn(), R = viewRects(vpEl.clientWidth, vpEl.clientHeight), bar = $('#camBar');
-    putStyle(bar, 'left', (sp ? R.cam.x : 0) + 10 + 'px'); putStyle(bar, 'maxWidth', sp ? (R.cam.w - 20) + 'px' : '');
-    /* in the camera view the buttons stop 10 px short of the icon cluster (aspect, guides, preview), whatever its width */
-    putStyle(bar, 'right', !sp && view === 'camera' ? ($('#vpRight').offsetWidth + 20) + 'px' : '');
+  if (camUI) { const a = state.settings.aspect; putText($('#aspectTxt'), a); if ($('#bAspect').getAttribute('aria-label') !== 'Aspect ' + a) $('#bAspect').setAttribute('aria-label', 'Aspect ' + a); }
+  { const sp = splitOn(), R = viewRects(vpEl.clientWidth, vpEl.clientHeight), bar = $('#camBar'), ct = $('#camTools');
+    /* the framing tools sit at the top right of the camera picture (the whole view, or its half in split view); the buttons stop 10 px short of them */
+    const ctW = camUI ? ct.offsetWidth : 0, camR = sp ? vpEl.clientWidth - (R.cam.x + R.cam.w) : 0;
+    putStyle(ct, 'right', camR + 10 + 'px');
+    putStyle(bar, 'left', (sp ? R.cam.x : 0) + 10 + 'px'); putStyle(bar, 'maxWidth', sp ? (R.cam.w - 30 - ctW) + 'px' : '');
+    putStyle(bar, 'right', !sp && view === 'camera' ? (ctW + 20) + 'px' : '');
     /* the info pill is centred over the camera pane and sits 6 px below the buttons, whether they fill one row or wrap onto two */
     putStyle($('#hud'), 'left', (sp ? R.cam.x + R.cam.w / 2 : vpEl.clientWidth / 2) + 'px'); putStyle($('#hud'), 'maxWidth', (sp ? R.cam.w : vpEl.clientWidth) - 24 + 'px'); putStyle($('#hud'), 'top', (10 + bar.offsetHeight + 6) + 'px');
     putStyle($('#vpRight'), 'right', (sp ? vpEl.clientWidth - R.work.w + 10 : 10) + 'px'); putStyle(hint, 'maxWidth', sp ? (R.work.w - 30) + 'px' : '');
@@ -3297,6 +3301,7 @@ function goStep(s) {
   if (s === 'build') { if (view === 'camera') setView(lastWorkView); if (selected === 'camera' || selected === 'target' || selected === 'export') select(null); setLeftTab('add'); }
   else if (s === 'frame') { if (!splitOn()) setView('camera'); select('camera'); }
   else if (s === 'export') { if (view !== 'camera' && !splitOn()) setView('camera'); select('export'); }
+  foldForStep(); /* the left panel folds in Frame and Export, opens in Build */
   requestRender();
 }
 /* timeline tracks: open while something is keyed, unless you opened or closed them by hand */
@@ -3449,7 +3454,7 @@ function ctxItems(hit, floor) {
   const items = [], sel = selected && getObj(selected), selP = sel && sel.type === 'person' ? sel : null;
   if (hit && (hit.id === 'camera' || hit.id === 'target')) {
     select('camera');
-    items.push({ head: 'Shot camera' }, { label: 'Look through camera', fn: () => setView('camera'), key: 'C' }, { label: 'Set start frame', fn: () => setShotEnd('start') }, { label: 'Set end frame', fn: () => setShotEnd('end') });
+    items.push({ head: 'Shot camera' }, { label: 'Look through camera', fn: () => navView('camera'), key: 'C' }, { label: 'Set start frame', fn: () => setShotEnd('start') }, { label: 'Set end frame', fn: () => setShotEnd('end') });
     if (state.camera.keys.length) items.push({ label: 'Clear move', fn: makeCameraStatic });
     return items;
   }
@@ -4158,7 +4163,8 @@ function setView(v) {
   syncControls();
   $$('#viewSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
   $$('#vpRight [data-g], #vpRight [data-g2], #bSnapGrid, #bFocus, #bGrid').forEach(b => { b.style.display = v === 'camera' ? 'none' : ''; }); /* the editor tools; the editor grid is never in the shot */
-  $$('#bAspect, #bGuides').forEach(b => { b.style.display = v === 'camera' ? '' : 'none'; }); /* framing: the frame's aspect and the guides over it */
+  $('#vpRight').style.display = v === 'camera' ? 'none' : ''; /* every editor tool is hidden there */
+  $('#camTools').style.display = v === 'camera' || splitOn() ? 'flex' : 'none'; /* framing: the aspect chip and the guides menu, over the camera picture (tickUI places it) */
   $('#camBar').style.display = v === 'camera' || splitOn() ? 'flex' : 'none';
   $('#bCamHere').style.display = v === 'editor' ? '' : 'none';
   $('#bPip').style.display = v !== 'camera' && !splitOn() ? '' : 'none';
@@ -5314,12 +5320,17 @@ function showExDone() {
   putText($('#exFile'), n > 1 ? `${f0.name} and ${n - 1} more · ${sz(total)}` : `${f0.name} · ${sz(f0.size)}`);
   $('#exFile').title = exSaved.map(f => f.name).join('\n');
   putText($('#exWhere'), platform.kind === 'desktop' ? (folder ? 'Look in ' + folder + '.' : 'Look in the folder you chose.') : 'Look in your Downloads folder.');
-  exBody('done'); $('#exDoneBtn').focus();
+  exBody('done'); exSay($('#exDoneT').textContent + '. ' + $('#exFile').textContent); $('#exDoneBtn').focus();
 }
+/* the export window's live region (#exLive) speaks only at the start, the finish and an error; the progress text is not read out every frame */
+const exSay = t => { const l = $('#exLive'); l.textContent = ''; setTimeout(() => { l.textContent = t; }, 30); };
 /* how an export ends in the window: fail shows the error; a cancel, or a video nobody saved (the Save dialog was cancelled), closes the small
    window or goes back to the options; anything saved shows "Video saved" once the last shot is done */
 function exEnd(outcome, msg, last) {
-  if (outcome === 'fail') { putText($('#exErr'), msg); exBody('fail'); $('#exClose').focus(); return; }
+  if (outcome === 'fail') { /* in "Every shot" the run stops here and says what was already saved */
+    const n = exSaved.length, text = msg + (n ? ' ' + (n === 1 ? '1 video was' : n + ' videos were') + ' saved before it.' : '');
+    putText($('#exErr'), text); exBody('fail'); exSay(text); $('#exClose').focus(); return;
+  }
   if (!last && outcome !== 'cancel') return; /* more shots to come: the progress stays */
   if (outcome === 'cancel' || !exSaved.length) {
     if (exFrom === 'options') { exBody('opts'); renderExportDialog(); $('#exVideo').focus(); } else closeModal($('#exCancel'));
@@ -5341,7 +5352,7 @@ async function exportVideo(opts = {}) {
   if ($('#mExport').classList.contains('hidden')) { exFrom = 'panel'; openModal('mExport'); } /* the Export panel's button: the small window only */
   else if (exShowing() === 'opts') exFrom = 'options';
   if (!opts.batch || opts.batch.i === 0) exSaved = [];
-  exBody('run');
+  exBody('run'); if (!opts.batch || opts.batch.i === 0) exSay('Exporting video');
   exporting = true; exCancel = false;
   let done = false, outcome = 'fail', failMsg = ''; const pre = opts.label ? opts.label + ' · ' : '';
   /* the save's answer: saved, the Save dialog cancelled, or the file could not be written */
@@ -5376,7 +5387,7 @@ async function exportVideo(opts = {}) {
       if (blob.size < 1024) { const e = new Error('MP4 came out empty (' + blob.size + ' bytes)'); e.mp4 = true; throw e; }
       exProgress(1, 'Done: ' + fmtSize(blob.size));
       const name = outName(state.settings.style, `${w}x${hh}`, `${fps}fps`) + '.mp4';
-      outcome = saved(await saveFile(name, blob, true), name, blob.size); done = true;
+      outcome = saved(await saveFile(name, blob, true), name, blob.size); done = outcome !== 'fail'; /* a failed save stops "Every shot" */
     } else {
       // fallback: WebM in real time
       const c = r.domElement;
@@ -5400,7 +5411,7 @@ async function exportVideo(opts = {}) {
       const blob = new Blob(parts, { type: 'video/webm' });
       if (blob.size < 1024) throw new Error('WebM came out empty (' + blob.size + ' bytes)');
       const name = outName(state.settings.style, `${w}x${hh}`) + '.webm';
-      outcome = saved(await saveFile(name, blob, true), name, blob.size); done = true;
+      outcome = saved(await saveFile(name, blob, true), name, blob.size); done = outcome !== 'fail';
     }
   } catch (e) {
     console.error(e);
@@ -5591,12 +5602,12 @@ function startTour(kind, opts = {}) {
     return handle;
   }
   const tab = $('#leftTabs .on') ? $('#leftTabs .on').dataset.lt : 'add';
-  syncFold(); const fold = { step: foldStep, hand: foldHand }; /* the Add stop may open the folded panel: put it back as it was */
+  syncFold(); const foldWas = leftFold; /* the Add stop may open the folded panel: put it back as it was */
   const handle = runStops(basicStops(), {
     ui: TOUR_COPY.ui,
     onEnd: reason => {
       setLeftTab(tab, false);
-      if (foldStep === fold.step) { foldHand = fold.hand; syncFold(); }
+      if (reason !== 'external') { leftFold = foldWas; syncFold(); }
       setPref('tourBasicDone', true);
       if (reason === 'external') return; /* another tour took over, or Open / New / a file from Windows swapped the project: no picker */
       if (firstRun) openStarters(true);
@@ -6024,8 +6035,9 @@ function wire() {
   setLeftTab(getPref('leftTab', 'add'), false);
   $$('#leftTabs button').forEach(b => b.onclick = () => setLeftTab(b.dataset.lt));
   $('#stripAdd').onclick = () => openLeft('add'); $('#stripItems').onclick = () => openLeft('scene'); $('#bFold').onclick = foldLeft;
-  document.addEventListener('pointerdown', e => { leftTouchAt = e.target && e.target.closest && e.target.closest('#left') ? performance.now() : -1e9; }, true); /* a press anywhere else forgets it */
-  $('#left').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') leftTouchAt = performance.now(); }, true);
+  /* a press in the 3D view holds the left panel's fold where it is until the button comes up (syncFold) */
+  vpEl.addEventListener('pointerdown', () => { vpDown = true; }, true);
+  for (const ev of ['pointerup', 'pointercancel', 'blur']) window.addEventListener(ev, () => { if (vpDown) { vpDown = false; requestRender(); } }, true);
   menuButton($('#bAspect'), aspectMenuItems); menuButton($('#bGuides'), guidesMenuItems);
   $$('#stepSeg button').forEach(b => b.onclick = () => goStep(b.dataset.step));
   if (platform.kind === 'desktop') $('#bFile').style.display = 'none'; /* the Windows File menu does this job */
@@ -6044,7 +6056,7 @@ function wire() {
   $$('#feelBar button').forEach(b => { b.onclick = () => { state.camera.feel = b.dataset.feel; changed(true, true); syncTopUI(); }; peekHover(b, 'feel', b.dataset.feel); });
   $('#cbStart').onclick = () => setShotEnd('start'); $('#cbEnd').onclick = () => setShotEnd('end'); $('#cbRec').onclick = startRecord;
   $('#bUndo').onclick = undo; $('#bRedo').onclick = redo;
-  $$('#viewSeg button').forEach(b => b.onclick = () => setView(b.dataset.v));
+  $$('#viewSeg button').forEach(b => b.onclick = () => navView(b.dataset.v));
   $('#stHelp').onclick = () => { closeModal($('#stHelp')); openModal('mHelp'); };
   $$('#helpTabs button').forEach(b => b.onclick = () => setHelpTab(b.dataset.ht));
   $('#cbCopy').onclick = copyFrame; $('#exCopy').onclick = copyFrame;
@@ -6056,7 +6068,7 @@ function wire() {
   $('#bPip').onclick = () => { pipOn = !pipOn; syncTopUI(); };
   $('#bSplit').onclick = () => setLayout(layout === 'split' ? 'single' : 'split');
   $('#bGrid').onclick = () => { state.settings.gridOn = !state.settings.gridOn; applyEnv(); changed(true, true); syncTopUI(); };
-  $('#pipFrame').onclick = () => setView('camera');
+  $('#pipFrame').onclick = () => navView('camera');
   $('#bPlay').onclick = () => { if (!playing && T >= lastT() - 1e-6) setTime(0); setPlaying(!playing); };
   $('#bStart').onclick = () => setTime(0);
   $('#bEnd').onclick = () => setTime(lastT());
@@ -6428,8 +6440,8 @@ function wire() {
     if (pathMode && (k === 'backspace' || k === 'delete')) { e.preventDefault(); removePathPoint(); return; }
     if (rec && k !== ' ') return;
     if (k === ' ') { e.preventDefault(); if (rec) return; $('#bPlay').click(); }
-    else if (k === 'c') setView(view === 'camera' ? lastWorkView : 'camera');
-    else if (k === 't') setView(view === 'top' ? 'editor' : 'top');
+    else if (k === 'c') navView(view === 'camera' ? lastWorkView : 'camera');
+    else if (k === 't') navView(view === 'top' ? 'editor' : 'top');
     else if (k === 'w') setGizmoMode('translate');
     else if (k === 'e') setGizmoMode('rotate');
     else if (k === 'r') setGizmoMode('scale');
