@@ -14,13 +14,13 @@ Builds:  dist/ShotRef.html ~1086 KB; release/ShotRef-Setup-1.7.0.exe (122 MB), S
 Tests:   npm test 377/377 (702 s), test:desktop 28/28, 0 Electron left (2026-11-26, release commit f61b3e1).
 Code:    PUBLIC GitHub main = 1.7.0. claude.ai artifact 6uRy4QMBjvK9Rn5PLedSUq = 1.7.0 (version 12, private, Desert overlook demo kept).
 Known:   walking feet slide slightly at heel strike. Not checked: a real update from an installed copy to 1.7.0.
-Branch:  ui/audit-fixes (NOT merged, NOT released) = all 18 findings of UI-AUDIT.md, built 2026-11-26/27: grey "chosen" ring (orange kept
+Main:    local main 89a3469 (merged 2026-11-27, NOT pushed, NOT released, still says 1.7.0) = all 18 findings of UI-AUDIT.md, built 2026-11-26/27: grey "chosen" ring (orange kept
          for main button, camera, keys, selected item), starter sets open on a framed view and have pictures, empty-stage guidance,
          messages in 3 kinds at the top, one tooltip, drawn symbols, camera tabs Shot/Move/Lens, left panel folds in steps 2-3,
-         "Video saved" finish, Windows app: one File menu, window memory, min 1100x600. Tests there: npm test 431/431 (848 s),
-         test:desktop 38/38, 0 Electron left (2026-11-27, commit 6b3004e). Main task by hand: 9 clicks to a saved MP4.
-         Go back: tag before-ui-audit-fixes (= main 8651127); main is untouched.
-Next:    Ali runs checklist C7 on the branch build. On his yes: merge into main, release as 1.8.0, republish the claude.ai page.
+         "Video saved" finish, Windows app: one File menu, window memory, min 1100x600. Gear button redrawn. Tests: npm test 431/431 (875 s),
+         test:desktop 38/38, 0 Electron left (2026-11-27, commit 2118e60). Main task by hand: 9 clicks to a saved MP4.
+         Go back: tag before-ui-audit-fixes (= main 8651127); origin/main (GitHub) is still there too.
+Next:    Ali ran C7 on 2026-11-27: "all look good". Waiting on his yes to: release as 1.8.0 (pushes main to GitHub) and republish the claude.ai page.
          Still Ali's call (old phase 4): steps vs Editor/Top/Camera, Take menu placement; the audit's "bolder idea" (each step owns the screen).
 Not yet tried by Ali: the 1.7.0 update itself; the quick tour. (C7, the UI audit fixes: tried 2026-11-27, "all look good".)
 
@@ -145,11 +145,11 @@ Not verified: the real claude.ai frame (downloads, clipboard), a normal non-head
 Proposed order: Step 0 backup + smoke test (needs OK) -> quick wins -> A1, then A2+S2 -> design/measure items -> optional tidy-ups.
 
 ## Handoff                   (replaced each session)
-STATE     Branch ui/audit-fixes holds all 18 UI audit findings (UI-AUDIT.md). main = 1.7.0, untouched; tag before-ui-audit-fixes marks it.
-          Not merged, not released, claude.ai page not republished. Version number still 1.7.0.
+STATE     All 18 UI audit findings (UI-AUDIT.md) are merged into local main (89a3469). GitHub main is still 1.7.0 (8651127, tag before-ui-audit-fixes).
+          Not pushed, not released, claude.ai page not republished. Version number still 1.7.0. Ali passed C7 on 2026-11-27.
 CHANGED   See Log 2026-11-27. Plan with exact values: docs/superpowers/plans/2026-11-26-ui-audit-fixes.md. Before/after pictures: docs/ui-audit/ and docs/ui-audit/after/.
-TESTS     npm test 431/431 (848 s), test:desktop 38/38, 0 Electron left, on 6b3004e. Main task by hand on that build: 9 clicks, MP4 saved, "Video saved" window. 13 visual screens OK.
-OPEN      Ali's C7 below. Not checked by anyone: the page inside the real claude.ai frame (does a download land in Downloads, as the finish window says?);
+TESTS     npm test 431/431 (875 s), test:desktop 38/38, 0 Electron left, on 2118e60 (same files as main 89a3469). Main task by hand on that build: 9 clicks, MP4 saved, "Video saved" window. 13 visual screens OK.
+OPEN      C7 passed (steps kept below for the record). Not checked by anyone: the page inside the real claude.ai frame (does a download land in Downloads, as the finish window says?);
           window memory on two monitors or a scaled display; a slow PC; a screen reader; a light-mode Windows title bar.
           Small leftovers (reviewed, left on purpose): in split view at 1100x700 the editor half's hint is cut with "…"; the empty-stage line wraps to two lines at 1100x700;
           a problem message can sit over the title row of a tall dialog for up to 8 s; Quick start tabs have no arrow-key movement.
@@ -159,7 +159,7 @@ TRIED     A helper turned the second person in four starter sets into a woman so
 FINDINGS  A worktree helper cannot edit the main folder (harness rule) and needs a node_modules junction; remove the junction before deleting the worktree.
           The old flaky check "restoring an autosave at start never moves anything either" raced the page's own start-up autosave (400 ms debounce); its wait is now 1000 ms.
           Leftover worktree: .claude/worktrees/agent-af48337753a8f8b4b (branch worktree-agent-af48337753a8f8b4b, fully merged, junction already removed). Safe to delete.
-NEXT      Ali runs C7. Build: branch ui/audit-fixes (`npm run build`, open dist/ShotRef.html in Edge or Chrome; Windows app: `npm run desktop`).
+NEXT      On Ali's yes: release 1.8.0 (release skill) and republish the claude.ai page. C7 as he ran it: Build: branch ui/audit-fixes (`npm run build`, open dist/ShotRef.html in Edge or Chrome; Windows app: `npm run desktop`).
           1. Open the page fresh -> the screen looks calmer: chosen settings have a grey outline, orange is only on the step number, the time counter and main buttons.
           2. File, New -> seven starter sets, each with a picture; "Empty stage" is last.
           3. Pick "Walk and talk", then "Street" -> each opens on a clear view of the people, not a black screen.
