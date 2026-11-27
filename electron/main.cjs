@@ -1,6 +1,6 @@
 /* ShotRef desktop shell. Loads the same dist/ShotRef.html as the web build; the page only talks to this file through preload.cjs.
  * See the contract at the top of src/platform.js. */
-const { app, BrowserWindow, Menu, dialog, ipcMain, session } = require('electron');
+const { app, BrowserWindow, Menu, dialog, ipcMain, session, screen, nativeTheme } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const updater = require('./updater.cjs');
@@ -20,7 +20,7 @@ const allowedPaths = new Set(); /* paths the page may write to: only ones that c
 
 /* ---------- small settings file: last folder per kind + recent list ---------- */
 const settingsFile = () => path.join(app.getPath('userData'), 'shotref-settings.json');
-let settings = { folders: {}, recent: [], autoUpdate: true, lastVersion: null };
+let settings = { folders: {}, recent: [], autoUpdate: true, lastVersion: null, window: null };
 let hadSettings = false; /* a settings file existed before this launch: ShotRef ran here before (so this may be an update) */
 function loadSettings() {
   try {
@@ -30,9 +30,15 @@ function loadSettings() {
       recent: Array.isArray(s && s.recent) ? s.recent.filter(p => typeof p === 'string').slice(0, 8) : [],
       autoUpdate: !(s && s.autoUpdate === false), /* on unless the user turned it off in Help */
       lastVersion: s && typeof s.lastVersion === 'string' ? s.lastVersion : null, /* the version that last ran: drives What's new */
+      window: cleanWindow(s && s.window), /* where the window was last: {x, y, width, height, maximized} */
     };
     hadSettings = true;
   } catch (e) { /* first run or unreadable: start fresh */ }
+}
+const finite = v => typeof v === 'number' && isFinite(v);
+function cleanWindow(w) {
+  if (!w || typeof w !== 'object' || ![w.x, w.y, w.width, w.height].every(finite) || w.width < 200 || w.height < 200) return null;
+  return { x: Math.round(w.x), y: Math.round(w.y), width: Math.round(w.width), height: Math.round(w.height), maximized: !!w.maximized };
 }
 function saveSettings() {
   try { fs.mkdirSync(path.dirname(settingsFile()), { recursive: true }); fs.writeFileSync(settingsFile(), JSON.stringify(settings)); }
@@ -103,7 +109,7 @@ ipcMain.handle('shotref:save-blob', async (e, name, data, filters) => {
     const buf = data instanceof ArrayBuffer ? Buffer.from(data) : Buffer.from(data.buffer, data.byteOffset, data.byteLength);
     await writeAtomic(r.filePath, buf);
     rememberFolder('export', r.filePath);
-    return { ok: true, name: path.basename(r.filePath) };
+    return { ok: true, name: path.basename(r.filePath), folder: path.dirname(r.filePath) }; /* the folder: the Export window says where the video went */
   } catch (err) { console.error('ShotRef: save failed', err); return { ok: false, error: plainError(err) }; }
 });
 
@@ -205,10 +211,13 @@ function buildMenu() {
     { label: 'File', submenu: [
       { label: 'New', click: () => send('shotref:menu', 'new') },
       { label: 'Open…', accelerator: 'CmdOrCtrl+O', registerAccelerator: false, click: () => send('shotref:menu', 'open') },
-      { label: 'Open recent', submenu: recent.length ? recent : [{ label: 'No recent projects', enabled: false }] },
+      { label: 'Open recent file', submenu: recent.length ? recent : [{ label: 'No recent projects', enabled: false }] },
+      { label: 'Browse recent projects…', click: () => send('shotref:menu', 'recent') }, /* the page's own Recent projects window, with pictures */
       { type: 'separator' },
       { label: 'Save', accelerator: 'CmdOrCtrl+S', registerAccelerator: false, click: () => send('shotref:menu', 'save') },
       { label: 'Save as…', accelerator: 'CmdOrCtrl+Shift+S', registerAccelerator: false, click: () => send('shotref:menu', 'save-as') },
+      { type: 'separator' },
+      { label: 'Export…', click: () => send('shotref:menu', 'export') },
       { type: 'separator' },
       { label: 'Exit', click: () => { if (win && !win.isDestroyed()) win.close(); else app.quit(); } },
     ] },
@@ -230,6 +239,32 @@ function buildMenu() {
 }
 
 /* ---------- window ---------- */
+const DEFAULT_W = 1440, DEFAULT_H = 900, MIN_W = 1100, MIN_H = 600;
+/* the saved rectangle counts only if most of its title bar is still on a connected display (a monitor may have been unplugged) */
+function visibleOnADisplay(r) {
+  return screen.getAllDisplays().some(d => {
+    const a = d.workArea, w = Math.min(r.x + r.width, a.x + a.width) - Math.max(r.x, a.x);
+    return w >= 200 && r.y >= a.y - 20 && r.y <= a.y + a.height - 100;
+  });
+}
+/* the first window: the saved one if it still fits a display, else the default; a small screen opens maximized */
+function startBounds() {
+  const w = settings.window;
+  if (w && visibleOnADisplay(w)) return { opts: { x: w.x, y: w.y, width: Math.max(MIN_W, w.width), height: Math.max(MIN_H, w.height) }, maximized: w.maximized };
+  const a = screen.getPrimaryDisplay().workArea;
+  if (a.width < DEFAULT_W || a.height < DEFAULT_H) return { opts: { width: Math.min(DEFAULT_W, Math.max(MIN_W, a.width)), height: Math.min(DEFAULT_H, Math.max(MIN_H, a.height)) }, maximized: true };
+  return { opts: { width: DEFAULT_W, height: DEFAULT_H }, maximized: false };
+}
+/* remember the window: its normal (un-maximized) rectangle, and whether it is maximized */
+let saveWinTimer = null;
+function rememberWindow() {
+  if (!win || win.isDestroyed() || win.isMinimized() || win.isFullScreen()) return;
+  const b = win.isMaximized() ? win.getNormalBounds() : win.getBounds();
+  const w = cleanWindow({ ...b, maximized: win.isMaximized() });
+  if (!w) return;
+  settings.window = w; saveSettings();
+}
+function rememberWindowSoon() { clearTimeout(saveWinTimer); saveWinTimer = setTimeout(rememberWindow, 500); }
 function hardenSession(ses) {
   /* no network for the page; the updater's own requests (main process, GitHub only) are let through by updater.allowsRequest */
   ses.webRequest.onBeforeRequest((d, cb) => cb({ cancel: !/^(file|data|devtools|chrome-extension):/i.test(d.url) && !updater.allowsRequest(d) }));
@@ -259,12 +294,14 @@ function contextMenuTemplate(params, wc) {
 }
 global.__shotrefContextMenu = p => contextMenuTemplate(p, null).map(i => i.type === 'separator' ? '-' : i.label + (i.enabled === false ? ' (off)' : '')); /* for test/desktop.cjs */
 function createWindow(startFile) {
+  const start = startBounds();
   win = new BrowserWindow({
-    width: 1440, height: 900, minWidth: 1100, minHeight: 700, backgroundColor: '#0e0f12', icon: ICON, title: 'ShotRef', show: false,
+    ...start.opts, minWidth: MIN_W, minHeight: MIN_H, backgroundColor: '#0e0f12', icon: ICON, title: 'ShotRef', show: false,
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false },
   });
   const wc = win.webContents;
-  win.once('ready-to-show', () => { win.show(); setTimeout(whatsNewOnLaunch, WHATS_NEW_DELAY_MS); });
+  for (const ev of ['resize', 'move', 'maximize', 'unmaximize']) win.on(ev, rememberWindowSoon);
+  win.once('ready-to-show', () => { if (start.maximized) win.maximize(); /* here, not earlier: maximize() would show the still empty window */ win.show(); setTimeout(whatsNewOnLaunch, WHATS_NEW_DELAY_MS); });
   win.on('page-title-updated', e => e.preventDefault()); /* the page's setTitle decides */
   wc.on('will-navigate', e => e.preventDefault());
   wc.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -275,10 +312,11 @@ function createWindow(startFile) {
     if (tpl.length) Menu.buildFromTemplate(tpl).popup({ window: win });
   });
   win.on('close', e => {
+    clearTimeout(saveWinTimer); rememberWindow(); /* keep the last place even if a quick close follows a move */
     if (closeAllowed || !pageReady || wc.isCrashed()) return; /* a page that never started cannot ask, so do not trap the window */
     e.preventDefault(); send('shotref:menu', 'close-request'); /* the page asks about unsaved work and calls closeOk() */
   });
-  win.on('closed', () => { win = null; pageReady = false; });
+  win.on('closed', () => { clearTimeout(saveWinTimer); win = null; pageReady = false; });
   startFile = startFile || pendingFile; pendingFile = null;
   if (startFile) wc.once('did-finish-load', () => openPath(startFile)); /* the preload queues it until the page listens */
   win.loadFile(PAGE);
@@ -295,6 +333,7 @@ else {
   });
   app.whenReady().then(() => {
     app.setAppUserModelId('app.shotref.desktop');
+    nativeTheme.themeSource = 'dark'; /* a dark title bar and menu whatever Windows is set to: the page is dark */
     loadSettings(); hardenSession(session.defaultSession);
     updater.init({ getWin: () => win, getSettings: () => settings });
     buildMenu();

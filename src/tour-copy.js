@@ -17,6 +17,9 @@ export const TOUR_COPY = {
     body: 'Two short tours show you where everything is. Both are always in the Help menu if you want them later.',
     // while the hands-on tour is switched off (see handsTourOn in main.js)
     bodySolo: "A one-minute tour shows you where everything is. It's always in the Help menu if you want it later.",
+    // the web and claude.ai pages have no Help menu: the tours are in the gear menu
+    bodyWeb: 'Two short tours show you where everything is. Both are always under the gear button, top right, if you want them later.',
+    bodySoloWeb: "A one-minute tour shows you where everything is. It's always under the gear button, top right.",
     quick: 'Take the quick tour',
     hands: 'Try it hands-on',
     notNow: 'Not now',
@@ -48,7 +51,7 @@ export const TOUR_COPY = {
     },
     'b-add': {
       title: 'The Add tab',
-      text: 'People and props wait here, like a prop truck. Click one, then click the floor to place it.',
+      text: 'People and props wait here: click one, then click the floor to place it. In Frame and Export this panel folds away to give the picture room, and its Add and Items buttons bring it back.',
     },
     'b-picture': {
       title: 'The picture',
@@ -72,13 +75,18 @@ export const TOUR_COPY = {
     },
     'b-gear': {
       title: 'Settings and help',
+      titleDesk: 'Settings and Advanced mode',
       text: 'Switch on Advanced mode for more detail, reopen the Quick start page or run these tours again.',
       textSolo: 'Switch on Advanced mode for more detail, reopen the Quick start page or take this tour again.',
+      textDesk: 'Switch on Advanced mode for more detail, or open Settings. The File and Help menus are in the bar at the top of the window.',
     },
     'b-bye': {
       title: 'That is the lot',
       text: 'The hands-on tour has you try each part for real. Both tours are in the Help menu whenever you want them.',
       textSolo: 'You know where everything is now. The tour is in the Help menu whenever you want it again.',
+      // the web and claude.ai pages have no Help menu
+      textWeb: 'The hands-on tour has you try each part for real. Both tours are under the gear button, top right, whenever you want them.',
+      textSoloWeb: 'You know where everything is now. The tour is under the gear button, top right, whenever you want it again.',
     },
   },
 

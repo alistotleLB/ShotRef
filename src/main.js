@@ -25,7 +25,9 @@ import { TOUR_COPY } from './tour-copy.js';
  * sizeWarned                     autosave size warning shown once: warnSize
  * autosaveReady, autosaveWaiting boot has loaded stored assets / a save is waiting for that: boot, writeAutosave
  * inlineTooBig, saveTimer        autosave fallback state and the debounce timer: writeAutosave, autosave, flushAutosave
- * topInit, skyTex                top view framed once: setView; flat sky gradient (fog colour and the backdrop where the dome is hidden): applyEnv
+ * topInit, skyTex                top view framed once: setView, frameEditorView; flat sky gradient (fog colour and the backdrop where the dome is hidden): applyEnv
+ * edFramePending                 frame the editor view on the next drawn frame that shows the editor (boot, replaceProject): frameEditorSoon, frame
+ * starterPicJob                  the Start window's picture run (a newer one stops the old): fillStarterPics (the pictures: the const starterPics)
  *                                (the sky dome, skyDome, is a const: its look follows applyEnv and placeSun, its clock applyAll)
  * camState, pilotActive          shot camera at the playhead: applyAll; user is steering it: fly, camControls, records
  * pathRev                        editRev the walk paths were last drawn at: updatePaths, select
@@ -55,7 +57,12 @@ import { TOUR_COPY } from './tour-copy.js';
  * exRenderer                     offscreen export renderer: getExportRenderer (dropped on context loss)
  * copyBlob                       last copied frame: copyFrame
  * exCancel, exporting            export cancel request and export running: exportVideo, #exCancel
- * modalReturn, cfCb              focus to return to after dialogs: openModal, closeModal; confirm callback: confirmBox
+ * exFrom, exSaved                where a video export started ('panel' or 'options') and the files it saved: exportVideo (shown by exEnd, showExDone)
+ * leftFold, vpDown              the left panel should be folded (null until boot decides): foldForStep (goStep, navView), openLeft, foldLeft;
+ *                                a pointer is down in the 3D view (the fold waits for its release): wire
+ * foldNavs                       how many deliberate navigations decided the fold (a quick tour ended from outside compares it): foldForStep
+ * revealSec                      a panel section to open and scroll to on the next panel build: showPhotoSettings, importPlate (renderProps clears it)
+ * modalReturn, cfCb             focus to return to after dialogs: openModal, closeModal; confirm callback: confirmBox
  */
 
 /* ============================== utilities ============================== */
@@ -113,9 +120,62 @@ function pref(k) {
   return v;
 }
 let toastTimer;
-/* while a dialog is open the toast moves to the top of the window, so the dialog doesn't hide it (U7) */
-function placeToast() { const t = $('#toast'); if (t) t.classList.toggle('top', $$('.modal').some(m => !m.classList.contains('hidden'))); }
-function toast(msg, ms = 2400) { const t = $('#toast'); t.textContent = msg; placeToast(); t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), ms); }
+/* the toast always shows at the top centre (CSS), above dialogs, so it is never hidden by one */
+/* Three kinds of message. 'info' is the quiet default, 'ok' (green tick) says a save, export or copy finished, 'bad' (red edge) says
+   something failed or the user has to act: it stays 8 s or until clicked. Info and ok stay as long as they take to read; a longer ms from the caller wins. */
+function toast(msg, ms, kind = 'info') {
+  const t = $('#toast'), text = String(msg);
+  t.textContent = text; t.className = 'show' + (kind === 'ok' || kind === 'bad' ? ' ' + kind : '');
+  const read = Math.max(2400, 1000 + 60 * text.length);
+  const dur = kind === 'bad' ? Math.max(8000, ms || 0) : Math.max(read, ms || 0);
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), dur);
+}
+/* One tooltip for every button. A button's title is moved to data-tip (and kept as its accessible name), and #tip shows it at once on
+   hover and on keyboard focus: below the button, above it in the bottom 160 px of the window, to the right of the folded strip's buttons,
+   and never past the left or right edge.
+   Inputs, dropdowns and labels keep their native title. */
+let tipFor = null;
+function tipify(el) {
+  if (el.tagName !== 'BUTTON' || !el.hasAttribute('title')) return;
+  const t = el.getAttribute('title'), auto = el.hasAttribute('data-auto-label'); el.removeAttribute('title');
+  if (!t) { /* code cleared the title: the tip and the words made from it go too */
+    el.removeAttribute('data-tip'); el.removeAttribute('aria-description');
+    if (auto) { el.removeAttribute('aria-label'); el.removeAttribute('data-auto-label'); }
+    if (tipFor === el) tipHide();
+    return;
+  }
+  el.setAttribute('data-tip', t);
+  if (el.hasAttribute('aria-label') && !auto) return; /* the author's own label keeps its words */
+  if (el.textContent.trim()) el.setAttribute('aria-description', t);
+  else { el.setAttribute('aria-label', t); el.setAttribute('data-auto-label', ''); }
+}
+function tipifyTree(root) { if (root.nodeType !== 1) return; tipify(root); root.querySelectorAll('button[title]').forEach(tipify); }
+function tipHide() { tipFor = null; const t = $('#tip'); if (t) t.classList.remove('show'); }
+function tipShow(btn) {
+  const text = btn.getAttribute('data-tip'), t = $('#tip'); if (!text) { tipHide(); return; }
+  tipFor = btn; t.textContent = text; t.classList.remove('show');
+  const r = btn.getBoundingClientRect(), w = t.offsetWidth, hh = t.offsetHeight, M = 6;
+  if (btn.closest('#leftStrip')) { /* the folded strip's buttons sit one above the other: the tip goes to the right, so it never covers the next one */
+    t.style.top = Math.max(M, Math.min(r.top + r.height / 2 - hh / 2, window.innerHeight - hh - M)) + 'px';
+    t.style.left = Math.min(r.right + 6, window.innerWidth - w - M) + 'px';
+    t.classList.add('show'); return;
+  }
+  const above = r.bottom > window.innerHeight - 160;
+  t.style.top = Math.max(M, above ? r.top - 6 - hh : r.bottom + 6) + 'px';
+  t.style.left = Math.max(M, Math.min(r.left + r.width / 2 - w / 2, window.innerWidth - w - M)) + 'px';
+  t.classList.add('show');
+}
+const tipTarget = e => { const b = e.target && e.target.closest ? e.target.closest('[data-tip]') : null; return b && b.closest('#app') ? b : null; };
+function wireTips() {
+  const app = $('#app'); tipifyTree(app);
+  new MutationObserver(ms => { for (const m of ms) { if (m.type === 'attributes') tipify(m.target); else m.addedNodes.forEach(tipifyTree); } if (tipFor && !tipFor.isConnected) tipHide(); })
+    .observe(app, { subtree: true, childList: true, attributes: true, attributeFilter: ['title'] });
+  document.addEventListener('mouseover', e => { const b = tipTarget(e); if (b) { if (b !== tipFor) tipShow(b); } else if (tipFor) tipHide(); });
+  document.addEventListener('focusin', e => { const b = tipTarget(e); if (b && b.matches(':focus-visible')) tipShow(b); });
+  for (const ev of ['focusout', 'pointerdown', 'keydown', 'wheel', 'blur']) document.addEventListener(ev, tipHide, true);
+  window.addEventListener('resize', tipHide); document.documentElement.addEventListener('mouseleave', tipHide);
+}
+$('#toast').addEventListener('click', e => { clearTimeout(toastTimer); e.currentTarget.classList.remove('show'); });
 function b64ToBuf(b64) { const bin = atob(b64); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u.buffer; }
 function bufToB64(buf) { const u = new Uint8Array(buf); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); }
 /* text fields only: a focused dropdown, slider, checkbox or colour still lets shortcuts like Space work (U5) */
@@ -124,12 +184,13 @@ const isField = el => !!el && (el.tagName === 'INPUT' || el.tagName === 'SELECT'
 
 /* exports and downloads go through the platform layer (native dialog in the desktop app, downloads capability on claude.ai, plain link elsewhere) */
 const SAVE_KINDS = { png: ['PNG image', ['png']], mp4: ['MP4 video', ['mp4']], webm: ['WebM video', ['webm']], shotref: ['ShotRef project', ['shotref']], zip: ['Zip file', ['zip']] };
-async function saveFile(filename, blob) {
+/* quiet: the caller shows the result itself (the Export window's "Video saved" / "Video not saved"); a cancelled Save still says so */
+async function saveFile(filename, blob, quiet = false) {
   const k = SAVE_KINDS[(filename.split('.').pop() || '').toLowerCase()];
   const r = await platform.saveBlob(filename, blob, { filters: k ? [{ name: k[0], extensions: k[1] }] : [] });
-  if (r.ok) toast('Saved ' + (r.name || filename));
+  if (r.ok) { if (!quiet) toast('Saved ' + (r.name || filename), null, 'ok'); }
   else if (r.canceled) toast('Save cancelled');
-  else toast("Couldn't save the file. Try again.", 4000);
+  else if (!quiet) toast("Couldn't save the file. Try again.", 4000, 'bad');
   return r;
 }
 
@@ -280,7 +341,7 @@ function nextName(label) {
 }
 function makeObject(type, pos, extra = {}) {
   const c = CATALOG[type];
-  return { id: uid(), type, name: nextName(c.label), color: c.color, opts: clone(c.opts || {}), base: { p: pos || [0, 0, 0], r: [0, 0, 0], s: [1, 1, 1] }, keys: [], visible: true, ...extra };
+  return { id: uid(), type, name: nextName(type === 'person' ? BODIES.man.label : c.label), color: c.color, opts: clone(c.opts || {}), base: { p: pos || [0, 0, 0], r: [0, 0, 0], s: [1, 1, 1] }, keys: [], visible: true, ...extra };
 }
 
 /* ---- keyframes & interpolation ---- */
@@ -474,7 +535,9 @@ const EMBED = (() => {
 })();
 const AUTOSAVE_KEY = 'shotref.autosave' + (EMBED && EMBED.key ? '.' + EMBED.key : '');
 const IDB_NAME = EMBED && EMBED.key ? 'shotref-' + EMBED.key : 'shotref';
-const SIZE_WARNING = 'Photos and models are too big to autosave in this browser. Use Save to keep them.';
+/* where ShotRef keeps things, in the user's words: the Windows app is not a browser */
+const whereSaved = () => platform.kind === 'desktop' ? 'on this computer' : 'in this browser';
+const sizeWarning = () => 'Photos and models are too big to autosave ' + whereSaved() + '. Use Save to keep them.';
 const NO_AUTOSAVE = "Autosave isn't available here. Use Save to keep your work.";
 /* true when this page can't use localStorage at all (claude.ai sandbox): autosave is skipped, boot says so once */
 let autosaveOff = false;
@@ -525,7 +588,7 @@ function idbOpen() {
       /* version 2 adds the recent projects next to the photos and models; a version 1 database keeps everything it has */
       rq.onupgradeneeded = () => { try { const d = rq.result; if (!d.objectStoreNames.contains('assets')) d.createObjectStore('assets'); const ps = d.objectStoreNames.contains('projects') ? rq.transaction.objectStore('projects') : d.createObjectStore('projects', { keyPath: 'id' }); if (!ps.indexNames.contains('updated')) ps.createIndex('updated', 'updated'); } catch (e) { } };
       rq.onupgradeneeded = (orig => ev => { longer(); orig(ev); })(rq.onupgradeneeded);
-      rq.onblocked = () => { longer(); toast('Another ShotRef tab is still open. Close it so ShotRef can finish updating its storage. Your work is safe.', 8000); };
+      rq.onblocked = () => { longer(); toast('Another ShotRef tab is still open. Close it so ShotRef can finish updating its storage. Your work is safe.', 8000, 'bad'); };
       rq.onsuccess = () => {
         const db = rq.result;
         if (!db.objectStoreNames.contains('assets') || !db.objectStoreNames.contains('projects')) { try { db.close(); } catch (e) { } finish(null); return; }
@@ -576,7 +639,7 @@ function idbSync(ids) {
   }).then(ok => { if (!ok && ids.length && isQuota(idb.lastErr)) warnSize(); })); /* other failures: console only (C6) */
 }
 let sizeWarned = false;
-function warnSize() { if (autosaveOff) return; if (!sizeWarned) { sizeWarned = true; toast(SIZE_WARNING, 6000); } }
+function warnSize() { if (autosaveOff) return; if (!sizeWarned) { sizeWarned = true; toast(sizeWarning(), 6000, 'bad'); } }
 let autosaveReady = false; /* false until boot has fetched the stored assets: saving earlier would drop them */
 /* writes the localStorage part now; in IndexedDB mode also queues the asset write */
 let autosaveWaiting = false;
@@ -977,7 +1040,7 @@ const BUILD = {
       g.remove(ph); ph.geometry.dispose(); g.add(wrap);
       const v = views.get(o.id); if (v) { v.aimY = (bb2.max.y - bb2.min.y) * 0.6; v.pending = false; if (!groundMigrate.has(o.id)) groundDirty = true; } /* real bounds now: rest it (a new import) */
       editRev++; requestRender();
-    }).catch(err => { console.error(err); toast(err && err.friendly || 'Could not read that model file', 4500); });
+    }).catch(err => { console.error(err); toast(err && err.friendly || 'Could not read that model file', 4500, 'bad'); });
     return res;
   },
 };
@@ -1065,7 +1128,7 @@ function loadModel(id) {
       const saved = window.createImageBitmap;
       try { window.createImageBitmap = undefined; } catch (e) { }
       let skipped = false;
-      try { const ld = new GLTFLoader(); ld.register(p => embeddedTexturePlugin(p, () => { skipped = true; })); ld.parse(buf, '', gl => { if (skipped) toast(TEX_SKIPPED, 5000); res(gl.scene); }, rej); }
+      try { const ld = new GLTFLoader(); ld.register(p => embeddedTexturePlugin(p, () => { skipped = true; })); ld.parse(buf, '', gl => { if (skipped) toast(TEX_SKIPPED, 5000, 'bad'); res(gl.scene); }, rej); }
       catch (e) { rej(e); }
       finally { try { window.createImageBitmap = saved; } catch (e) { } }
     }));
@@ -1113,7 +1176,7 @@ function buildPerson(o) {
   };
   const [lSh, lEl] = arm(1), [rSh, rEl] = arm(-1);
   const [lHip, lKnee, lAnk, lh, lt] = leg(1), [rHip, rKnee, rAnk, rh, rt] = leg(-1);
-  const P = { root, pelvis, spine, neck, head, lSh, lEl, rSh, rEl, lHip, lKnee, lAnk, rHip, rKnee, rAnk, soles: [lh, lt, rh, rt], H };
+  const P = { root, pelvis, spine, torso: tor, neck, head, lSh, lEl, rSh, rEl, lHip, lKnee, lAnk, rHip, rKnee, rAnk, soles: [lh, lt, rh, rt], H };
   return { root, person: P, aimY: 0.82 * H };
 }
 
@@ -1292,7 +1355,7 @@ function buildVisual(o) {
   if (res.aimY == null) { res.root.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(res.root); res.aimY = isFinite(bb.max.y) ? (bb.min.y + bb.max.y) / 2 : 0.5; }
   return res;
 }
-function syncScene() {
+function syncScene(prune = true) {
   const ids = new Set(state.objects.map(o => o.id));
   for (const [id, v] of views) if (!ids.has(id)) { scene.remove(v.group); disposeTree(v.group); views.delete(id); }
   for (const o of state.objects) {
@@ -1306,7 +1369,7 @@ function syncScene() {
     }
     v.group.visible = o.visible !== false;
   }
-  pruneModelCache();
+  if (prune) pruneModelCache();
 }
 
 /* ============================== animation apply ============================== */
@@ -1557,7 +1620,7 @@ function selBarButtons(list) {
       if (isSeated(o)) out.push(btn('stand', 'Stand up', () => standPerson(o)));
       else if (anySeat(o)) out.push(btn('sit', 'Sit on the nearest seat', () => {
         const q = getObj(o.id), s = q && nearestSeatFor(q); /* by id: undo replaces the objects a button was built with */
-        if (s) sitPerson(q, freeSeat(s.o, q)); else toast('No seat within ' + SIT_REACH + ' m of ' + o.name + '. Move them closer, or right-click a seat and choose Sit here.', 4000);
+        if (s) sitPerson(q, freeSeat(s.o, q)); else toast('No seat within ' + SIT_REACH + ' m of ' + o.name + '. Move them closer, or right-click a seat and choose Sit here.', 4000, 'bad');
       }));
     }
     else if (o.type !== 'mark') out.push(btn('path', o.type === 'car' ? 'Draw drive path' : 'Draw path', () => startPath(o.id)), btn('target', 'Aim camera at this', () => keepCameraOn(o)));
@@ -1753,7 +1816,7 @@ function ensurePlate() {
     plateTex = tex; plateURL = url; plateKey = key; plateBusy = null;
     $$('.plateImg').forEach(i => { i.src = url; });
     requestRender();
-  }).catch(() => { plateBusy = null; plateKey = key; requestRender(); toast('Could not read the location photo'); });
+  }).catch(() => { plateBusy = null; plateKey = key; requestRender(); toast('Could not read the location photo', null, 'bad'); });
 }
 function plateActive(style) {
   const pl = state.plate;
@@ -1881,6 +1944,7 @@ function frame(now) {
   const dt = Math.min(0.1, (now - lastNow) / 1000); lastNow = now;
   if (exporting) { wasExporting = true; peekHide(); return; } // the export owns the scene and the renderers until it finishes
   if (wasExporting) { wasExporting = false; needsRender = true; }
+  syncFold(); /* before the draw: a fold or unfold re-sizes the 3D view in this same frame */
   if (tourActive()) tourTick();
   if (rec && rec.phase === 'count') { const left = Math.ceil((rec.until - now) / 1000); $('#countdown').textContent = left > 0 ? left : ''; if (now >= rec.until) { rec.phase = 'rec'; setTime(0, false); setPlaying(true); $('#countdown').textContent = ''; recSample(); showModeBar('● Recording. Steer the camera until the shot ends.', [['Cancel', cancelRecord]]); } }
   if (playing) {
@@ -1901,6 +1965,7 @@ function frame(now) {
     if ((groundDirty || groundMigrate.size) && !dragActive && !placing && !pathMode && !playing && !gizmo.dragging && !rec) { migrateGround(); if (groundDirty) settleGround(); } /* things come to rest on what is under them once the edit is over */
     if (rec && rec.phase === 'rec') recSample();
     updateHelpers(); updateSelBar();
+    if (edFramePending && vpEl.clientWidth > 0 && vpEl.clientHeight > 0 && viewRects(vpEl.clientWidth, vpEl.clientHeight).work) { edFramePending = false; frameEditorView(); updateHelpers(); } /* a scene just swapped in or restored; waits for a frame that shows the editor, so the panel's fold has settled */
     renderer.shadowMap.needsUpdate = true;
     draw();
   }
@@ -2054,7 +2119,7 @@ function peekCamFrame(s, t, rt) {
     withShotStyle(state.settings.style, () => rd.render(scene, renderCam)); /* no depth of field in the preview */
   } finally { applyAll(T); prepRenderCam(T); placeSun(); }
 }
-const FEELS = [['constant', 'Constant'], ['gentle', 'Gentle ease'], ['strong', 'Strong ease']];
+const FEELS = [['constant', 'Constant'], ['gentle', 'Gentle'], ['strong', 'Strong']];
 const PEEK_SRC = {
   /* arg: a MOVES kind. The move planned from the current framing, or from PEEK_FROM on the example when nothing would be in frame */
   move: {
@@ -2276,6 +2341,30 @@ function setLeftTab(t, save = true) {
   $('#addArea').style.display = t === 'add' ? '' : 'none'; $('#outliner').style.display = t === 'scene' ? '' : 'none';
   $$('#leftTabs button').forEach(b => { const on = b.dataset.lt === t; b.classList.toggle('on', on); b.setAttribute('aria-selected', String(on)); });
 }
+/* The left panel folds to a 44 px strip (#app.lfold) so the picture gets the width in step 2 Frame and step 3 Export.
+   A selection never folds or opens it. It is decided only when the user navigates on purpose (foldForStep, called by goStep: the step pills
+   and keys 1/2/3, and by navView: the View buttons, keys C and T, Look through camera / Back to editor): folded if the step right after is
+   Frame or Export, open if it is Build. Split view on or off does not decide it. The strip's Add and Items buttons and « work at any time; that
+   choice holds until the next such navigation. Boot: open, unless the app starts in the camera view.
+   The fold never changes while a pointer is down in the 3D view or a drag runs (vpDown, dragActive, the gizmo): it waits for the release.
+   syncFold() applies leftFold at the top of frame(), before the draw, so the 3D view re-fits in the same frame. */
+let leftFold = null, vpDown = false;
+function syncFold() {
+  const app = $('#app');
+  if (leftFold === null) leftFold = view === 'camera';
+  putStyle($('#bFold'), 'display', currentStep() === 'build' && !leftFold ? 'none' : '');
+  if (app.classList.contains('lfold') === leftFold || vpDown || dragActive || gizmo.dragging) return;
+  const had = document.activeElement, inLeft = had && had !== document.body && $('#left').contains(had);
+  app.classList.toggle('lfold', leftFold); requestRender();
+  if (inLeft && !had.getClientRects().length) (leftFold ? $('#stripAdd') : $('#leftTabs .on') || $('#leftTabs button')).focus(); /* keyboard focus never falls out of the panel */
+}
+let foldNavs = 0; /* counts those deliberate navigations (a tour that ends because of another action checks whether that action navigated) */
+const foldForStep = () => { foldNavs++; leftFold = currentStep() !== 'build'; syncFold(); };
+/* a deliberate view change (View buttons, C, T, Look through camera, Back to editor) */
+function navView(v) { setView(v); foldForStep(); }
+/* the strip's two buttons and « */
+function openLeft(tab) { leftFold = false; if (tab) setLeftTab(tab); syncFold(); }
+function foldLeft() { leftFold = true; syncFold(); }
 function buildAddPanel() {
   const area = $('#addArea'); area.innerHTML = '';
   const cats = { People: [], Shapes: [], Props: [], Import: [], Blocking: [] };
@@ -2321,7 +2410,7 @@ function renderOutliner() {
     o && parentOf(o) ? h('span', { class: 'ptag', title: 'Rides with ' + parentOf(o).name }, '↳ ' + parentOf(o).name) : null,
     nk ? h('span', { class: 'kd', title: nk + (nk === 1 ? ' key' : ' keys') }, '◆' + nk) : null,
     o ? h('button', { class: 'eye lockb' + (o.locked ? ' on' : ''), title: o.locked ? 'Locked: click to unlock' : 'Lock (stops it being moved by accident)', 'aria-label': o.locked ? 'Unlock ' + name : 'Lock ' + name, html: svgI(o.locked ? 'lock' : 'unlock'), onclick: e => { e.stopPropagation(); lockObjs([o], !o.locked); } }) : null,
-    onEye ? h('button', { class: 'eye', title: hidden ? 'Show' : 'Hide', onclick: e => { e.stopPropagation(); onEye(); } }, hidden ? '◌' : '●') : null);
+    onEye ? h('button', { class: 'eye', title: hidden ? 'Show' : 'Hide', 'aria-label': (hidden ? 'Show ' : 'Hide ') + name, html: '<svg viewBox="0 0 24 24">' + IC.eye + (hidden ? '<path d="M4 4l16 16"/>' : '') + '</svg>', onclick: e => { e.stopPropagation(); onEye(); } }) : null);
   el.append(row('camera', svgI('camera'), 'Shot camera', state.camera.keys.length));
   el.append(row('sun', svgI('sun'), 'Sun', 0));
   if (state.objects.length) el.append(h('div', { class: 'olsep' }));
@@ -2398,7 +2487,7 @@ function lockObjs(list, on) {
 }
 const isGroupSel = list => list.length > 1 && list.every(o => o.grp) && new Set(list.map(o => o.grp)).size === 1 && state.objects.filter(x => x.grp === list[0].grp).length === list.length;
 function groupSel() {
-  const list = selObjs(); if (list.length < 2) { toast('Select two or more things to group them'); return; }
+  const list = selObjs(); if (list.length < 2) { toast('Select two or more things to group them', null, 'bad'); return; }
   state.groups = state.groups || {};
   let n = 1; const names = new Set(Object.values(state.groups).map(g => g.name)); while (names.has('Group ' + n)) n++;
   const gid = 'g' + uid(); state.groups[gid] = { name: 'Group ' + n };
@@ -2494,6 +2583,8 @@ function keySection(kind) {
 /* the right panel's sections: explanatory notes fold into a "?" on the heading, and clicking a heading folds the section (remembered per heading in prefs.closedSecs) */
 /* rare sections start folded; opening one is remembered (false) and wins over this default */
 const SECS_FOLDED = ['Animation', 'Attach', 'Save as set', 'Mount'];
+/* things that do not move by themselves: their "Move & face" section starts folded unless they already have a move (sec.dataset.fold) */
+const STILL_TYPES = ['tree', 'building', 'house', 'rock', 'wall', 'stairs', 'plane', 'lamp', 'cactus'];
 function decorateSections(root) {
   const closed = getPref('closedSecs', {}) || {};
   for (const sc of root.querySelectorAll('.sec')) {
@@ -2509,10 +2600,11 @@ function decorateSections(root) {
     if (!name) continue;
     /* the first heading is a title, not a toggle: it never folds, and a stale folded entry for it is dropped */
     if (sc === root.querySelector(':scope > .sec')) { if (closed[name]) { const now = { ...closed }; delete now[name]; setPref('closedSecs', now); } continue; }
-    if (closed[name] || (!(name in closed) && SECS_FOLDED.includes(name) && !sc.dataset.inuse)) sc.classList.add('closed');
+    if (closed[name] || (!(name in closed) && (SECS_FOLDED.includes(name) || sc.dataset.fold) && !sc.dataset.inuse)) sc.classList.add('closed');
     hd.addEventListener('click', () => {
       const on = sc.classList.toggle('closed'), now = { ...(getPref('closedSecs', {}) || {}) };
-      if (on) now[name] = true; else if (SECS_FOLDED.includes(name)) now[name] = false; else delete now[name];
+      if (on) now[name] = true; else if (SECS_FOLDED.includes(name) || sc.dataset.fold || name === 'Move & face') now[name] = false; /* unfolded on purpose is remembered, even on a person (the same name starts folded on a tree) */
+      else if (now[name] !== false) delete now[name]; /* "Move & face" is shared by people and still things: a stored "opened" stays */
       setPref('closedSecs', now);
     });
   }
@@ -2521,6 +2613,11 @@ function renderProps() {
   peekHide();
   renderPropsInner();
   decorateSections($('#props'));
+  if (revealSec) { /* open one section and bring it into view (the Location photo button above the picture) */
+    const name = revealSec, sc = [...$$('#props .sec')].find(x => { const hd = x.querySelector(':scope > h3'); return hd && hd.firstChild && hd.firstChild.textContent.trim() === name; });
+    if (sc) { revealSec = null; sc.classList.remove('closed'); sc.scrollIntoView({ block: 'start' }); }
+    else if (selected === 'camera') revealSec = null;
+  }
 }
 function renderPropsInner() {
   live.length = 0;
@@ -2538,6 +2635,13 @@ function renderPropsInner() {
 function propsScene(p) {
   const s = state.settings;
   const set = (k, v, c = true) => { s[k] = v; applyEnv(); changed(c); };
+  /* an empty stage leads with what to do first */
+  if (!state.objects.length) p.append(sec('Getting started', h('ol', { class: 'steps', style: 'font-size:12px;margin:0' },
+    h('li', null, 'Add people and props from the left: click a tile, then click where it goes, or drag the tile onto the view.'),
+    h('li', null, 'Drag them on the floor, turn them with the orange ring, draw walk paths.'),
+    h('li', null, 'Frame the shot: Set start, reframe, Set end. Or use a shot size or move.'),
+    h('li', null, 'Export the video or frames.')),
+    h('button', { style: 'margin-top:8px', onclick: () => openModal('mHelp') }, 'Quick start and shortcuts')));
   p.append(sec('Scene', h('p', { class: 'note', style: 'margin:0 0 8px' }, 'Nothing selected. Click an object, or click Shot camera in the list or the timeline.'),
     tileRow(Object.entries(ENV).map(([k, e]) => ({ key: 'env:' + k, label: e.label, title: e.label + ': sky and light', on: s.env === k, pick: () => pickEnv(k) })))));
   p.append(skySection(!simple));
@@ -2548,12 +2652,6 @@ function propsScene(p) {
       h('p', { class: 'note' }, 'Sky colours and fog are in Advanced mode (gear menu, top right).')));
   }
   p.append(sunSection(!simple));
-  if (!state.objects.length) p.append(sec('Getting started', h('ol', { class: 'steps', style: 'font-size:12px;margin:0' },
-    h('li', null, 'Add people and props from the left: click a tile, then click where it goes, or drag the tile onto the view.'),
-    h('li', null, 'Drag them on the floor, turn them with the orange ring, draw walk paths.'),
-    h('li', null, 'Frame the shot: Set start, reframe, Set end. Or use a shot size or move.'),
-    h('li', null, 'Export the video or frames.')),
-    h('button', { style: 'margin-top:8px', onclick: () => openModal('mHelp') }, 'Quick start and shortcuts')));
 }
 /* ---- shot description and move detection (the camera view's top line, the Camera move card) ---- */
 /* "Medium shot · 50 mm · eye level": the size is worked out from the person nearest the middle of the frame */
@@ -2609,7 +2707,7 @@ function detectMove() {
       if (!parts.length) parts.push('Subtle move');
     }
   }
-  const feel = { constant: 'constant speed', gentle: 'gentle ease', strong: 'strong ease' }[c.feel || 'gentle'];
+  const feel = (FEELS.find(f => f[0] === (c.feel || 'gentle')) || FEELS[1])[1].toLowerCase(); /* the Feel buttons' own words */
   return { title: parts.slice(0, 3).join(' + '), sub: `${state.settings.duration.toFixed(1)} s · ${feel} · ${c.keys.length} key${c.keys.length === 1 ? '' : 's'}` };
 }
 /* the Start and End frames as small JPEG data: URLs (no blob: URLs: the claude.ai sandbox forbids them), cached until the scene or frame changes */
@@ -2627,16 +2725,19 @@ function camThumbs() {
 }
 function moveCard() {
   const ends = camEnds(), mv = detectMove(), th = camThumbs(), keyed = state.camera.keys.length > 0;
+  const barUp = view === 'camera' || splitOn(); /* Set start / Set end live above the picture (#camBar); the card has its own pair only while no pane shows the camera */
   const thumb = (label, src, on, t) => h('button', { class: 'mthumb' + (on ? ' ok' : ''), title: 'Go to the ' + label.toLowerCase() + ' frame', onclick: () => setTime(t) },
     src ? h('img', { src, alt: label + ' frame' }) : h('div', { class: 'noimg' }), h('span', null, (on ? '✓ ' : '') + label));
   return sec('Camera move', h('div', { class: 'movecard' },
     h('div', { class: 'mc-title' }, mv.title), h('div', { class: 'mc-sub' }, mv.sub),
     h('div', { class: 'mc-thumbs' }, thumb('Start', th.s, ends.s, 0), h('span', { class: 'mc-arrow' }, '→'), thumb('End', th.e, ends.e, lastT())),
-    h('div', { class: 'btns big2' },
+    barUp ? null : h('div', { class: 'btns big2' },
       h('button', { class: ends.s ? 'on' : '', onclick: () => setShotEnd('start'), title: 'Save what the camera sees now as the first frame' }, 'Set start'),
       h('button', { class: ends.e ? 'on' : '', onclick: () => setShotEnd('end'), title: 'Save what the camera sees now as the last frame' }, 'Set end')),
     keyed ? h('div', { class: 'btns' }, h('button', { onclick: () => { setTime(0); setPlaying(true); } }, '▶ Play'), h('button', { onclick: makeCameraStatic }, 'Clear move')) : null,
-    h('p', { class: 'note' }, ends.s && ends.e ? 'Reframe at either end and press Set start or Set end again to change it.' : 'Frame the opening shot → Set start. Frame the closing shot → Set end.')));
+    h('p', { class: 'note' }, barUp
+      ? (ends.s && ends.e ? 'Reframe at either end and press Set start or Set end above the picture again to change it.' : 'Frame the opening shot, then press Set start above the picture. Frame the closing shot, then press Set end.')
+      : (ends.s && ends.e ? 'Reframe at either end and press Set start or Set end again to change it.' : 'Frame the opening shot → Set start. Frame the closing shot → Set end.'))));
 }
 
 /* "Sky": how cloudy it is, what the clouds look like and how they drift. Advanced adds exact amounts and the sky, ground and fog colours */
@@ -2653,7 +2754,7 @@ function skySection(adv) {
     return svg; };
   return sec('Sky',
     h('div', { class: 'lbl', style: 'width:auto;margin:2px 0 6px' }, 'Clouds'),
-    h('div', { class: 'pictiles skytiles' }, COVER.map(e => h('button', { class: nearest === e[0] ? 'on' : '', title: e[2], 'aria-label': e[2], onclick: () => setC({ cover: e[1] }) }, h('i', { class: 'csw tpic ' + e[0] }), h('span', null, e[0] === 'mostly' ? 'Cloudy' : e[2])))),
+    h('div', { class: 'pictiles skytiles' }, COVER.map(e => { const lab = e[0] === 'mostly' ? 'Cloudy' : e[0] === 'overcast' ? 'Full cover' : e[2]; return h('button', { class: nearest === e[0] ? 'on' : '', title: lab, 'aria-label': lab, onclick: () => setC({ cover: e[1] }) }, h('i', { class: 'csw tpic ' + e[0] }), h('span', null, lab)); })),
     cover ? h('hr', { class: 'div', style: 'margin:0 0 8px' }) : null,
     cover ? seg('Look', LOOKS, cl().look, k => setC({ look: k })) : null,
     cover ? seg('Drift', DRIFTS, cl().drift, k => setC({ drift: k })) : null,
@@ -2689,7 +2790,7 @@ function sunSection(adv) {
     adv ? slider('Shadow depth', () => clamp(1 - (s.ambInt - 0.2) / 2.3, 0, 1), (v, c) => set('ambInt', r4(0.2 + (1 - v) * 2.3), c), { min: 0, max: 1, step: 0.01, fmt: v => v < 0.35 ? 'light' : v < 0.7 ? 'normal' : 'deep' }) : null,
     adv ? slider('Sun strength', () => s.sunInt, (v, c) => set('sunInt', v, c), { min: 0, max: 5, step: 0.05 }) : null,
     adv ? colorRow('Sun colour', () => s.sunColor, (v, c) => set('sunColor', v, c)) : null,
-    adv ? null : h('div', { class: 'note keep', style: 'opacity:.7' }, 'Strength, softness and shadow depth: Advanced'),
+    adv ? null : h('div', { class: 'note keep' }, 'Strength, softness and shadow depth: Advanced'),
     h('p', { class: 'note' }, 'Tip: drag the yellow sun in the editor or top view and watch the shadows move. Shadows follow the area the camera is looking at.'));
 }
 /* the panel for the Sun row (and the sun in the 3D view) */
@@ -2699,17 +2800,20 @@ function propsSun(p) {
   p.append(sunSection(!simple));
   p.append(h('div', { class: 'btns', style: 'margin:2px 0 8px' }, h('button', { 'data-role': 'to-scene', title: 'Environment presets, sky colours and clouds', onclick: () => { if (view === 'camera') setView(lastWorkView); select(null); } }, 'Sky and clouds: Scene panel')));
 }
-/* ---- the camera panel: Shot | Move | Lens | Photo | Output ---- */
-const CAM_TABS = [['shot', 'Shot'], ['move', 'Move'], ['lens', 'Lens'], ['photo', 'Photo'], ['output', 'Output']];
+/* ---- the camera panel: Shot | Move | Lens ----
+   One home per control: Aspect and the guides are above the picture in the camera view (#bAspect, #bGuides); Size and Render style are in the
+   Export panel (behind Change); the location photo is on the Shot tab. A remembered tab from older builds (Photo, Output) opens Shot. */
+const CAM_TABS = [['shot', 'Shot'], ['move', 'Move'], ['lens', 'Lens']];
+const GUIDES = [['thirds', 'Rule of thirds'], ['center', 'Centre cross'], ['safe', 'Safe areas'], ['none', 'None']];
 function propsCamera(p) {
-  const c = state.camera, s = state.settings, dof = ensureDof();
+  const c = state.camera, dof = ensureDof();
   p.append(sec('Shot camera',
     h('div', { class: 'btns' },
-      h('button', { class: view === 'camera' ? 'quiet' : '', onclick: () => setView(view === 'camera' ? 'editor' : 'camera') }, view === 'camera' ? 'Back to editor' : 'Look through camera'),
+      h('button', { class: view === 'camera' ? 'quiet' : '', onclick: () => navView(view === 'camera' ? 'editor' : 'camera') }, view === 'camera' ? 'Back to editor' : 'Look through camera'),
       view === 'editor' ? h('button', { onclick: camToEditorView, title: 'Place the camera where the editor view is' }, 'Camera to editor view') : null),
   ));
-  const tab = CAM_TABS.some(t => t[0] === getPref('camTab')) ? getPref('camTab') : 'move';
-  const inUse = { photo: !!state.plate, move: c.keys.length > 0, lens: !!dof.on };
+  const saved = getPref('camTab'), tab = saved === 'photo' || saved === 'output' ? 'shot' : CAM_TABS.some(t => t[0] === saved) ? saved : 'move';
+  const inUse = { shot: !!state.plate, move: c.keys.length > 0, lens: !!dof.on };
   p.append(h('div', { class: 'tabs', role: 'tablist' }, CAM_TABS.map(([k, l]) =>
     h('button', { role: 'tab', 'aria-selected': String(tab === k), class: tab === k ? 'on' : '', onclick: () => { setPref('camTab', k); propsDirty = true; } }, l, inUse[k] ? h('i', { class: 'tdot' }) : null))));
   if (tab === 'shot') {
@@ -2726,11 +2830,17 @@ function propsCamera(p) {
       selectRow('Look at', subjOpts, () => c.lookAtId || '', v => { if (v && !c.lookAtId) { c.base.tg = evalCam(T).tg; } c.lookAtId = v || null; if (!v) c.follow = false; updateGizmo(); changed(true, true); }),
       c.lookAtId ? check('Follow subject', () => c.follow, v => { const cur = evalCam(T).p; c.follow = v; writeCam({ p: cur }, true); propsDirty = true; }, 'The camera travels with the subject') : null,
       h('p', { class: 'note' }, c.lookAtId ? 'The camera keeps aiming at the subject while it moves.' : 'Pick a person or object to keep it centred automatically.')));
+    const psec = plateSection(); /* folded until a photo is loaded */
+    psec.dataset.fold = '1'; if (state.plate) psec.dataset.inuse = '1';
+    p.append(psec);
     const mountSel = selectRow('Mount on', [['', 'None'], ...state.objects.filter(o => o.type !== 'mark').map(o => [o.id, o.name])], () => c.mount || '', v => mountCamera(v || null));
     mountSel.querySelector('select').dataset.role = 'mount';
     const msec = sec('Mount', mountSel, h('p', { class: 'note' }, 'The camera rides with it, like a car mount or a camera on a moving cart. Your camera moves still work on top.'));
     if (c.mount) msec.dataset.inuse = '1';
     p.append(msec);
+    if (!simple) p.append(sec('Placement',
+      vecRow('Position', () => camState.p, (v, cm) => writeCam({ p: v }, cm), { step: 0.02 }),
+      c.lookAtId ? null : vecRow('Aims at', () => camState.tg, (v, cm) => writeCam({ tg: v }, cm), { step: 0.02 })));
   } else if (tab === 'move') {
     p.append(moveCard());
     const mg = h('div', { class: 'movegrid' }, MOVES.map(([k, ic, l]) => {
@@ -2770,18 +2880,18 @@ function propsCamera(p) {
           ? 'Focus stays on the aim point or subject, even while it moves.'
           : 'Set keys on the distance to rack focus between subjects.'),
         h('p', { class: 'note' }, 'Lower f-numbers and longer lenses give more blur. Not used in the Depth and Normals styles.')) : h('p', { class: 'note' }, 'Simulates a real lens: focal length, f-stop and focus distance.')));
-  } else if (tab === 'photo') {
-    p.append(plateSection());
-  } else {
-    p.append(sec('Frame',
-      selectRow('Aspect', ASPECTS.map(a => [a[0], a[2]]), () => s.aspect, v => { s.aspect = v; changed(true, true); syncTopUI(); }),
-      selectRow('Size', SIZES, () => String(s.size), v => { s.size = +v; changed(true); }),
-      selectRow('Guides', [['thirds', 'Rule of thirds'], ['center', 'Centre cross'], ['safe', 'Safe areas'], ['none', 'None']], () => s.guides, v => { s.guides = v; drawGuides(); changed(true); }),
-      selectRow('View style', STYLES.map(x => [x[0], x[1]]), () => s.style, v => { s.style = v; changed(true); syncTopUI(); })));
-    if (!simple) p.append(sec('Placement',
-      vecRow('Position', () => camState.p, (v, cm) => writeCam({ p: v }, cm), { step: 0.02 }),
-      c.lookAtId ? null : vecRow('Aims at', () => camState.tg, (v, cm) => writeCam({ tg: v }, cm), { step: 0.02 })));
   }
+}
+/* the camera view's aspect chip and guides button (#camTools): each opens a menu, the current choice ticked */
+const setAspect = v => { state.settings.aspect = v; changed(true, true); syncTopUI(); };
+const aspectMenuItems = () => [{ head: 'Aspect' }, ...ASPECTS.map(a => ({ id: 'aspect-' + a[0], label: a[2], check: state.settings.aspect === a[0], fn: () => setAspect(a[0]) }))];
+const guidesMenuItems = () => [{ head: 'Guides' }, ...GUIDES.map(([k, l]) => ({ id: 'guides-' + k, label: l, check: state.settings.guides === k, fn: () => { state.settings.guides = k; drawGuides(); changed(true); } }))];
+/* "Location photo" above the picture, once a photo is loaded: the Shot tab, opened at the photo's section */
+let revealSec = null;
+function showPhotoSettings() {
+  setPref('camTab', 'shot'); revealSec = 'Location photo';
+  if (selected !== 'camera') select('camera');
+  propsDirty = true; requestRender();
 }
 function shotGrid(pid) { return h('div', { class: 'posegrid' }, SHOTS.map(([k, l]) => peekHover(h('button', { onclick: () => frameShot(k, pid()) }, l), 'shot', k))); }
 function feelSeg() {
@@ -2805,7 +2915,7 @@ function propsMulti(p) {
   const allLocked = list.every(o => o.locked), people = list.filter(o => o.type === 'person');
   p.append(sec('Arrange',
     h('div', { class: 'btns' },
-      whole ? h('button', { onclick: ungroupSel }, 'Ungroup') : h('button', { class: 'primary', onclick: groupSel, title: 'Keep these together: clicking one selects them all (Ctrl+G)' }, 'Group'),
+      whole ? h('button', { onclick: ungroupSel }, 'Ungroup') : h('button', { onclick: groupSel, title: 'Keep these together: clicking one selects them all (Ctrl+G)' }, 'Group'),
       h('button', { onclick: () => lockObjs(list, !allLocked), title: 'Ctrl+L' }, allLocked ? 'Unlock' : 'Lock')),
     h('div', { class: 'btns' },
       h('button', { onclick: dropToFloor }, 'Drop to floor'),
@@ -2857,7 +2967,7 @@ function propsObject(p, o) {
   // ---- movement
   const who = o.type === 'person' ? 'walk ' : '';
   const moveKids = [
-    h('div', { class: 'btns' }, h('button', { class: 'primary', onclick: () => startPath(o.id), title: 'Click points on the floor; ' + (o.type === 'person' ? 'they walk' : 'it moves') + ' through them' }, h('span', { html: svgI('path'), class: 'bi' }), 'Draw ' + who + 'path')),
+    h('div', { class: 'btns' }, h('button', { class: o.type === 'person' ? 'primary' : '', onclick: () => startPath(o.id), title: 'Click points on the floor; ' + (o.type === 'person' ? 'they walk' : 'it moves') + ' through them' }, h('span', { html: svgI('path'), class: 'bi' }), 'Draw ' + who + 'path')),
     slider('Speed', () => pathSpeedOf(o), (v, cm) => { o.opts.pathSpeed = v; changed(cm); }, { min: 0.3, max: o.type === 'car' ? 30 : 8, step: 0.1, fmt: v => v.toFixed(1) + ' m/s' }),
     check('Fit path to shot length', () => pathFit, v => { pathFit = v; }, 'Ignore the speed: arrive exactly on the last frame'),
     h('p', { class: 'note' }, 'Starts at the playhead (' + snapT(T).toFixed(2) + ' s). Walking ≈ ' + pref('walkSpeed') + ' m/s, jogging ≈ 3 m/s.'),
@@ -2878,6 +2988,7 @@ function propsObject(p, o) {
   if (o.type === 'car') moveKids.push(h('p', { class: 'note' }, 'Wheels roll with the distance driven and the front wheels steer into the curves.'));
   if (o.type === 'person') moveKids.push(h('div', { class: 'btns' }, h('button', { 'data-role': 'frame-cam', title: 'Opens the shot camera, ready to frame ' + o.name, onclick: () => frameWithCamera(o) }, 'Frame with camera…')));
   const moveSec = sec('Move & face', ...moveKids), staticProp = o.type !== 'person' && o.type !== 'car';
+  if (STILL_TYPES.includes(o.type)) { moveSec.dataset.fold = '1'; if (o.keys.length) moveSec.dataset.inuse = '1'; }
   if (!staticProp) p.append(moveSec);
   if (o.type === 'person') {
     const targets = [...state.objects.filter(x => x !== o && x.type === 'person'), ...state.objects.filter(x => x !== o && x.type !== 'person' && x.type !== 'mark')];
@@ -3055,7 +3166,7 @@ function selKeysTarget() {
 }
 function addKeySel() {
   const id = selKeysTarget();
-  if (!id) { toast('Select something first (or switch to Camera view to key the camera)'); return; }
+  if (!id) { toast('Select something first (or switch to Camera view to key the camera)', null, 'bad'); return; }
   if (id === 'camera') { const cur = clone(evalCamRaw(T)); setKey(state.camera.keys, T, cur); }
   else { const o = getObj(id); setKey(o.keys, T, clone(evalLocal(o, T))); } /* keys are stored relative to the parent */
   changed(true, true); toast('◆ Key added at ' + fmtTime(snapT(T)));
@@ -3073,7 +3184,7 @@ function removeKeySel() {
   const id = selKeysTarget(); if (!id) return;
   const keys = id === 'camera' ? state.camera.keys : getObj(id).keys;
   const i = keyIndexAt(keys, T);
-  if (i < 0) { toast('No key at the playhead'); return; }
+  if (i < 0) { toast('No key at the playhead', null, 'bad'); return; }
   removeKey(id, i);
 }
 function jumpKey(dir) {
@@ -3084,9 +3195,11 @@ function jumpKey(dir) {
   times = [...new Set(times)].sort((a, b) => a - b);
   const eps = 0.5 / state.settings.fps;
   const t = dir > 0 ? times.find(x => x > T + eps) : [...times].reverse().find(x => x < T - eps);
-  if (t != null) setTime(t); else toast(dir > 0 ? 'No later key' : 'No earlier key');
+  if (t != null) setTime(t); else toast(dir > 0 ? 'No later key' : 'No earlier key', null, 'bad');
 }
-function setPlaying(v) { playing = v; $('#bPlay').textContent = v ? '❚❚' : '▶'; $('#bPlay').classList.toggle('on', v); if (!v) propsDirty = true; }
+const PLAY_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path class="fl" d="M7 4.5l12 7.5-12 7.5z"/></svg>';
+const PAUSE_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 5v14M15.5 5v14"/></svg>';
+function setPlaying(v) { playing = v; $('#bPlay').innerHTML = v ? PAUSE_SVG : PLAY_SVG; $('#bPlay').classList.toggle('on', v); if (!v) propsDirty = true; }
 
 const labelEls = new Map();
 function updateLabels() {
@@ -3094,17 +3207,29 @@ function updateLabels() {
   if (view === 'camera' || !pref('showLabels')) { box.style.display = 'none'; return; }
   box.style.display = 'block';
   const cam = view === 'top' ? topCam : edCam, wr = viewRects(vpEl.clientWidth, vpEl.clientHeight).work, w = wr ? wr.w : vpEl.clientWidth, hh = vpEl.clientHeight, seen = new Set();
+  const todo = [];
   for (const o of state.objects) {
     if (o.type !== 'person') continue;
     const v = views.get(o.id); if (!v || !v.group.visible) continue;
     seen.add(o.id);
     let el = labelEls.get(o.id); if (!el) { el = h('div', { class: 'lbl3d' }); box.append(el); labelEls.set(o.id, el); }
-    if (el.textContent !== o.name) el.textContent = o.name;
+    if (el.textContent !== o.name) { el.textContent = o.name; el._w = 0; }
     const H = (o.opts.height || 1.75) * v.group.scale.y;
     const pt = new THREE.Vector3(v.group.position.x, v.group.position.y + H + 0.16, v.group.position.z).project(cam);
-    el.style.display = pt.z < 1 && pt.z > -1 ? 'block' : 'none';
-    el.style.transform = `translate(${((pt.x * 0.5 + 0.5) * w).toFixed(1)}px, ${((-pt.y * 0.5 + 0.5) * hh).toFixed(1)}px) translate(-50%,-100%)`;
-    el.classList.toggle('sel', selected === o.id);
+    const vis = pt.z < 1 && pt.z > -1;
+    putStyle(el, 'display', vis ? 'block' : 'none');
+    if (el.classList.contains('sel') !== (selected === o.id)) { el.classList.toggle('sel', selected === o.id); el._w = 0; } /* the selected label is bolder, so wider */
+    if (vis) todo.push({ el, x: (pt.x * 0.5 + 0.5) * w, y: (-pt.y * 0.5 + 0.5) * hh, sel: selected === o.id });
+  }
+  /* two names that would overlap: the later one moves up by its own height + 2 px (at most 6 steps); the selected one stays put (F17) */
+  const placed = [];
+  todo.sort((a, b) => (b.sel ? 1 : 0) - (a.sel ? 1 : 0));
+  for (const t of todo) {
+    if (!t.el._w) { t.el._w = t.el.offsetWidth; t.el._h = t.el.offsetHeight; }
+    const lw = t.el._w, lh = t.el._h; let y = t.y;
+    for (let n = 0; n < 6 && placed.some(r => t.x - lw / 2 < r.x1 && t.x + lw / 2 > r.x0 && y - lh < r.y1 && y > r.y0); n++) y -= lh + 2;
+    placed.push({ x0: t.x - lw / 2, x1: t.x + lw / 2, y0: y - lh, y1: y });
+    t.el.style.transform = `translate(${t.x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%,-100%)`;
   }
   for (const [id, el] of labelEls) if (!seen.has(id)) { el.remove(); labelEls.delete(id); }
 }
@@ -3131,24 +3256,38 @@ function tickUI() {
     putStyle($('#hud'), 'display', 'flex');
   } else putStyle($('#hud'), 'display', 'none');
   /* the overlays sit over the half they belong to */
-  { const sp = splitOn(), R = viewRects(vpEl.clientWidth, vpEl.clientHeight), bar = $('#camBar');
-    putStyle(bar, 'left', (sp ? R.cam.x : 0) + 10 + 'px'); putStyle(bar, 'maxWidth', sp ? (R.cam.w - 20) + 'px' : '');
-    putStyle($('#hud'), 'left', sp ? R.cam.x + 'px' : '0px'); putStyle($('#hud'), 'top', sp ? (10 + bar.offsetHeight + 6) + 'px' : '');
-    putStyle($('#vpRight'), 'right', (sp ? vpEl.clientWidth - R.work.w + 10 : 10) + 'px'); putStyle(hint, 'maxWidth', sp ? (R.work.w - 30) + 'px' : ''); }
+  if (camUI) { const a = state.settings.aspect; putText($('#aspectTxt'), a); if ($('#bAspect').getAttribute('aria-label') !== 'Aspect ' + a) $('#bAspect').setAttribute('aria-label', 'Aspect ' + a); }
+  { const sp = splitOn(), R = viewRects(vpEl.clientWidth, vpEl.clientHeight), bar = $('#camBar'), ct = $('#camTools');
+    /* the framing tools sit at the top right of the camera picture (the whole view, or its half in split view); the buttons stop 10 px short of them */
+    const ctW = camUI ? ct.offsetWidth : 0, camR = sp ? vpEl.clientWidth - (R.cam.x + R.cam.w) : 0;
+    putStyle(ct, 'right', camR + 10 + 'px');
+    putStyle(bar, 'left', (sp ? R.cam.x : 0) + 10 + 'px'); putStyle(bar, 'maxWidth', sp ? (R.cam.w - 30 - ctW) + 'px' : '');
+    putStyle(bar, 'right', !sp && view === 'camera' ? (ctW + 20) + 'px' : '');
+    /* the info pill is centred over the camera pane and sits 6 px below the buttons, whether they fill one row or wrap onto two */
+    putStyle($('#hud'), 'left', (sp ? R.cam.x + R.cam.w / 2 : vpEl.clientWidth / 2) + 'px'); putStyle($('#hud'), 'maxWidth', (sp ? R.cam.w : vpEl.clientWidth) - 24 + 'px'); putStyle($('#hud'), 'top', (10 + bar.offsetHeight + 6) + 'px');
+    putStyle($('#vpRight'), 'right', (sp ? vpEl.clientWidth - R.work.w + 10 : 10) + 'px'); putStyle(hint, 'maxWidth', sp ? (R.work.w - 30) + 'px' : '');
+    /* the empty stage's line: only while nothing is in the scene, in the editor or top view, not while placing or during a tour */
+    const eh = $('#emptyHint'), showEmpty = !state.objects.length && !!R.work && !placing && !tileDrag && !tourActive() && !practicing;
+    putStyle(eh, 'display', showEmpty ? 'block' : 'none');
+    if (showEmpty) { putStyle(eh, 'left', (R.work.x + R.work.w / 2) + 'px'); putStyle(eh, 'maxWidth', (R.work.w - 32) + 'px'); } }
   if (camPane()) {
-    putHTML(hint, rec ? (rec.phase === 'rec' ? '<b style="color:#ff6b6b">● Recording</b> · steer the camera · <kbd>Esc</kbd> cancel' : 'Get ready… position the camera now')
-      : 'Drag: orbit · Right-drag: pan · Scroll: dolly · <kbd>Alt</kbd>+scroll: lens · <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> <kbd>Q</kbd><kbd>E</kbd> fly · <kbd>K</kbd> key camera');
+    putHTML(hint, rec ? (rec.phase === 'rec' ? '<b style="color:#ff6b6b">● Recording</b> · <kbd>Esc</kbd>: cancel' : 'Get ready…')
+      : 'Drag: orbit · Scroll: dolly · <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>: fly');
   } else {
-    const nav = view === 'top' ? 'Drag empty space: pan · Scroll: zoom' : 'Drag empty space: orbit · Right-drag: pan · Scroll: zoom';
-    putHTML(hint, placing || pathMode ? '<kbd>Esc</kbd> cancel' + (pathMode ? ' · <kbd>Enter</kbd> done · right-click removes the last point' : '')
-      : isMulti() ? 'Drag any of them to move them all · drag the orange ring to turn them together · <kbd>Shift</kbd> click adds or removes · <kbd>Ctrl</kbd><kbd>G</kbd> group · <kbd>Ctrl</kbd><kbd>L</kbd> lock'
-      : selected === 'export' ? 'Choose what to export in the panel on the right'
-      : selected === 'sun' ? 'Drag the yellow sun to turn the light and the shadows · right-click it for light-from presets · or use the panel'
+    const nav = view === 'top' ? 'Drag: pan · Scroll: zoom · Click: select' : 'Drag: orbit · Right-drag: pan · Scroll: zoom';
+    putHTML(hint, placing || pathMode ? pathMode ? 'Click: add point · <kbd>Enter</kbd>: done · <kbd>Esc</kbd>: cancel' : 'Click the floor · <kbd>Esc</kbd>: cancel'
+      : isMulti() ? 'Drag: move all · Orange ring: turn'
+      : selected === 'export' ? 'Choose what to export on the right'
+      : selected === 'sun' ? 'Drag the sun to turn the light'
       : selected && selected !== 'camera' && selected !== 'target'
-        ? 'Drag it on the floor to move · drag the orange ring to turn · right-click for more · <kbd>K</kbd> key · <kbd>Del</kbd> delete'
-        : selected ? 'Drag the camera or its aim point on the floor · or use the panel'
-          : nav + ' · Click something to select it · right-click for options · double-click an object to focus the lens · <kbd>T</kbd> top view · <kbd>C</kbd> camera view');
+        ? 'Drag to move · Orange ring: turn · Right-click: more'
+        : selected ? 'Drag the camera or its aim point'
+          : nav);
   }
+  { /* the toast sits at the top (56 px); with the camera buttons showing it drops below the info pill so it never covers them.
+       An open dialog covers those buttons anyway, so then it stays at 56 px. */
+    const hu = $('#hud'), bar = $('#camBar'), vt = vpEl.getBoundingClientRect().top;
+    putStyle($('#toast'), 'top', camUI && !openModals().length ? Math.round(vt + (hu.offsetHeight ? 10 + bar.offsetHeight + 6 + hu.offsetHeight : 10 + bar.offsetHeight) + 8) + 'px' : ''); }
   $('#bUndo').disabled = hi <= 0; $('#bRedo').disabled = hi >= hist.length - 1;
   undoTitles();
   const step = currentStep();
@@ -3164,6 +3303,7 @@ function goStep(s) {
   if (s === 'build') { if (view === 'camera') setView(lastWorkView); if (selected === 'camera' || selected === 'target' || selected === 'export') select(null); setLeftTab('add'); }
   else if (s === 'frame') { if (!splitOn()) setView('camera'); select('camera'); }
   else if (s === 'export') { if (view !== 'camera' && !splitOn()) setView('camera'); select('export'); }
+  foldForStep(); /* the left panel folds in Frame and Export, opens in Build */
   requestRender();
 }
 /* timeline tracks: open while something is keyed, unless you opened or closed them by hand */
@@ -3221,7 +3361,6 @@ function fileMenuItems() {
   return [{ head: 'Project' },
     { id: 'new', label: 'New\u2026', fn: () => openStarters() },
     { id: 'open', label: 'Open\u2026', fn: openProjectUI, key: 'Ctrl O' },
-    ...(platform.kind === 'desktop' ? [{ id: 'recent', label: 'Recent projects\u2026', fn: openRecent }] : []), /* on the web, Open\u2026 already shows the recent projects */
     '-',
     { id: 'save', label: 'Save', fn: () => saveProject(false), key: 'Ctrl S' },
     { id: 'saveas', label: 'Save as\u2026', fn: () => saveProject(true), key: 'Ctrl Shift S' },
@@ -3229,8 +3368,10 @@ function fileMenuItems() {
     { id: 'export', label: 'Export\u2026', fn: () => goStep('export'), key: '3' }];
 }
 function gearMenuItems() {
-  return [{ id: 'advanced', label: 'Advanced mode', check: !simple, fn: () => setSimple(!simple) },
-    { id: 'settings', label: 'Settings\u2026', fn: openSettings },
+  const shared = [{ id: 'advanced', label: 'Advanced mode', check: !simple, fn: () => setSimple(!simple) },
+    { id: 'settings', label: 'Settings\u2026', fn: openSettings }];
+  if (platform.kind === 'desktop') return shared; /* the Windows menu bar has File and Help: only these two live here */
+  return [...shared,
     '-',
     { head: TOUR_COPY.menu.heading },
     { id: 'tour-basic', label: TOUR_COPY.menu.quick, check: !!getPref('tourBasicDone', false), fn: () => startTour('basic') },
@@ -3299,7 +3440,7 @@ function focusLensAt(pt, name) {
   prepRenderCam(T);
   const fwd = new THREE.Vector3(); renderCam.getWorldDirection(fwd);
   const d = pt.clone().sub(renderCam.position).dot(fwd);
-  if (d < 0.1) { toast(name + ' is behind the camera'); return; }
+  if (d < 0.1) { toast(name + ' is behind the camera', null, 'bad'); return; }
   const dof = ensureDof(), wasOff = !dof.on, keyed = state.camera.keys.length > 0;
   dof.on = true; dof.auto = false;
   writeCam({ fd: d }, true); propsDirty = true; focusPicks++;
@@ -3315,13 +3456,13 @@ function ctxItems(hit, floor) {
   const items = [], sel = selected && getObj(selected), selP = sel && sel.type === 'person' ? sel : null;
   if (hit && (hit.id === 'camera' || hit.id === 'target')) {
     select('camera');
-    items.push({ head: 'Shot camera' }, { label: 'Look through camera', fn: () => setView('camera'), key: 'C' }, { label: 'Set start frame', fn: () => setShotEnd('start') }, { label: 'Set end frame', fn: () => setShotEnd('end') });
+    items.push({ head: 'Shot camera' }, { label: 'Look through camera', fn: () => navView('camera'), key: 'C' }, { label: 'Set start frame', fn: () => setShotEnd('start') }, { label: 'Set end frame', fn: () => setShotEnd('end') });
     if (state.camera.keys.length) items.push({ label: 'Clear move', fn: makeCameraStatic });
     return items;
   }
   if (hit && hit.id.startsWith('ck:')) {
     const i = +hit.id.slice(3), k = state.camera.keys[i]; select('camera');
-    return k ? [{ head: 'Camera point at ' + k.t.toFixed(2) + ' s' }, { label: 'Go to this moment', fn: () => setTime(k.t) }, { label: 'Look through the camera here', fn: () => { setTime(k.t); setView('camera'); } }, '-',
+    return k ? [{ head: 'Camera point at ' + k.t.toFixed(2) + ' s' }, { label: 'Go to this moment', fn: () => setTime(k.t) }, { label: 'Look through the camera here', fn: () => { setTime(k.t); navView('camera'); } }, '-',
       { label: 'Delete this point', danger: true, disabled: state.camera.keys.length < 2, fn: () => removeKey('camera', i) }] : [];
   }
   if (hit && hit.id === 'cpath') {
@@ -3576,11 +3717,11 @@ function cancelPath() { pathMode = null; hideModeBar(); canvas.style.cursor = ''
 function finishPath() {
   const pm = pathMode; if (!pm) return; cancelPath();
   const o = getObj(pm.id); if (!o) return;
-  if (pm.pts.length < 2) { toast('Click at least one point on the floor'); return; }
+  if (pm.pts.length < 2) { toast('Click at least one point on the floor', null, 'bad'); return; }
   const cum = [0]; for (let i = 1; i < pm.pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pm.pts[i][0] - pm.pts[i - 1][0], pm.pts[i][1] - pm.pts[i - 1][1]));
   const total = cum[cum.length - 1], t0 = snapT(T);
   let speed = pathSpeedOf(o);
-  if (pathFit) { const avail = lastT() - t0; if (avail < 0.3) { toast('Move the playhead earlier so there is time to walk'); return; } speed = total / avail; }
+  if (pathFit) { const avail = lastT() - t0; if (avail < 0.3) { toast('Move the playhead earlier so there is time to walk', null, 'bad'); return; } speed = total / avail; }
   const cur = clone(evalObj(o, t0)), eps = 0.5 / state.settings.fps;
   o.keys = o.keys.filter(k => k.t < t0 - eps);
   pm.pts.forEach((pt, i) => { const tk = t0 + cum[i] / speed, l = toLocalPose(o, { p: [r4(pt[0]), pm.y, r4(pt[1])], r: cur.r, s: cur.s }, tk); setKey(o.keys, tk, { p: l.p.map(r4), r: l.r.map(r4), s: l.s }); });
@@ -3588,7 +3729,7 @@ function finishPath() {
   o.opts.faceTravel = true;
   const dur = total / speed;
   changed(true, true);
-  toast(`Path set: ${total.toFixed(1)} m in ${dur.toFixed(1)} s` + (t0 + dur > lastT() + 0.01 ? '. It runs past the end of the shot. Raise the speed or tick "Fit path to shot length".' : ''), MODE_TIP_MS);
+  toast(`Path set: ${total.toFixed(1)} m in ${dur.toFixed(1)} s` + (t0 + dur > lastT() + 0.01 ? '. It runs past the end of the shot. Raise the speed or tick "Fit path to shot length".' : ''), MODE_TIP_MS, (t0 + dur > lastT() + 0.01 ? 'bad' : 'info'));
 }
 
 /* ---- marks & facing ---- */
@@ -3600,7 +3741,7 @@ function nextMarkLetter() {
 function walkToMark(o, markId, arrive) {
   const m = getObj(markId); if (!m) return;
   const t0 = snapT(T), tA = snapT(arrive), eps = 0.5 / state.settings.fps;
-  if (!(tA > t0 + eps)) { toast('The arrival time must be after the playhead (' + t0.toFixed(2) + ' s)'); return; }
+  if (!(tA > t0 + eps)) { toast('The arrival time must be after the playhead (' + t0.toFixed(2) + ' s)', null, 'bad'); return; }
   const cur = clone(evalObj(o, t0)), mp = evalObj(m, t0).p;
   o.keys = o.keys.filter(k => k.t < t0 - eps || k.t > tA + eps);
   const loc = (tr, tt) => { const l = toLocalPose(o, tr, tt); return { p: l.p.map(r4), r: l.r.map(r4), s: l.s }; };
@@ -3717,7 +3858,7 @@ function attachTo(o, pid) {
 function attachObj(o, pid) {
   o = getObj(o.id); if (!o) return;
   const par = pid ? getObj(pid) : null, old = parentOf(o);
-  if (!attachTo(o, pid)) { toast("Can't attach " + o.name + ' to ' + (par ? par.name : 'that') + ': it would ride on itself'); return; }
+  if (!attachTo(o, pid)) { toast("Can't attach " + o.name + ' to ' + (par ? par.name : 'that') + ': it would ride on itself', null, 'bad'); return; }
   changed(true, true); toast(par ? o.name + ' now moves with ' + par.name : o.name + ' no longer moves with ' + (old ? old.name : 'it'));
 }
 /* the item itself and everything that rides on it, as ids */
@@ -3812,7 +3953,8 @@ function migrateGround() {
     groundMigrate.delete(id);
     if ((o.keys.length ? o.keys : [o.base]).some(k => Math.abs(groundYFor(o, v, k) - k.p[1]) > 2e-3)) { o.opts.free = true; n++; }
   }
-  if (n) { hist[hi] = snapshot(); autosave(); uiDirty = true; propsDirty = true; toast(n === 1 ? 'A raised item was set to "Can float", so it stays where it is.' : n + ' raised items were set to "Can float", so they stay where they are.', 4500); }
+  if (n) { hist[hi] = snapshot(); autosave(); uiDirty = true; propsDirty = true; if (!floatQuiet) toast(n === 1 ? 'A raised item was set to "Can float", so it stays where it is.' : n + ' raised items were set to "Can float", so they stay where they are.', 4500); }
+  if (!groundMigrate.size) floatQuiet = false; /* the starter's own items are settled: later migrations (a take switch, an older file) may speak */
 }
 function settleGround() {
   groundDirty = false;
@@ -3888,7 +4030,7 @@ function planShot(kind, pid) {
   return { o, p: p.toArray(), tg: tg.toArray() };
 }
 function frameShot(kind, pid) {
-  const r = planShot(kind, pid); if (r.err) { toast(r.err); return; }
+  const r = planShot(kind, pid); if (r.err) { toast(r.err, null, 'bad'); return; }
   const o = r.o;
   writeCam({ p: r.p, tg: r.tg }, true);
   propsDirty = true;
@@ -3925,7 +4067,7 @@ function recSample() {
 function cancelRecord() { rec = null; pilotActive = false; setPlaying(false); hideModeBar(); $('#countdown').textContent = ''; toast('Recording cancelled'); }
 function finishRecord() {
   const r = rec; rec = null; pilotActive = false; setPlaying(false); hideModeBar(); $('#countdown').textContent = '';
-  const S = r.samples; if (S.length < 4) { toast('Recording too short'); return; }
+  const S = r.samples; if (S.length < 4) { toast('Recording too short', null, 'bad'); return; }
   const W = 4, sm = S.map((x, i) => {
     const o = { t: x.t, p: [0, 0, 0], tg: [0, 0, 0], f: 0 }; let n = 0;
     for (let j = Math.max(0, i - W); j <= Math.min(S.length - 1, i + W); j++) { for (let k = 0; k < 3; k++) { o.p[k] += S[j].p[k]; o.tg[k] += S[j].tg[k]; } o.f += S[j].f; n++; }
@@ -4004,7 +4146,7 @@ function finishFocusPick(rc) {
   const targets = [...views.values()].filter(v => v.group.visible).map(v => v.group);
   if (state.settings.groundOn) targets.push(ground);
   const hit = rc.intersectObjects(targets, true)[0];
-  if (!hit) { toast('Nothing there to focus on'); return; }
+  if (!hit) { toast('Nothing there to focus on', null, 'bad'); return; }
   const fwd = new THREE.Vector3(); renderCam.getWorldDirection(fwd);
   const d = hit.point.clone().sub(renderCam.position).dot(fwd);
   ensureDof().auto = false;
@@ -4022,7 +4164,9 @@ function setView(v) {
   view = v;
   syncControls();
   $$('#viewSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
-  $$('#vpRight [data-g], #vpRight [data-g2], #bSnapGrid, #bFocus').forEach(b => { b.style.display = v === 'camera' ? 'none' : ''; }); /* in Camera view only Grid stays */
+  $$('#vpRight [data-g], #vpRight [data-g2], #bSnapGrid, #bFocus, #bGrid').forEach(b => { b.style.display = v === 'camera' ? 'none' : ''; }); /* the editor tools; the editor grid is never in the shot */
+  $('#vpRight').style.display = v === 'camera' ? 'none' : ''; /* every editor tool is hidden there */
+  $('#camTools').style.display = v === 'camera' || splitOn() ? 'flex' : 'none'; /* framing: the aspect chip and the guides menu, over the camera picture (tickUI places it) */
   $('#camBar').style.display = v === 'camera' || splitOn() ? 'flex' : 'none';
   $('#bCamHere').style.display = v === 'editor' ? '' : 'none';
   $('#bPip').style.display = v !== 'camera' && !splitOn() ? '' : 'none';
@@ -4065,7 +4209,7 @@ function deleteSel() {
   const all = targetObjs(); if (!all.length) return;
   /* locked items are never deleted by accident: unlock them first */
   const list = all.filter(o => !o.locked), kept = all.length - list.length;
-  if (!list.length) { toast((all.length === 1 ? all[0].name + ' is locked' : 'Those are locked') + '. Unlock ' + (all.length === 1 ? 'it' : 'them') + ' first (Ctrl+L).', 3500); return; }
+  if (!list.length) { toast((all.length === 1 ? all[0].name + ' is locked' : 'Those are locked') + '. Unlock ' + (all.length === 1 ? 'it' : 'them') + ' first (Ctrl+L).', 3500, 'bad'); return; }
   const gone = new Set(list.map(o => o.id));
   /* every shot's camera that rides on or looks at a deleted item keeps its place in the world (the live one and the saved copies of the other shots) */
   keepCamerasPut(gone);
@@ -4080,7 +4224,7 @@ function duplicateSel() {
   const src = targetObjs(); if (!src.length) return;
   const off = [0.8, 0, 0.4], gmap = {}, made = [], idMap = new Map(src.map(o => [o.id, uid()]));
   for (const o of src) {
-    const c = clone(o); c.id = idMap.get(o.id); if ('locked' in c) c.locked = false; c.name = nextName(catalogOf(o.type).label);
+    const c = clone(o); c.id = idMap.get(o.id); if ('locked' in c) c.locked = false; c.name = nextName(o.type === 'person' ? BODIES[bodyOf(o)].label : catalogOf(o.type).label);
     /* a copy of something that rides on a copied parent rides on the copy, and is not nudged again; a seat on a copied car is the copied car */
     const rides = !!(o.parent && idMap.has(o.parent)); if (rides) c.parent = idMap.get(o.parent);
     if (c.opts.seated && idMap.has(c.opts.seated)) c.opts.seated = idMap.get(c.opts.seated);
@@ -4114,29 +4258,77 @@ function focusSel() {
   edControls.target.copy(c); edCam.position.copy(c).addScaledVector(dir, rad * 3.2);
 }
 const STARTERS = [
-  ['empty', 'Empty stage', 'Just the floor and the camera.'],
   ['dialogue', 'Two-person dialogue', 'Two people facing each other, medium two-shot.'],
   ['walktalk', 'Walk and talk', 'Two people walking down a street, camera leading them.'],
   ['room', 'Living room', 'Sofa, coffee table and chair. One person sits, one stands.'],
   ['cafe', 'Café table', 'Two people seated across a small table.'],
   ['street', 'Street', 'Buildings, street lamps, a parked car and a passing car.'],
   ['marks', 'Blocking practice', 'One person and floor marks A, B and C.'],
+  ['empty', 'Empty stage', 'Just the floor and the camera.'],
 ];
+/* ---- starter pictures: each set seen through its shot camera, rendered live (320 x 180) one per frame after the Start window
+   opens, kept for the session as JPEG data: URLs (no blob: URLs). The set is built aside and shown to the export renderer for a
+   moment; the user's scene, its views, undo, autosave and Recent projects are never touched. ---- */
+const starterPics = new Map();
+let starterPicJob = 0;
+function renderStarterPic(kind) {
+  if (exporting || cmpBusy || swapping || practicing) return null;
+  const built = buildState(() => fillStarter(kind, () => { }));
+  const keep = { state, T }, mine = new Map(views), shown = new Map([...views].map(([id, v]) => [id, v.group.visible]));
+  let url = null;
+  swapping = true;
+  try {
+    for (const v of mine.values()) v.group.visible = false;
+    views.clear();
+    state = built; syncScene(false); applyEnv();
+    const w = 320, hh = Math.max(2, Math.round(w / arOf(state.settings.aspect) / 2) * 2), r = getExportRenderer(w, hh);
+    renderExportFrame(r, 0, w, hh);
+    url = r.domElement.toDataURL('image/jpeg', 0.8);
+  } catch (e) { console.error('ShotRef: could not make the starter picture', e); url = null; }
+  finally {
+    for (const v of views.values()) { scene.remove(v.group); disposeTree(v.group); }
+    views.clear(); for (const [id, v] of mine) { views.set(id, v); v.group.visible = shown.get(id); }
+    state = keep.state; swapping = false;
+    applyAll(keep.T); applyEnv(); requestRender();
+  }
+  return url;
+}
+function showStarterPic(slot, url) { slot.innerHTML = ''; slot.append(h('img', { src: url, alt: '' })); }
+/* one picture per frame while the window is open; a picture that failed leaves its plain block */
+function fillStarterPics(slots) {
+  const job = ++starterPicJob, todo = slots.filter(([k]) => !starterPics.has(k));
+  const step = () => {
+    if (job !== starterPicJob || $('#mStart').classList.contains('hidden') || !todo.length) return;
+    const [k, slot] = todo.shift(), url = renderStarterPic(k);
+    if (url) { starterPics.set(k, url); showStarterPic(slot, url); }
+    requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
 function openStarters(firstLaunch = false) {
   if (practicing) return endPracticeFirst(() => openStarters(firstLaunch));
   const g = $('#startGrid'); g.innerHTML = '';
+  const slots = [];
   /* first launch doubles as the welcome screen (branding/BRAND.md) */
   $('#startHead').style.display = firstLaunch ? '' : 'none';
   $('#mStartT').textContent = firstLaunch ? 'Start a shot' : 'Starter sets';
   $('#mStartP').textContent = firstLaunch ? 'Pick a starter set or start empty.' : 'Pick a ready-made layout.';
-  for (const [k, t, d] of STARTERS) g.append(h('button', { class: 'card', onclick: () => {
-    closeModal(g);
-    /* on first launch the scene is our sample, not the user's work: no replace question */
-    if (!firstLaunch && platform.kind === 'desktop' && platform.isDirty()) guardUnsaved(() => loadStarter(k));
-    else if (!firstLaunch && (state.objects.length || state.plate)) confirmBox('Replace the current scene?', 'Start from "' + t + '". You can undo this with Ctrl+Z.', () => loadStarter(k), 'Replace scene');
-    else loadStarter(k);
-  } }, h('b', null, t), h('small', null, d)));
+  for (const [k, t, d] of STARTERS) {
+    /* the picture's place is kept by a plain block of the same shape, so nothing jumps when it arrives; Empty stage shows a "+" */
+    const slot = h('div', { class: 'pic', 'data-kind': k, 'aria-hidden': 'true' });
+    if (k === 'empty') slot.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 7v10M7 12h10"/></svg>';
+    else if (starterPics.has(k)) showStarterPic(slot, starterPics.get(k));
+    else slots.push([k, slot]);
+    g.append(h('button', { class: 'card', 'data-kind': k, onclick: () => {
+      closeModal(g);
+      /* on first launch the scene is our sample, not the user's work: no replace question */
+      if (!firstLaunch && platform.kind === 'desktop' && platform.isDirty()) guardUnsaved(() => loadStarter(k));
+      else if (!firstLaunch && (state.objects.length || state.plate)) confirmBox('Replace the current scene?', 'Start from "' + t + '". You can undo this with Ctrl+Z.', () => loadStarter(k), 'Replace scene');
+      else loadStarter(k);
+    } }, slot, h('b', null, t), h('small', null, d)));
+  }
   openModal('mStart');
+  fillStarterPics(slots);
 }
 /* Builds a new state with the scene helpers (they work on the global `state`), then puts the old one back. */
 function buildState(fill) {
@@ -4146,7 +4338,9 @@ function buildState(fill) {
 }
 /* The one way to swap the whole scene. Keeps undo (pushes a step) and keeps old files in memory so undo can rebuild them.
    On any error the previous scene is put back and the error is rethrown. */
-function replaceProject(newState, newAssets = {}, label) {
+let floatQuiet = false; /* a starter set or New project made these items itself: no "Can float" message for them */
+function replaceProject(newState, newAssets = {}, label, quiet = false) {
+  floatQuiet = quiet;
   if (tourHandle) { try { tourHandle.end('external'); } catch (e) { console.error('ShotRef: the tour did not end cleanly', e); } } /* a quick tour is looking at the scene being swapped; the hands-on one also leaves practice here */
   if (practicing) endPracticeFirst(() => {}); /* every caller asks first; this keeps a missed one from mixing the two scenes */
   recentFlush(); /* the project being left, if it has edits the list does not have */
@@ -4157,9 +4351,9 @@ function replaceProject(newState, newAssets = {}, label) {
     assets = { ...assets, ...newAssets };
     recentSession = uid(); state = newState; cleanTakes(); selected = null; selIds = []; promptEdit = null; shotEditId = null; setTime(0); migrateAll();
     platform.startDoc(); /* Open, New and starters are a new document: Save must not reuse the previous file */
-    restore(snapshot()); pushHistory(); resetEditorCam();
+    restore(snapshot()); pushHistory(); frameEditorSoon();
     snapHold = false; if (snapLive > snapPruneAt) pruneSnapPool();
-    if (label) toast(label);
+    if (label) toast(label, null, quiet ? 'info' : 'ok');
   } catch (e) {
     snapHold = false;
     state = prev.state; assets = prev.assets; selected = prev.selected; selIds = prev.selIds; setTime(prev.T); hist = prev.hist; histDoc = prev.histDoc; platform.restoreDoc(prev.doc); hi = prev.hi;
@@ -4170,7 +4364,7 @@ function replaceProject(newState, newAssets = {}, label) {
 function loadStarter(kind) {
   let sel = null;
   const built = buildState(() => fillStarter(kind, id => { sel = id; }));
-  replaceProject(built, {}, (STARTERS.find(x => x[0] === kind) || [, kind])[1] + ' ready');
+  replaceProject(built, {}, (STARTERS.find(x => x[0] === kind) || [, kind])[1] + ' ready', true);
   platform.newProject();
   if (sel) { select(sel); }
 }
@@ -4229,7 +4423,7 @@ function fillStarter(kind, selectId) {
       street();
       add('car', [2.6, 0, -3], { color: '#2f5d8a' }); add('tree', [3.6, 0, -12]); add('tree', [-3.8, 0, -16]);
       const car = add('car', [-1.6, 0, -25]); car.opts.faceTravel = true; car.keys = [{ t: 0, p: [-1.6, 0, -25], r: [0, 0, 0], s: [1, 1, 1] }, { t: L, p: [-1.6, 0, 25], r: [0, 0, 0], s: [1, 1, 1] }];
-      const w = add('person', [3.4, 0, -4]); walk(w, [3.4, 0, -4], [3.4, 0, 3]);
+      const w = add('person', [3.8, 0, -4]); walk(w, [3.8, 0, -4], [3.8, 0, 3]); /* on the pavement, clear of the parked car */
       cam([-3.4, 1.6, 7.5], [1.5, 1.4, -3], 28); break;
     }
     case 'marks': {
@@ -4240,7 +4434,7 @@ function fillStarter(kind, selectId) {
   }
 }
 function newProject(skipConfirm) {
-  const go = () => replaceProject(buildState(seedScene), {}, 'New project');
+  const go = () => replaceProject(buildState(seedScene), {}, 'New project', true);
   if (skipConfirm) go(); else confirmBox('Start a new project?', 'The current scene will be cleared. You can undo this with Ctrl+Z.', go, 'New project');
 }
 function seedScene() {
@@ -4250,6 +4444,78 @@ function seedScene() {
   state.objects.push(p, t, b);
 }
 function resetEditorCam() { edCam.position.set(7, 5, 10); edControls.target.set(0, 1, 0); }
+/* A scene that was just swapped in (a starter set, Open, Recent projects, a dropped file) or restored at boot is framed on the next
+   drawn frame, when the view has its size: never on undo, redo or a take or shot switch. */
+let edFramePending = true;
+function frameEditorSoon() { resetEditorCam(); edFramePending = true; }
+/* Stand 8 m behind and 5 m above the shot camera's first position, look at the middle of the people (no people: of all items),
+   then pull straight back until every person and the camera icon fit with a 10% margin (at most 60 m away). From inside an item,
+   or with a person's middle hidden behind something, go 2 m higher and 2 m further back and try again (8 tries).
+   When every try is blocked, swing round 20 degrees at a time, then look down more steeply.
+   An empty stage keeps the default view. The top view centres on the same middle. Returns the middle, or null. */
+/* a person's middle is the middle of the torso (always on the body, even seated); anything else: the middle of its box */
+const midPoint = v => v.person ? v.person.torso.getWorldPosition(new THREE.Vector3()) : new THREE.Box3().setFromObject(v.group).getCenter(new THREE.Vector3());
+const frameStats = { ms: 0, clear: false }; /* for the smoke test */
+function frameEditorView() {
+  const vis = state.objects.map(o => [o, views.get(o.id)]).filter(([o, v]) => v && v.group.visible && o.visible !== false);
+  if (!vis.length) { resetEditorCam(); return null; }
+  scene.updateMatrixWorld(true);
+  const boxOf = v => new THREE.Box3().setFromObject(v.group);
+  const ppl = vis.filter(([o]) => o.type === 'person').map(([o, v]) => ({ id: o.id, box: boxOf(v), mid: midPoint(v) })).filter(x => !x.box.isEmpty());
+  const items = vis.map(([o, v]) => ({ id: o.id, box: boxOf(v), mid: midPoint(v) })).filter(x => !x.box.isEmpty());
+  const c0 = evalCam(0), cp = new THREE.Vector3().fromArray(c0.p), ctg = new THREE.Vector3().fromArray(c0.tg);
+  const avg = list => list.reduce((s, x) => s.add(x.mid), new THREE.Vector3()).multiplyScalar(1 / list.length);
+  const M = ppl.length ? avg(ppl) : items.length ? avg(items) : ctg.clone();
+  const back = cp.clone().sub(ctg).setY(0); if (back.lengthSq() < 1e-6) back.set(0, 0, 1); back.normalize(); /* opposite to where the camera looks, on the floor */
+  /* what must be in the picture: every corner of every person, and the camera icon */
+  const pts = [];
+  for (const x of ppl) { const b = x.box; for (const i of [0, 1]) for (const j of [0, 1]) for (const k of [0, 1]) pts.push(new THREE.Vector3(i ? b.max.x : b.min.x, j ? b.max.y : b.min.y, k ? b.max.z : b.min.z)); }
+  for (const d of [[-1, -1, -1], [1, 1, 1], [-1, 1, -1], [1, -1, 1]]) pts.push(cp.clone().add(new THREE.Vector3(...d).multiplyScalar(0.2)));
+  const R = viewRects(vpEl.clientWidth, vpEl.clientHeight), wr = R.work || { w: vpEl.clientWidth, h: vpEl.clientHeight };
+  edCam.aspect = wr.w > 0 && wr.h > 0 ? wr.w / wr.h : 16 / 9; edCam.updateProjectionMatrix();
+  const aim = eye => { edCam.position.copy(eye); edCam.up.set(0, 1, 0); edCam.lookAt(M); edCam.updateMatrixWorld(true); };
+  const fits = () => pts.every(p => { const v = p.clone().project(edCam); return v.z > -1 && v.z < 1 && Math.abs(v.x) <= 0.8 && Math.abs(v.y) <= 0.8; });
+  const rc = new THREE.Raycaster();
+  const startAt0 = () => { const s = cp.clone().addScaledVector(back, 8); s.y += 5; return s; };
+  /* the search never stalls the app: after about 50 ms it stops and keeps the plain first try */
+  const t0 = performance.now(), late = () => performance.now() - t0 > 50;
+  /* what can hide a person: the items, the camera icon and the sun (placed once, for the first try) */
+  aim(startAt0()); updateSunGizmo(); sunGrp.updateMatrixWorld(true);
+  const targets = vis.map(([, v]) => v.group); targets.push(camBody); if (sunGrp.visible) targets.push(sunBall);
+  const hidden = eye => {
+    return ppl.some(x => {
+      const mid = x.mid, dist = eye.distanceTo(mid);
+      rc.set(eye, mid.clone().sub(eye).normalize()); rc.far = dist + 0.5;
+      for (const hit of rc.intersectObjects(targets, true)) {
+        let ob = hit.object;
+        while (ob) { if (ob.userData.pick) return true; if (ob.userData.objId) return ob.userData.objId !== x.id; ob = ob.parent; }
+      }
+      return true; /* nothing reached: not on the body */
+    });
+  };
+  /* one ladder of tries from one direction; null when every try is blocked */
+  const startAt = (dir, tr) => { const s = cp.clone().addScaledVector(dir, 8 + 2 * tr); s.y += 5 + 2 * tr; return s; };
+  const fitFrom = start => {
+    const u = start.clone().sub(M); let d = Math.min(60, u.length()), eye; u.normalize();
+    for (;;) { eye = M.clone().addScaledVector(u, d); aim(eye); if (fits() || d >= 60) return eye; d = Math.min(60, d + 0.25); }
+  };
+  const ladder = dir => {
+    for (let tr = 0; tr < 8 && !late(); tr++) { const eye = fitFrom(startAt(dir, tr)); if (clear(eye)) return eye; }
+    return null;
+  };
+  const clear = eye => !items.some(x => x.box.containsPoint(eye)) && !hidden(eye);
+  /* straight behind first; when buildings block every try (a camera looking across a street), swing round a little at a time */
+  let eye = null;
+  for (const deg of [0, -20, 20, -40, 40, -60, 60, -90, 90]) { if (late()) break; eye = ladder(back.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), deg * D2R)); if (eye) break; }
+  /* still blocked (a person standing close beside a car): look down more steeply, from over the camera's side */
+  for (const up of [15, 25, 40]) { if (eye || late()) break; const s = M.clone().addScaledVector(back, 8); s.y += up; const e = fitFrom(s); if (clear(e)) eye = e; }
+  if (!eye) fitFrom(startAt0()); /* nothing clear from anywhere (or out of time): the plain start, pulled back to fit */
+  frameStats.ms = performance.now() - t0; frameStats.clear = !!eye;
+  edControls.target.copy(M); edControls.update();
+  topInit = true; topControls.target.set(M.x, 0, M.z); topCam.position.set(M.x, 120, M.z); topCam.zoom = 1; topCam.updateProjectionMatrix();
+  updateSunGizmo(); requestRender();
+  return M.toArray();
+}
 /* Save (or Save as). On the web both download a new file; the desktop app writes back to the open file unless saveAs. */
 let saving = false;
 async function saveProject(saveAs = false) {
@@ -4269,9 +4535,9 @@ function projectText() {
 async function doSaveProject(saveAs) {
   const data = projectText();
   const r = await platform.saveProject(data, { saveAs: saveAs === true, name: `${projectSlug() || 'shotref'}-${stamp()}.shotref` });
-  if (r.ok) { toast('Saved ' + (r.name || 'project')); autosave(); saveRecentNow(); } /* the autosave records that nothing is unsaved now */
+  if (r.ok) { toast('Saved ' + (r.name || 'project'), null, 'ok'); autosave(); saveRecentNow(); } /* the autosave records that nothing is unsaved now */
   else if (r.canceled) toast('Save cancelled');
-  else toast("Couldn't save the project. Your changes are still here, so try again.", 5000);
+  else toast("Couldn't save the project. Your changes are still here, so try again.", 5000, 'bad');
   return r;
 }
 /* allowed values for list-type settings: a file with anything else gets the default (I1) */
@@ -4286,13 +4552,13 @@ const BAD_FILE = "This isn't a ShotRef project, or the file is damaged.";
 let launchFile = false; /* a file came from the desktop shell (launch, double-click, Recent): the starter sets must not open over it */
 function loadProjectText(txt, file, fromShell = false, unsaved = false) {
   if (practicing) return endPracticeFirst(() => loadProjectText(txt, file, fromShell, unsaved)); /* Open, Recent, a dropped file, a file from Windows */
-  if (exporting) { toast('Wait for the export to finish.'); return; }
+  if (exporting) { toast('Wait for the export to finish.', null, 'bad'); return; }
   let d;
   try { d = normalizeProject(JSON.parse(txt), projectDefaults()); }
-  catch (e) { console.error('ShotRef: could not read the project file', e); toast(BAD_FILE, 4000); return; }
+  catch (e) { console.error('ShotRef: could not read the project file', e); toast(BAD_FILE, 4000, 'bad'); return; }
   const go = () => {
     try { replaceProject(d.state, d.assets, 'Project opened'); platform.setCurrent(file && file.name, file && file.path); if (unsaved) platform.setDirty(true); }
-    catch (e) { console.error('ShotRef: could not open the project', e); toast(BAD_FILE, 4000); }
+    catch (e) { console.error('ShotRef: could not open the project', e); toast(BAD_FILE, 4000, 'bad'); }
   };
   if (platform.kind === 'desktop' && platform.isDirty()) guardUnsaved(go);
   else if (!fromShell && (state.objects.length || state.plate)) confirmBox('Open this file?', 'It will replace the current scene. You can undo this with Ctrl+Z.', go, 'Open file');
@@ -4307,17 +4573,17 @@ async function pickImport(sel, handler, filters) {
 }
 async function importModel(file) {
   const buf = await readFile(file, 'buf');
-  if (/\.gltf$/i.test(file.name)) { const txt = new TextDecoder().decode(buf); if (/"uri"\s*:\s*"(?!data:)/.test(txt)) { toast('This .gltf uses separate files. Please export it as a single .glb.', 4000); return; } }
+  if (/\.gltf$/i.test(file.name)) { const txt = new TextDecoder().decode(buf); if (/"uri"\s*:\s*"(?!data:)/.test(txt)) { toast('This .gltf uses separate files. Please export it as a single .glb.', 4000, 'bad'); return; } }
   const id = uid(); assets[id] = { kind: 'model', name: file.name, b64: bufToB64(buf), mime: 'model/gltf-binary' };
   const o = addObject('model', { asset: id }, true);
   o.name = nextName(file.name.replace(/\.(glb|gltf)$/i, '')); changed(false, true); autosave(); if (placing === o.id) startPlacing(o.id);
 }
 async function importPlate(file) {
-  if (file.type && !/^image\//.test(file.type)) { toast('Please pick an image file (JPG, PNG or WebP)'); return; }
+  if (file.type && !/^image\//.test(file.type)) { toast('Please pick an image file (JPG, PNG or WebP)', null, 'bad'); return; }
   toast('Loading photo…', 8000);
   let c;
   try { c = await decodeToCanvas(file, 2560); }
-  catch (e) { toast('Could not read that image. Try a JPG or PNG.', 4500); return; }
+  catch (e) { toast('Could not read that image. Try a JPG or PNG.', 4500, 'bad'); return; }
   const dataURL = c.toDataURL('image/jpeg', 0.9), b64 = dataURL.slice(dataURL.indexOf(',') + 1);
   const ia = c.width / c.height;
   const id = uid(); assets[id] = { kind: 'plate', name: file.name, b64, mime: 'image/jpeg', aspect: r4(ia) };
@@ -4325,6 +4591,7 @@ async function importPlate(file) {
   state.plate = { asset: id, overlay: prev.overlay ?? 0, export: prev.export ?? true, ground: prev.ground || 'shadow' };
   const close = ASPECTS.reduce((b, a) => Math.abs(Math.log(a[1] / ia)) < Math.abs(Math.log(b[1] / ia)) ? a : b);
   if (Math.abs(Math.log(close[1] / ia)) < 0.04 && close[0] !== state.settings.aspect) state.settings.aspect = close[0];
+  setPref('camTab', 'shot'); revealSec = 'Location photo'; /* the panel opens at the new photo's settings */
   select('camera'); setView('camera'); changed(true, true); syncTopUI();
   toast('Location photo loaded. Match the lens and camera height, then line up the floor.', 4500);
 }
@@ -4332,7 +4599,7 @@ function plateSection() {
   const pl = state.plate, a = plateAsset();
   if (!pl || !a) return sec('Location photo',
     h('p', { class: 'note', style: 'margin:0 0 8px' }, 'Put a still of the real or AI-generated location behind the scene. Then block people and the camera on top of it.'),
-    h('button', { class: 'primary', style: 'width:100%', onclick: () => pickImport('#fPlate', importPlate, PLATE_FILTER) }, 'Choose photo…'));
+    h('button', { style: 'width:100%', onclick: () => pickImport('#fPlate', importPlate, PLATE_FILTER) }, 'Choose photo…'));
   const fa = arOf(state.settings.aspect), ia = a.aspect || 1.5;
   const close = ASPECTS.reduce((b, x) => Math.abs(Math.log(x[1] / ia)) < Math.abs(Math.log(b[1] / ia)) ? x : b);
   const thumb = h('img', { src: assetURL(pl.asset), style: 'width:100%;border-radius:6px;display:block;border:1px solid var(--line2)' });
@@ -4347,12 +4614,12 @@ function plateSection() {
 }
 const NOT_IMAGE = "That file isn't an image. Use a JPG, PNG or WebP.";
 async function importImage(file) {
-  if (file.type && !/^image\//.test(file.type)) { toast(NOT_IMAGE, 4500); return; }
+  if (file.type && !/^image\//.test(file.type)) { toast(NOT_IMAGE, 4500, 'bad'); return; }
   const buf = await readFile(file, 'buf');
   const b64 = bufToB64(buf), mime = file.type || 'image/png';
   const img = new Image();
   await new Promise(r => { img.onload = r; img.onerror = r; img.src = 'data:' + mime + ';base64,' + b64; });
-  if (!img.naturalWidth || !img.naturalHeight) { toast(NOT_IMAGE, 4500); return; }
+  if (!img.naturalWidth || !img.naturalHeight) { toast(NOT_IMAGE, 4500, 'bad'); return; }
   const aspect = img.naturalWidth && img.naturalHeight ? img.naturalWidth / img.naturalHeight : 1.5;
   const id = uid(); assets[id] = { kind: 'image', name: file.name, b64, mime };
   const o = addObject('image', { asset: id }, true);
@@ -4411,7 +4678,7 @@ function newShot(dup) {
 function deleteShot(id) {
   if (exporting || rec) return;
   ensureShots(); id = realShotId(id);
-  if (state.shots.length < 2) { toast('A project needs at least one shot'); return; }
+  if (state.shots.length < 2) { toast('A project needs at least one shot', null, 'bad'); return; }
   const i = state.shots.findIndex(s => s.id === id); if (i < 0) return;
   const name = state.shots[i].name;
   if (id === state.shotId) { state.shots.splice(i, 1); loadShot(state.shots[Math.max(0, i - 1)]); }
@@ -4590,10 +4857,17 @@ function promptText() {
   return promptCache.text;
 }
 const currentPrompt = () => promptEdit != null ? promptEdit : promptText();
+/* Copy prompt (Export panel and the finished window): the clipboard, else the prompt in `box`, shown and selected, so Ctrl+C copies it */
 async function copyPromptText(text, box) {
-  try { await navigator.clipboard.writeText(text); toast('Prompt copied. Paste it next to the reference clip.'); return; } catch (e) { }
-  if (box) { box.focus(); box.select(); try { if (document.execCommand('copy')) { toast('Prompt copied'); return; } } catch (e) { } }
-  toast('Select the text and press Ctrl+C to copy it', 4000);
+  const done = () => toast('Prompt copied. Paste it next to the reference clip.', null, 'ok');
+  try { await navigator.clipboard.writeText(text); done(); return; } catch (e) { }
+  if (box) {
+    if (box.value !== text) box.value = text; box.hidden = false; /* the finished window keeps its box hidden until it is needed */
+    box.focus(); box.select();
+    try { if (document.execCommand('copy')) { done(); return; } } catch (e) { }
+    toast('The prompt is selected. Press Ctrl+C to copy it.', 5000, 'bad'); return;
+  }
+  toast('Select the text and press Ctrl+C to copy it', 4000, 'bad');
 }
 
 /* ============================== export panel ============================== */
@@ -4609,11 +4883,11 @@ function propsExport(p) {
     check('Grid in export', () => s.exportGrid, v => { s.exportGrid = v; changed(true); }));
   const tog = h('button', { id: 'xoChange', 'aria-expanded': String(exportFmtOpen), 'aria-controls': 'xoFormat', onclick: () => { exportFmtOpen = !exportFmtOpen; fmt.classList.toggle('hidden', !exportFmtOpen); tog.setAttribute('aria-expanded', String(exportFmtOpen)); tog.textContent = exportFmtOpen ? 'Done' : 'Change'; } }, exportFmtOpen ? 'Done' : 'Change');
   p.append(sec('Export',
-    h('div', { class: 'row' }, h('span', { id: 'xoSummary', class: 'grow', style: 'font-size:12.5px;color:#cfd3d8' }, `${w}×${hh} · ${asp} · ${sty}`), tog),
+    h('div', { class: 'row' }, h('span', { id: 'xoSummary', class: 'grow', style: 'font-size:13px;color:#cfd3d8' }, `${w}×${hh} · ${asp} · ${sty}`), tog),
     h('p', { class: 'note keep', style: 'margin:0 0 8px' }, `${s.fps} fps · ${s.duration.toFixed(1)} s` + (sn ? ' · ' + sn : '')),
     fmt));
   p.append(sec('Export video', h('div', { class: 'expgrid' },
-    h('button', { id: 'xoVideo', class: 'primary wide', onclick: () => { openModal('mExport'); exportVideo(); } }, 'Export video (MP4)'),
+    h('button', { id: 'xoVideo', class: 'primary wide', onclick: () => exportVideo() }, 'Export video (MP4)'), /* opens the small "Exporting video…" window by itself */
     h('button', { id: 'xoOptions', onclick: () => openModal('mExport') }, 'Video options…'))));
   p.append(sec('Frame pack', h('div', { class: 'expgrid' },
     h('button', { id: 'xoPack', onclick: exportFramePack, title: 'Start, middle and end frames plus the prompt, in one zip' }, 'Frame pack (zip)'),
@@ -4627,7 +4901,7 @@ function propsExport(p) {
   box.addEventListener('input', () => { promptEdit = box.value; });
   box.addEventListener('keydown', e => e.stopPropagation());
   p.append(sec('Prompt for the AI model', box,
-    h('div', { class: 'btns', style: 'margin-top:6px' }, h('button', { id: 'xoCopyPrompt', class: 'primary', onclick: () => copyPromptText(box.value, box) }, 'Copy prompt'),
+    h('div', { class: 'btns', style: 'margin-top:6px' }, h('button', { id: 'xoCopyPrompt', onclick: () => copyPromptText(box.value, box) }, 'Copy prompt'),
       h('button', { id: 'xoRewrite', onclick: () => { promptEdit = null; box.value = promptText(); toast('Prompt rewritten from the scene'); } }, 'Rewrite from scene')),
     h('p', { class: 'note' }, 'Written from the scene: framing, lens, camera move, who does what, and the light. Edit it freely; your edits stay until you press Rewrite.')));
 }
@@ -4664,7 +4938,7 @@ async function whileLocked(fn) {
 }
 /* the first, middle and last frame as PNG plus the prompt, in one zip */
 async function exportFramePack() {
-  if (exporting) { toast('Wait for the export to finish.'); return false; }
+  if (exporting) { toast('Wait for the export to finish.', null, 'bad'); return false; }
   const r = await whileLocked(buildFramePack);
   if (!r) return false;
   await saveFile(r.name, r.blob);
@@ -4681,7 +4955,7 @@ async function buildFramePack() {
       if (!blob) throw new Error('no frame');
       files.push({ name: `${base}-${label}.png`, data: new Uint8Array(await blob.arrayBuffer()) });
     }
-  } catch (e) { console.error(e); applyAll(T); requestRender(); toast('Could not make that frame. Try a smaller export size.', 4000); return false; }
+  } catch (e) { console.error(e); applyAll(T); requestRender(); toast('Could not make that frame. Try a smaller export size.', 4000, 'bad'); return false; }
   applyAll(T); requestRender();
   files.push({ name: base + '-prompt.txt', data: new TextEncoder().encode(currentPrompt() + '\n') });
   return { name: base + '-frames.zip', blob: zipStore(files) };
@@ -4689,7 +4963,7 @@ async function buildFramePack() {
 /* one PNG with the first and last frame of every shot, its name, length, size and move */
 let sheetBlob = null;
 async function makeContactSheet() {
-  if (exporting) { toast('Wait for the export to finish.'); return; }
+  if (exporting) { toast('Wait for the export to finish.', null, 'bad'); return; }
   const url = await whileLocked(buildContactSheet);
   if (url) { $('#toast').classList.remove('show'); $('#sheetImg').src = url; openModal('mSheet'); }
 }
@@ -4708,7 +4982,7 @@ async function buildContactSheet() {
       rows.push({ name: s.name, dur: s.duration, move, size, a: grab(0), b: grab(lastT()) });
       await new Promise(res => setTimeout(res, 0));
     }
-  } catch (e) { console.error(e); toast('Could not make the contact sheet. Try a smaller export size.', 4000); rows.length = 0; }
+  } catch (e) { console.error(e); toast('Could not make the contact sheet. Try a smaller export size.', 4000, 'bad'); rows.length = 0; }
   loadShot(state.shots.find(s => s.id === keepId) || state.shots[0]); setTime(keepT); applyAll(T); requestRender(); syncTopUI();
   if (!rows.length) return null;
   const W = pad * 3 + cw * 2 + 260, H = top + pad + rows.length * (ch + cap + pad), c = document.createElement('canvas'); c.width = W; c.height = H;
@@ -4735,11 +5009,10 @@ async function exportAllShots() {
   if (exporting) return;
   const list = ensureShots().slice(); syncShot();
   const keepId = state.shotId, keepT = T;
-  openModal('mExport');
   try {
     for (const [i, s] of list.entries()) {
       loadShot(s);
-      if (!(await exportVideo({ label: `Shot ${i + 1} of ${list.length}: ${s.name}` }))) break;
+      if (!(await exportVideo({ label: `Shot ${i + 1} of ${list.length}: ${s.name}`, batch: { i, n: list.length } }))) break;
     }
   } finally { loadShot(state.shots.find(s => s.id === keepId) || state.shots[0]); setTime(keepT); applyAll(T); requestRender(); syncTopUI(); }
 }
@@ -4795,7 +5068,7 @@ function switchTake(id) {
   if (exporting || rec || id === '_') return false;
   ensureTakes(); if (id === state.takeId) return false;
   const t = state.takes.find(x => x.id === id); if (!t || !takeReadable(t)) return false;
-  let ns; try { ns = takeState(t.snap); } catch (e) { console.error('ShotRef: could not open the take', e); toast("That take couldn't be opened."); return false; }
+  let ns; try { ns = takeState(t.snap); } catch (e) { console.error('ShotRef: could not open the take', e); toast("That take couldn't be opened.", null, 'bad'); return false; }
   const from = activeTake(), text = takeSceneJSON();
   from.snap = text; t.snap = null; state.takeId = id;
   loadScene(ns); pushHistory(); syncTopUI();
@@ -4820,13 +5093,13 @@ function newTake(go) {
 function deleteTake(id) {
   if (exporting || rec) return;
   ensureTakes();
-  if (state.takes.length < 2) { toast('There is only one take'); return; }
+  if (state.takes.length < 2) { toast('There is only one take', null, 'bad'); return; }
   const i = state.takes.findIndex(t => t.id === id); if (i < 0) return;
   const t = state.takes[i];
   if (id === state.takeId) {
     const near = state.takes.filter(x => x !== t && takeReadable(x)).sort((x, y) => Math.abs(state.takes.indexOf(x) - i) - Math.abs(state.takes.indexOf(y) - i)), next = near[0];
-    if (!next) { toast("The other takes can't be opened, so nothing was deleted."); return; }
-    let ns; try { ns = takeState(next.snap); } catch (e) { console.error('ShotRef: could not open the take', e); toast("The other take couldn't be opened, so nothing was deleted."); return; }
+    if (!next) { toast("The other takes can't be opened, so nothing was deleted.", null, 'bad'); return; }
+    let ns; try { ns = takeState(next.snap); } catch (e) { console.error('ShotRef: could not open the take', e); toast("The other take couldn't be opened, so nothing was deleted.", null, 'bad'); return; }
     state.takes = state.takes.filter(x => x !== t); next.snap = null; state.takeId = next.id;
     loadScene(ns);
   } else state.takes = state.takes.filter(x => x !== t);
@@ -4864,9 +5137,9 @@ let cmp = null, cmpBusy = false, cmpStop = false, swapping = false; /* swapping:
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 function openCompare() {
   if (practicing) return endPracticeFirst(openCompare);
-  if (exporting) { toast('Wait for the export to finish.'); return; }
+  if (exporting) { toast('Wait for the export to finish.', null, 'bad'); return; }
   const ok2 = hasTakes() ? state.takes.filter(takeReadable) : [];
-  if (ok2.length < 2) { toast('Make a second take first: Take menu → New take'); return; }
+  if (ok2.length < 2) { toast('Make a second take first: Take menu → New take', null, 'bad'); return; }
   for (const sel of [$('#cmpA'), $('#cmpB')]) { sel.innerHTML = ''; for (const t of ok2) sel.append(h('option', { value: t.id }, t.name)); }
   $('#cmpA').value = state.takeId; $('#cmpB').value = ok2.find(t => t.id !== state.takeId).id;
   $('#cmpView').hidden = true; $('#cmpMsg').textContent = ''; cmp = null;
@@ -4972,7 +5245,7 @@ const outName = (...parts) => nameFrom([shotName(), ...parts]);
 const stamp = () => { const d = new Date(); const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`; };
 async function exportPNG(t, label) {
   if (practicing) return endPracticeFirst(() => exportPNG(t, label));
-  if (exporting) { toast('Wait for the export to finish.'); return false; }
+  if (exporting) { toast('Wait for the export to finish.', null, 'bad'); return false; }
   const { w, h: hh } = exportSize();
   let blob = null;
   try {
@@ -4981,7 +5254,7 @@ async function exportPNG(t, label) {
     blob = await canvasBlob(r.domElement);
   } catch (e) { console.error(e); }
   applyAll(T);
-  if (!blob) { toast('Could not make that frame. Try a smaller export size.', 4000); return false; }
+  if (!blob) { toast('Could not make that frame. Try a smaller export size.', 4000, 'bad'); return false; }
   const fr = Math.round(t * state.settings.fps) + 1;
   await saveFile(outName(label || 'frame' + String(fr).padStart(4, '0'), state.settings.style) + '.png', blob);
   return true;
@@ -4995,10 +5268,10 @@ function renderFrameBlob(t) {
   return p;
 }
 function copyFrame() {
-  if (exporting) { toast('Wait for the export to finish.'); return; }
+  if (exporting) { toast('Wait for the export to finish.', null, 'bad'); return; }
   setPlaying(false);
   let blobP;
-  try { blobP = renderFrameBlob(T); } catch (e) { toast('Could not render the frame'); return; }
+  try { blobP = renderFrameBlob(T); } catch (e) { toast('Could not render the frame', null, 'bad'); return; }
   // ClipboardItem is created synchronously inside the click so the browser keeps the user gesture
   let writeP;
   try {
@@ -5007,9 +5280,9 @@ function copyFrame() {
   } catch (e) { writeP = Promise.reject(e); }
   writeP.then(() => {
     const { w, h: hh } = exportSize();
-    toast(`Frame copied (${w}×${hh}, ${(STYLES.find(x => x[0] === state.settings.style) || STYLES[0])[1]}). Paste it anywhere with Ctrl+V.`, 3500);
+    toast(`Frame copied (${w}×${hh}, ${(STYLES.find(x => x[0] === state.settings.style) || STYLES[0])[1]}). Paste it anywhere with Ctrl+V.`, 3500, 'ok');
   }).catch(async () => {
-    const blob = await blobP; if (!blob) { toast('Could not copy the frame'); return; }
+    const blob = await blobP; if (!blob) { toast('Could not copy the frame', null, 'bad'); return; }
     const url = await new Promise(res => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(blob); });
     $('#copyImg').src = url; copyBlob = blob; openModal('mCopy');
   });
@@ -5035,18 +5308,63 @@ function setExportLock(on) {
   if (on) { const c = $('#exCancel'); if (c && !c.hidden) c.focus(); else if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); }
 }
 function exProgressRaw(frac, txt) { $('#exBar').style.width = (frac * 100).toFixed(1) + '%'; $('#exTxt').textContent = txt; }
+const fmtSize = n => n < 0.1 * 1048576 ? Math.max(1, Math.round(n / 1024)) + ' KB' : (n / 1048576).toFixed(1) + ' MB';
+/* The Export window shows one body at a time: 'opts' (Video options…), 'run' (Exporting video…: bar, text, Cancel and nothing else),
+   'done' (Video saved: file, where it is, Done, Copy prompt) and 'fail' (the plain error, Close). Only the window changes: rendering,
+   encoding, file names and saving are exportVideo's, as before. exFrom: 'panel' (the Export panel's button opened the small window; Cancel
+   closes it) or 'options' (started inside Video options…; Cancel brings the options back). exSaved: the files saved by this export (every shot). */
+let exFrom = 'panel', exSaved = [];
+function exBody(k) {
+  $('#exOpts').hidden = k !== 'opts'; $('#exRunning').hidden = k !== 'run'; $('#exDone').hidden = k !== 'done'; $('#exFail').hidden = k !== 'fail';
+  $('#mExport .dlg').classList.toggle('run', k !== 'opts');
+  $('#mExport .x').hidden = k === 'run'; /* while a video renders the only way out is Cancel */
+  $('#mExport').setAttribute('aria-labelledby', { opts: 'mExportT', run: 'exRunT', done: 'exDoneT', fail: 'exFailT' }[k]);
+  if (k !== 'done') $('#exPromptBox').hidden = true;
+}
+const exShowing = () => !$('#exOpts').hidden ? 'opts' : !$('#exRunning').hidden ? 'run' : !$('#exDone').hidden ? 'done' : 'fail';
+function showExDone() {
+  const n = exSaved.length, f0 = exSaved[0], total = exSaved.reduce((a, f) => a + f.size, 0), folder = (exSaved.find(f => f.folder) || {}).folder;
+  $('#exDoneT').textContent = n > 1 ? n + ' videos saved' : 'Video saved';
+  const sz = b => fmtSize(b).replace(' ', ' '); /* "0.3 MB" never splits over two lines */
+  putText($('#exFile'), n > 1 ? `${f0.name} and ${n - 1} more · ${sz(total)}` : `${f0.name} · ${sz(f0.size)}`);
+  $('#exFile').title = exSaved.map(f => f.name).join('\n');
+  putText($('#exWhere'), platform.kind === 'desktop' ? (folder ? 'Look in ' + folder + '.' : 'Look in the folder you chose.') : 'Look in your Downloads folder.');
+  exBody('done'); exSay($('#exDoneT').textContent + '. ' + $('#exFile').textContent); $('#exDoneBtn').focus();
+}
+/* the export window's live region (#exLive) speaks only at the start, the finish and an error; the progress text is not read out every frame */
+const exSay = t => { const l = $('#exLive'); l.textContent = ''; setTimeout(() => { l.textContent = t; }, 30); };
+/* how an export ends in the window: fail shows the error; a cancel, or a video nobody saved (the Save dialog was cancelled), closes the small
+   window or goes back to the options; anything saved shows "Video saved" once the last shot is done */
+function exEnd(outcome, msg, last) {
+  if (outcome === 'fail') { /* in "Every shot" the run stops here and says what was already saved */
+    const n = exSaved.length, text = msg + (n ? ' ' + (n === 1 ? '1 video was' : n + ' videos were') + ' saved before it.' : '');
+    putText($('#exErr'), text); exBody('fail'); exSay(text); $('#exClose').focus(); return;
+  }
+  if (!last && outcome !== 'cancel') return; /* more shots to come: the progress stays */
+  if (outcome === 'cancel' || !exSaved.length) {
+    if (exFrom === 'options') { exBody('opts'); renderExportDialog(); $('#exVideo').focus(); } else closeModal($('#exCancel'));
+    return;
+  }
+  showExDone();
+}
 async function exportVideo(opts = {}) {
   if (practicing) return endPracticeFirst(() => exportVideo(opts));
   if (exporting) return false;
+  if ($('#mExport').classList.contains('hidden')) { exFrom = 'panel'; openModal('mExport'); } /* the Export panel's button: the small window only */
+  else if (exShowing() === 'opts') exFrom = 'options';
+  if (!opts.batch || opts.batch.i === 0) exSaved = [];
+  exBody('run'); if (!opts.batch || opts.batch.i === 0) exSay('Exporting video');
   exporting = true; exCancel = false;
-  let done = false; const pre = opts.label ? opts.label + ' · ' : '';
+  let done = false, outcome = 'fail', failMsg = ''; const pre = opts.label ? opts.label + ' · ' : '';
+  /* the save's answer: saved, the Save dialog cancelled, or the file could not be written */
+  const saved = (r, name, size) => { if (r.ok) { exSaved.push({ name: r.name || name, size, folder: r.folder || '' }); return 'done'; } if (r.canceled) return 'savecancel'; failMsg = "Couldn't save the file. Try again."; return 'fail'; };
   const exProgress = (f, t) => exProgressRaw(f, t ? pre + t : t);
   const saveT = T;
   let enc = null, vf = null; /* closed in finally if the loop fails (C8) */
   try {
     setPlaying(false); setExportLock(true);
     const { w, h: hh } = exportSize(), fps = state.settings.fps, N = frames();
-    $('#exProg').hidden = false; $('#exCancel').hidden = false; exProgress(0, 'Starting…'); $('#exCancel').focus();
+    $('#exCancel').hidden = false; exProgress(0, 'Starting…'); $('#exCancel').focus();
     const r = getExportRenderer(w, hh);
     const cfg = await pickCodec(w, hh, fps);
     if (cfg) {
@@ -5063,13 +5381,14 @@ async function exportVideo(opts = {}) {
         while (enc.encodeQueueSize > 6) await new Promise(res => setTimeout(res, 2));
         if (i % 2 === 0) { exProgress((i + 1) / N, `Rendering frame ${i + 1} of ${N}…`); await new Promise(res => setTimeout(res, 0)); }
       }
-      if (exCancel) { try { enc.close(); } catch (e) { } toast('Export cancelled'); return; }
+      if (exCancel) { try { enc.close(); } catch (e) { } toast('Export cancelled'); outcome = 'cancel'; return; }
       exProgress(1, 'Finishing the MP4…');
       try { await enc.flush(); enc.close(); muxer.finalize(); } catch (e) { e.mp4 = true; throw e; }
       const blob = new Blob([muxer.target.buffer], { type: 'video/mp4' });
       if (blob.size < 1024) { const e = new Error('MP4 came out empty (' + blob.size + ' bytes)'); e.mp4 = true; throw e; }
-      exProgress(1, 'Done: ' + (blob.size < 0.1 * 1048576 ? Math.max(1, Math.round(blob.size / 1024)) + ' KB' : (blob.size / 1048576).toFixed(1) + ' MB'));
-      await saveFile(outName(state.settings.style, `${w}x${hh}`, `${fps}fps`) + '.mp4', blob); done = true;
+      exProgress(1, 'Done: ' + fmtSize(blob.size));
+      const name = outName(state.settings.style, `${w}x${hh}`, `${fps}fps`) + '.mp4';
+      outcome = saved(await saveFile(name, blob, true), name, blob.size); done = outcome !== 'fail'; /* a failed save stops "Every shot" */
     } else {
       // fallback: WebM in real time
       const c = r.domElement;
@@ -5089,21 +5408,22 @@ async function exportVideo(opts = {}) {
         const due = t0 + (i + 1) * 1000 / fps; await new Promise(res => setTimeout(res, Math.max(0, due - performance.now())));
       }
       rec.stop(); await stopped;
-      if (exCancel) { toast('Export cancelled'); return; }
+      if (exCancel) { toast('Export cancelled'); outcome = 'cancel'; return; }
       const blob = new Blob(parts, { type: 'video/webm' });
       if (blob.size < 1024) throw new Error('WebM came out empty (' + blob.size + ' bytes)');
-      await saveFile(outName(state.settings.style, `${w}x${hh}`) + '.webm', blob); done = true;
+      const name = outName(state.settings.style, `${w}x${hh}`) + '.webm';
+      outcome = saved(await saveFile(name, blob, true), name, blob.size); done = outcome !== 'fail';
     }
   } catch (e) {
     console.error(e);
     const msg = e && e.plain ? e.message : e && e.mp4 ? "Your PC couldn't make an MP4 at this size. Try 1280 px, or use Frame pack (zip)." : 'The export stopped because of an error. Try again, or try a smaller size.';
-    toast(msg, 6000); exProgress(0, msg);
+    exProgress(0, msg); outcome = 'fail'; failMsg = msg; /* the window shows it (exEnd) */
   } finally {
     if (vf) { try { vf.close(); } catch (e) { } }
     if (enc && enc.state !== 'closed') { try { enc.close(); } catch (e) { } }
     if (exCancel) exProgress(0, '');
     exporting = false; exCancel = false; $('#exCancel').hidden = true; setTime(saveT, false); applyAll(T); setExportLock(false);
-    if (!$('#mExport').classList.contains('hidden')) $('#exVideo').focus(); /* Cancel just hid itself; keep focus in the dialog (M8) */
+    if (!$('#mExport').classList.contains('hidden')) exEnd(outcome, failMsg, !opts.batch || opts.batch.i === opts.batch.n - 1); /* focus stays in the window (M8) */
   }
   return done;
 }
@@ -5141,9 +5461,10 @@ function enterPractice(force) {
   if (menuOpen()) hideMenu();
   focusPick = false; canvas.style.cursor = ''; setPlaying(false);
   const lt = $('#leftTabs .on');
+  syncFold(); /* leftFold is set (it starts null): the fold the user had comes back with the scene */
   practicing = {
     state, assets, selected, selIds: selIds.slice(), T, hist: hist.slice(), histDoc: histDoc.slice(), hi, doc: platform.getDoc(),
-    view, lastWorkView, layout, leftTab: lt ? lt.dataset.lt : 'add', promptEdit, shotEditId, snapHold, groundDirty, groundMigrate: [...groundMigrate],
+    view, lastWorkView, layout, leftFold, leftTab: lt ? lt.dataset.lt : 'add', promptEdit, shotEditId, snapHold, groundDirty, groundMigrate: [...groundMigrate],
     ed: { p: edCam.position.clone(), tg: edControls.target.clone() },
     top: { init: topInit, p: topCam.position.clone(), zoom: topCam.zoom, tg: topControls.target.clone() },
   };
@@ -5176,6 +5497,7 @@ function leavePractice() {
   try {
     if (layout !== p.layout) setLayout(p.layout, false);
     setView(p.view); lastWorkView = p.lastWorkView; setLeftTab(p.leftTab, false);
+    leftFold = p.leftFold; syncFold();
     showState();
   } catch (e) { console.error('ShotRef: could not show the real scene again', e); }
   if (snapLive > snapPruneAt) pruneSnapPool();
@@ -5196,8 +5518,8 @@ function endPracticeFirst(go) {
 let tourHandle = null;
 /* Runs a list of stops (see src/tour.js for the stop shape). Returns null, with a toast, while an export runs or a dialog is open. */
 function runStops(stops, opts = {}) {
-  if (exporting) { toast('Wait for the export to finish.'); return null; }
-  if (openModals().length) { toast('Close the open window first.'); return null; }
+  if (exporting) { toast('Wait for the export to finish.', null, 'bad'); return null; }
+  if (openModals().length) { toast('Close the open window first.', null, 'bad'); return null; }
   const { onEnd, canKey, ui, interactive } = opts;
   /* Esc goes to the app first when it has something to cancel */
   const appCanEsc = e => e.key === 'Escape' && (openModals().length > 0 || menuOpen() || !!rec || !!placing || !!pathMode || focusPick || (canKey ? canKey(e) : false));
@@ -5209,7 +5531,7 @@ function runStops(stops, opts = {}) {
 const BASIC_STOPS = [
   ['b-welcome', null],
   ['b-steps', '#stepSeg'],
-  ['b-add', '#left', () => setLeftTab('add', false)],
+  ['b-add', '#left', () => { setLeftTab('add', false); if ($('#app').classList.contains('lfold')) openLeft(); }], /* folded in steps 2 and 3: open it for this stop (put back when the tour ends) */
   ['b-picture', '#vp'],
   ['b-view', '#viewGrp'],
   ['b-panel', '#right'],
@@ -5223,9 +5545,16 @@ const BASIC_STOPS = [
    handsTour = true, or HANDS_TOUR_DEFAULT below. While it is off, the copy that talks about two tours uses its one-tour wording (textSolo / bodySolo). */
 const HANDS_TOUR_DEFAULT = false;
 const handsTourOn = () => !!getPref('handsTour', HANDS_TOUR_DEFAULT);
-const basicStops = () => BASIC_STOPS.map(([id, target, before]) => {
+/* a stop's words for where the app runs: textDesk on Windows, textSolo while the hands-on tour is off, textWeb / textSoloWeb on the web and claude.ai */
+function tourText(c) {
+  const desk = platform.kind === 'desktop', solo = !handsTourOn() && c.textSolo;
+  if (desk && c.textDesk) return c.textDesk;
+  const key = solo ? 'textSolo' : 'text';
+  return (!desk && c[key + 'Web']) || c[key];
+}
+const basicStops = () => BASIC_STOPS.filter(([id]) => !(id === 'b-file' && platform.kind === 'desktop')).map(([id, target, before]) => {
   const c = TOUR_COPY.basic[id];
-  return { id, target, before, title: c.title, text: !handsTourOn() && c.textSolo ? c.textSolo : c.text };
+  return { id, target, before, title: (platform.kind === 'desktop' && c.titleDesk) || c.title, text: tourText(c) };
 });
 /* The hands-on tour: each "try" stop waits for a change made through the real UI, on the practice stage (enterPractice). snap() records what its waitFor
    compares against when the stop begins, so something already true never skips a stop. before() puts the screen where the stop needs it (these view, step
@@ -5266,9 +5595,9 @@ const tourRefusal = () => exporting ? 'Wait for the export to finish.' : openMod
 function startTour(kind, opts = {}) {
   const firstRun = !!opts.firstRun;
   /* a tour is already running: leave it exactly as it is */
-  if (tourActive() || practicing) { toast(TOUR_COPY.ui.busy); if (firstRun) openStarters(true); return null; }
+  if (tourActive() || practicing) { toast(TOUR_COPY.ui.busy, null, 'bad'); if (firstRun) openStarters(true); return null; }
   if (kind === 'hands') {
-    if (!enterPractice()) { toast(tourRefusal()); if (firstRun) openStarters(true); return null; }
+    if (!enterPractice()) { toast(tourRefusal(), null, 'bad'); if (firstRun) openStarters(true); return null; }
     const tab = getPref('leftTab', undefined); /* the tour's Add and Scene steps save the remembered tab: put it back */
     const handle = runStops(handsStops(), {
       ui: TOUR_COPY.ui, interactive: true,
@@ -5283,10 +5612,12 @@ function startTour(kind, opts = {}) {
     return handle;
   }
   const tab = $('#leftTabs .on') ? $('#leftTabs .on').dataset.lt : 'add';
+  syncFold(); const foldWas = leftFold, navsWas = foldNavs; /* the Add stop may open the folded panel: put it back as it was */
   const handle = runStops(basicStops(), {
     ui: TOUR_COPY.ui,
     onEnd: reason => {
       setLeftTab(tab, false);
+      if (reason !== 'external' || foldNavs === navsWas) { leftFold = foldWas; syncFold(); } /* an outside action that navigated decides the fold itself */
       setPref('tourBasicDone', true);
       if (reason === 'external') return; /* another tour took over, or Open / New / a file from Windows swapped the project: no picker */
       if (firstRun) openStarters(true);
@@ -5306,7 +5637,7 @@ function tourFromDialog(modalId, kind, firstRun) {
 }
 function wireTourDialogs() {
   const W = TOUR_COPY.welcome, H = TOUR_COPY.helpPage;
-  $('#mTourT').textContent = W.title; $('#mTourP').textContent = W.body;
+  $('#mTourT').textContent = W.title;
   $('#tourQuick').textContent = W.quick; $('#tourHands').textContent = W.hands; $('#tourNo').textContent = W.notNow;
   $('#tourQuick').onclick = () => tourFromDialog('mTour', 'basic', true);
   $('#tourHands').onclick = () => tourFromDialog('mTour', 'hands', true);
@@ -5320,7 +5651,8 @@ function wireTourDialogs() {
 function applyHandsTourSwitch() {
   const on = handsTourOn(), W = TOUR_COPY.welcome;
   $('#tourHands').hidden = !on; $('#helpTourHands').hidden = !on;
-  $('#mTourP').textContent = on ? W.body : W.bodySolo;
+  const desk = platform.kind === 'desktop';
+  $('#mTourP').textContent = on ? (desk ? W.body : W.bodyWeb) : (desk ? W.bodySolo : W.bodySoloWeb);
 }
 function setHandsTour(on) { setPref('handsTour', !!on); applyHandsTourSwitch(); }
 
@@ -5333,16 +5665,21 @@ function openModal(id) {
   const m = $('#' + id), ae = document.activeElement;
   if (!openModals().length && ae && ae !== document.body) modalReturn = ae;
   m.classList.remove('hidden'); requestRender();
-  if (id === 'mExport') { $('#exProg').hidden = !exporting; renderExportDialog(); }
-  placeToast();
+  if (id === 'mExport') { exBody(exporting ? 'run' : 'opts'); renderExportDialog(); } /* opened by hand it always shows the options */
   if (exporting && id === 'mExport') return; /* the export lock owns focus */
+  if (id === 'mHelp') { setHelpTab('quick'); const b = m.querySelector('.dlgBody'); if (b) b.scrollTop = 0; } /* always opens on Quick start */
   /* the main button, else the first real control: the × only when there is nothing else (K6) */
   const f = m.querySelector('button.primary:not(:disabled)') || focusables(m).find(el => !el.hasAttribute('data-close')) || focusables(m)[0];
   if (f) f.focus();
 }
+/* the Quick start window's two tabs: Quick start (the seven steps) and Shortcuts */
+function setHelpTab(k) {
+  $$('#helpTabs button').forEach(b => { const on = b.dataset.ht === k; b.classList.toggle('on', on); b.setAttribute('aria-selected', String(on)); });
+  $('#helpQuick').hidden = k !== 'quick'; $('#helpKeys').hidden = k !== 'keys';
+}
 function closeModal(el) {
   const m = el.closest('.modal'); if (exporting && (m.id === 'mExport' || m.id === 'mCompare')) return;
-  m.classList.add('hidden'); placeToast(); requestRender();
+  m.classList.add('hidden'); requestRender();
   if (m.id === 'mTour' && tourAsk) { tourAsk = false; openStarters(true); }
   if (!openModals().length && modalReturn) { const r = modalReturn; modalReturn = null; if (r.isConnected && !r.closest('.modal')) r.focus(); }
 }
@@ -5373,14 +5710,14 @@ function confirmBox(title, text, cb, okLabel = 'OK', alt = null) {
 /* the one way to pick a project to open: native dialog on desktop, the file picker on the web */
 async function openDialog() {
   if (practicing) return endPracticeFirst(openDialog);
-  if (exporting) { toast('Wait for the export to finish.'); return; }
+  if (exporting) { toast('Wait for the export to finish.', null, 'bad'); return; }
   const f = await platform.openProject($('#fOpen'));
   if (f && typeof f.text === 'string') loadProjectText(f.text, f);
 }
 /* The desktop window asked to close. Nothing unsaved: allow it. Otherwise ask, and only allow it once it is safe. */
 function closeRequested() {
   if (practicing) return endPracticeFirst(closeRequested); /* so the question below is about the real scene */
-  if (exporting) { toast('Wait for the export to finish before closing.', 4000); return; }
+  if (exporting) { toast('Wait for the export to finish before closing.', 4000, 'bad'); return; }
   if (!platform.isDirty()) { platform.closeOk(); return; }
   const nm = platform.currentName();
   confirmBox('Save changes before closing?', (nm ? '"' + nm + '" has' : 'This project has') + ' changes that are not saved.',
@@ -5392,11 +5729,13 @@ function onDesktopMenu(cmd) {
   if (cmd === 'close-request') { closeRequested(); return; }
   if (cmd === 'about') { openAbout(); return; } /* only a window: a running tour just pauses under it */
   if (practicing && !/^tour-/.test(cmd)) { endPracticeFirst(() => onDesktopMenu(cmd)); return; }
-  if (exporting) { toast('Wait for the export to finish.'); return; }
+  if (exporting) { toast('Wait for the export to finish.', null, 'bad'); return; }
   if (cmd === 'new') openStarters();
   else if (cmd === 'open') openDialog();
   else if (cmd === 'save') saveProject(false);
   else if (cmd === 'save-as') saveProject(true);
+  else if (cmd === 'recent') openRecent();
+  else if (cmd === 'export') goStep('export');
   else if (cmd === 'help') openModal('mHelp');
   else if (cmd === 'tour-basic') startTour('basic');
   else if (cmd === 'tour-hands') startTour('hands');
@@ -5485,7 +5824,7 @@ function buildSettings() {
         prefCheck('recentOn', 'Keep recent projects'),
         prefSelect('keepRecent', 'How many to keep', PREF_LISTS.keepRecent.map(v => [v, String(v)])),
         h('div', { class: 'btns', style: 'margin-top:6px' },
-          h('button', { onclick: () => { closeModal($('#mSettings')); confirmBox('Clear recent projects?', 'This removes the list of recent projects stored in this browser. Your current scene stays open.', async () => { const r = await clearRecents(); toast(r === null ? 'Recent projects are not available in this browser window.' : 'Recent projects cleared'); }, 'Clear'); } }, 'Clear recent projects'),
+          h('button', { onclick: () => { closeModal($('#mSettings')); confirmBox('Clear recent projects?', 'This removes the list of recent projects stored ' + whereSaved() + '. Your current scene stays open.', async () => { const r = await clearRecents(); toast(r === null ? recentGone() + '.' : 'Recent projects cleared', null, (r === null ? 'bad' : 'info')); }, 'Clear'); } }, 'Clear recent projects'),
           h('button', { onclick: () => { closeModal($('#mSettings')); openModal('mHelp'); } }, 'Open quick start')))),
     h('div', { class: 'btns', style: 'margin-top:4px' }, h('button', { onclick: resetPrefs }, 'Reset all settings')));
 }
@@ -5531,7 +5870,7 @@ function setItemOf(o, tr, cx, cz) {
 }
 function saveSet(name, objs) {
   const keep = objs.filter(o => o.type !== 'image' && o.type !== 'model'), left = objs.length - keep.length;
-  if (!keep.length) { toast('Nothing to save'); return false; }
+  if (!keep.length) { toast('Nothing to save', null, 'bad'); return false; }
   const trs = keep.map(o => evalObj(o, T)), cx = trs.reduce((a, t) => a + t.p[0], 0) / trs.length, cz = trs.reduce((a, t) => a + t.p[2], 0) / trs.length;
   const list = libraryEntries().slice();
   name = (name || '').trim().slice(0, 40) || 'Set ' + (librarySets().length + 1);
@@ -5539,8 +5878,8 @@ function saveSet(name, objs) {
   const stored = writeLibrary(list);
   buildAddPanel(); propsDirty = true;
   const note = left ? ' (' + left + ' imported item' + (left > 1 ? 's' : '') + ' left out)' : '';
-  if (stored) toast('Saved "' + name + '" to My sets' + note, 4000);
-  else toast('Saved "' + name + '" for this visit only: this browser blocks storage here, so it will not be kept when the page is closed' + note, 6500);
+  if (stored) toast('Saved "' + name + '" to My sets' + note, 4000, 'ok');
+  else toast('Saved "' + name + '" for this visit only: this browser blocks storage here, so it will not be kept when the page is closed' + note, 6500, 'bad');
   return true;
 }
 function deleteSet(set) {
@@ -5561,6 +5900,7 @@ function placeSet(set) {
     o.color = typeof it.color === 'string' ? it.color : o.color; o.opts = clone(it.opts); o.base.r = it.base.r.slice(); o.base.s = it.base.s.slice();
     if (gid) o.grp = gid;
     if (it.type === 'mark') { o.opts.letter = nextMarkLetter(); o.name = 'Mark ' + o.opts.letter; }
+    else if (it.type === 'person' && /^Person/.test(String(it.name || 'Person'))) o.name = nextName(BODIES[bodyOf(o)].label);
     else o.name = nextName(String(it.name || catalogOf(it.type).label).replace(/\s+\d+$/, '') || catalogOf(it.type).label);
     state.objects.push(o); made.push(o);
   }
@@ -5654,17 +5994,18 @@ const recentTrim = () => recentTx('readwrite', st => {
 const agoText = t => { const m = Math.round((Date.now() - t) / 6e4); return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : m < 1440 ? Math.round(m / 60) + ' h ago' : new Date(t).toLocaleDateString(); };
 async function openRecent() {
   if (practicing) return endPracticeFirst(openRecent);
-  if (exporting) { toast('Wait for the export to finish.'); return; }
+  if (exporting) { toast('Wait for the export to finish.', null, 'bad'); return; }
   $('#recentGrid').innerHTML = ''; $('#recNote').textContent = 'Loading…';
   openModal('mRecent');
   await renderRecent();
 }
+const recentGone = () => platform.kind === 'desktop' ? 'Recent projects are not available in this window' : 'Recent projects are not available in this browser window';
 async function renderRecent() {
   const g = $('#recentGrid'), note = $('#recNote'), rows = await recentRows();
   g.innerHTML = '';
-  if (rows === null) { note.textContent = 'Recent projects are not available in this browser window. Use Save, then "Open a file…", instead.'; return; }
+  if (rows === null) { note.textContent = recentGone() + '. Use Save, then "Open a file…", instead.'; return; }
   if (!rows.length) { note.textContent = 'No recent projects yet. Projects you work on appear here automatically.'; return; }
-  note.textContent = 'Recent projects are saved automatically in this browser.';
+  note.textContent = 'Recent projects are saved automatically ' + whereSaved() + '.';
   rows.sort((a, b) => (b.updated || 0) - (a.updated || 0));
   for (const r of rows) {
     const cur = r.id === recentId(), readable = (() => { try { normalizeProject(JSON.parse(r.data), projectDefaults()); return true; } catch (e) { return false; } })();
@@ -5677,7 +6018,7 @@ async function renderRecent() {
   }
 }
 function openRecentRow(r, readable, cur) {
-  if (!readable) { toast("This project can't be opened here (damaged, or made by a newer ShotRef). It stays in the list until you remove it.", 5000); return; }
+  if (!readable) { toast("This project can't be opened here (damaged, or made by a newer ShotRef). It stays in the list until you remove it.", 5000, 'bad'); return; }
   closeModal($('#mRecent'));
   if (cur) return;
   loadProjectText(r.data, undefined, false, platform.kind === 'desktop'); /* a copy kept inside the app has no file: on the desktop it counts as unsaved, so Save asks where to put it */
@@ -5699,11 +6040,22 @@ function syncTopUI() {
   drawGuides();
 }
 function wire() {
-  wireTourDialogs(); wireTileDrag();
+  wireTourDialogs(); wireTileDrag(); wireTips();
   buildAddPanel();
   setLeftTab(getPref('leftTab', 'add'), false);
   $$('#leftTabs button').forEach(b => b.onclick = () => setLeftTab(b.dataset.lt));
+  $('#stripAdd').onclick = () => openLeft('add'); $('#stripItems').onclick = () => openLeft('scene'); $('#bFold').onclick = foldLeft;
+  /* a press in the 3D view holds the left panel's fold where it is until the button comes up (syncFold) */
+  vpEl.addEventListener('pointerdown', () => { vpDown = true; }, true);
+  /* 'blur' on window only: the capture listener also hears an element losing focus (canvas.focus() in the press itself) */
+  for (const ev of ['pointerup', 'pointercancel', 'blur']) window.addEventListener(ev, e => { if (ev === 'blur' && e.target !== window) return; if (vpDown) { vpDown = false; requestRender(); } }, true);
+  menuButton($('#bAspect'), aspectMenuItems); menuButton($('#bGuides'), guidesMenuItems);
   $$('#stepSeg button').forEach(b => b.onclick = () => goStep(b.dataset.step));
+  if (platform.kind === 'desktop') { /* the Windows File menu does this job, and Help lives in the Windows menu bar */
+    $('#bFile').style.display = 'none';
+    $('#bMenu').setAttribute('aria-label', 'Settings and Advanced mode'); $('#bMenu').setAttribute('title', 'Settings and Advanced mode');
+  }
+  $$('[data-where]').forEach(e => { e.textContent = whereSaved(); });
   menuButton($('#bFile'), fileMenuItems); menuButton($('#bMenu'), gearMenuItems); wireTakes();
   $('#bTracks').onclick = () => { tracksMode = tracksOpen() ? 'closed' : 'open'; syncTracks(); uiDirty = true; requestRender(); };
   const pn = $('#projName');
@@ -5718,8 +6070,9 @@ function wire() {
   $$('#feelBar button').forEach(b => { b.onclick = () => { state.camera.feel = b.dataset.feel; changed(true, true); syncTopUI(); }; peekHover(b, 'feel', b.dataset.feel); });
   $('#cbStart').onclick = () => setShotEnd('start'); $('#cbEnd').onclick = () => setShotEnd('end'); $('#cbRec').onclick = startRecord;
   $('#bUndo').onclick = undo; $('#bRedo').onclick = redo;
-  $$('#viewSeg button').forEach(b => b.onclick = () => setView(b.dataset.v));
+  $$('#viewSeg button').forEach(b => b.onclick = () => navView(b.dataset.v));
   $('#stHelp').onclick = () => { closeModal($('#stHelp')); openModal('mHelp'); };
+  $$('#helpTabs button').forEach(b => b.onclick = () => setHelpTab(b.dataset.ht));
   $('#cbCopy').onclick = copyFrame; $('#exCopy').onclick = copyFrame;
   $('#copySave').onclick = () => { if (copyBlob) { const fr = Math.round(T * state.settings.fps) + 1; saveFile(outName('frame' + String(fr).padStart(4, '0'), state.settings.style) + '.png', copyBlob); } closeModal($('#copySave')); };
   $$('#vpRight [data-g]').forEach(b => b.onclick = () => setGizmoMode(b.dataset.g));
@@ -5729,7 +6082,7 @@ function wire() {
   $('#bPip').onclick = () => { pipOn = !pipOn; syncTopUI(); };
   $('#bSplit').onclick = () => setLayout(layout === 'split' ? 'single' : 'split');
   $('#bGrid').onclick = () => { state.settings.gridOn = !state.settings.gridOn; applyEnv(); changed(true, true); syncTopUI(); };
-  $('#pipFrame').onclick = () => setView('camera');
+  $('#pipFrame').onclick = () => navView('camera');
   $('#bPlay').onclick = () => { if (!playing && T >= lastT() - 1e-6) setTime(0); setPlaying(!playing); };
   $('#bStart').onclick = () => setTime(0);
   $('#bEnd').onclick = () => setTime(lastT());
@@ -5738,7 +6091,7 @@ function wire() {
   $('#bLoop').onclick = () => { state.settings.loop = !state.settings.loop; syncTopUI(); changed(true); };
   $('#inDur').onchange = e => {
     const v = parseFloat(e.target.value);
-    if (!isFinite(v)) { syncTopUI(); toast('Type the shot length in seconds, for example 5.'); return; }
+    if (!isFinite(v)) { syncTopUI(); toast('Type the shot length in seconds, for example 5.', null, 'bad'); return; }
     if (v < 1) toast('1 s is the minimum shot length, so it was set to 1 s.', 3500);
     else if (v > 120) toast('120 s is the maximum shot length, so it was set to 120 s.', 3500);
     setDuration(v);
@@ -5752,7 +6105,7 @@ function wire() {
   $('#fModel').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (f) importModel(f); };
   $('#fImage').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (f) importImage(f); };
   $('#fPlate').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (f) importPlate(f); };
-  $('#cbPlate').onclick = () => { if (plateAsset()) { select('camera'); toast('Location photo settings are in the Camera panel'); } else pickImport('#fPlate', importPlate, PLATE_FILTER); };
+  $('#cbPlate').onclick = () => { if (plateAsset()) showPhotoSettings(); else pickImport('#fPlate', importPlate, PLATE_FILTER); };
   // drag & drop
   const drop = $('#drop');
   vpEl.addEventListener('dragover', e => { e.preventDefault(); drop.style.display = 'flex'; });
@@ -5760,7 +6113,7 @@ function wire() {
   /* a file dropped anywhere else must not make the browser open it and leave ShotRef (C7) */
   const hasFiles = e => !!e.dataTransfer && [...(e.dataTransfer.types || [])].includes('Files');
   window.addEventListener('dragover', e => { if (hasFiles(e)) e.preventDefault(); });
-  window.addEventListener('drop', e => { if (hasFiles(e) && !e.defaultPrevented) { e.preventDefault(); toast('Drop files on the 3D view to add them.'); } });
+  window.addEventListener('drop', e => { if (hasFiles(e) && !e.defaultPrevented) { e.preventDefault(); toast('Drop files on the 3D view to add them.', null, 'bad'); } });
   vpEl.addEventListener('drop', async e => {
     e.preventDefault(); drop.style.display = 'none';
     if (practicing && hasFiles(e)) endPracticeFirst(() => {}); /* the file goes into the real scene, as it would with no tour */
@@ -5780,7 +6133,9 @@ function wire() {
   $('#exAspect').onchange = e => { state.settings.aspect = e.target.value; changed(true, true); renderExportDialog(); };
   $('#exSize').onchange = e => { state.settings.size = +e.target.value; changed(true, true); renderExportDialog(); };
   $('#exGrid').onchange = e => { state.settings.exportGrid = e.target.checked; changed(true); };
-  $('#exVideo').onclick = exportVideo;
+  $('#exVideo').onclick = () => exportVideo();
+  $('#exDoneBtn').onclick = () => closeModal($('#exDoneBtn')); $('#exClose').onclick = () => closeModal($('#exClose'));
+  $('#exCopyPrompt').onclick = () => copyPromptText(currentPrompt(), $('#exPromptBox'));
   $('#exFrame').onclick = () => exportPNG(T);
   $('#exEnds').onclick = exportFramePack;
   $('#sheetSave').onclick = () => { if (sheetBlob) saveFile(nameFrom(['contact-sheet']) + '.png', sheetBlob); };
@@ -6064,7 +6419,7 @@ function wire() {
 
   // keyboard
   window.addEventListener('keydown', e => {
-    if (exporting) { if (e.key === 'p' || e.key === 'P' || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c')) toast('Wait for the export to finish.'); return; }
+    if (exporting) { if (e.key === 'p' || e.key === 'P' || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c')) toast('Wait for the export to finish.', null, 'bad'); return; }
     if (e.key === 'Tab' && trapTab(e)) return;
     if (isTyping()) return;
     const ae = document.activeElement;
@@ -6099,8 +6454,8 @@ function wire() {
     if (pathMode && (k === 'backspace' || k === 'delete')) { e.preventDefault(); removePathPoint(); return; }
     if (rec && k !== ' ') return;
     if (k === ' ') { e.preventDefault(); if (rec) return; $('#bPlay').click(); }
-    else if (k === 'c') setView(view === 'camera' ? lastWorkView : 'camera');
-    else if (k === 't') setView(view === 'top' ? 'editor' : 'top');
+    else if (k === 'c') navView(view === 'camera' ? lastWorkView : 'camera');
+    else if (k === 't') navView(view === 'top' ? 'editor' : 'top');
     else if (k === 'w') setGizmoMode('translate');
     else if (k === 'e') setGizmoMode('rotate');
     else if (k === 'r') setGizmoMode('scale');
@@ -6174,8 +6529,8 @@ function boot() {
   applyPrefs(); setView('editor'); setGizmoMode('translate');
   requestAnimationFrame(frame);
   let seen = false; try { seen = localStorage.getItem('shotref.seenHelp'); localStorage.setItem('shotref.seenHelp', '1'); } catch (e) { }
-  if (autosaveOff) toast(NO_AUTOSAVE, 6000); /* starter sets still open below on a first visit */
-  if (broken) toast("Your last session couldn't be restored, so ShotRef started a fresh scene.", 5000);
+  if (autosaveOff) toast(NO_AUTOSAVE, 6000, 'bad'); /* starter sets still open below on a first visit */
+  if (broken) toast("Your last session couldn't be restored, so ShotRef started a fresh scene.", 5000, 'bad');
   else if (embedded) { if (EMBED.message) toast(EMBED.message, 7000); }
   else if (!restored && !seen) setTimeout(() => { if (!openModals().length && !launchFile) { tourAsk = true; openModal('mTour'); } }, 400);
   /* photos and models come from IndexedDB (async); legacy autosaves carry them inline */
@@ -6198,7 +6553,7 @@ function boot() {
     /* a file that failed to load (maybe a passing error) must not be pruned this session (C5) */
     for (const id of want) if (!got[id]) idb.keep.add(id);
     const missing = want.length - n;
-    if (missing > 0) toast(missing === 1 ? "1 photo or model couldn't be restored. Open your saved project file to get them back." : missing + " photos or models couldn't be restored. Open your saved project file to get them back.", 6000);
+    if (missing > 0) toast(missing === 1 ? "1 photo or model couldn't be restored. Open your saved project file to get them back." : missing + " photos or models couldn't be restored. Open your saved project file to get them back.", 6000, 'bad');
     else if (want.length) toast('Restored your last session');
   }).catch(e => console.error('ShotRef: could not restore photos and models', e)).finally(() => {
     autosaveReady = true;
@@ -6207,11 +6562,11 @@ function boot() {
   /* another tab writing the same autosave (A5): warn once */
   let tabWarned = false;
   window.addEventListener('storage', e => {
-    if (e.key === AUTOSAVE_KEY && !tabWarned) { tabWarned = true; toast('ShotRef is open in another tab. Changes here may overwrite it.', 6000); }
+    if (e.key === AUTOSAVE_KEY && !tabWarned) { tabWarned = true; toast('ShotRef is open in another tab. Changes here may overwrite it.', 6000, 'bad'); }
   });
   window.addEventListener('pagehide', () => { flushAutosave(); recentFlush(); });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') recentFlush(); });
-  window.__shotref = { practice: { enter: () => enterPractice(), enterEarly: () => enterPractice(true), leave: leavePractice, active: () => !!practicing }, practicing: () => !!practicing, stateForSave, docInfo: () => ({ dirty: platform.isDirty(), name: platform.currentName(), path: platform.currentPath(), doc: platform.getDoc() }), tour: { run: runStops, active: tourActive, end: r => tourHandle && tourHandle.end(r), current: () => tourHandle }, startTour, setHandsTour, handsTourOn, setSimple, promptText, ensureDof, get selection() { return selIds; }, layout: () => layout, gizmoNdc: (x, y) => { const q = gizmo._getPointer({ clientX: x, clientY: y, button: 0 }); return { x: q.x, y: q.y }; }, arrowsVisible: () => [...arrows.values()].some(a => a.visible), videoBitrate, snapValue: snapWith, rotSnapDeg: () => pref('rotSnap'), controlSpeeds: () => ({ orbit: edControls.rotateSpeed, zoom: edControls.zoomSpeed, cam: camControls.rotateSpeed }), flySpeedNow, walkSpeedNow: () => pathSpeedOf({ type: 'person', opts: { pose: 'stand' } }), buildAddPanel: () => buildAddPanel(), saveRecentNow, recentFlush, recentStats, recentBusy, selectMany: ids => { selIds = ids.slice(); selected = selIds[selIds.length - 1] || null; updateGizmo(); uiDirty = true; propsDirty = true; requestRender(); }, pickAtScreen: (x, y) => { const rc = rayFromEvent({ clientX: x, clientY: y }); const h = rc && pickAt(rc); return h ? h.id : null; }, settleTime: () => { const t0 = performance.now(); solveGround(); return performance.now() - t0; }, groundMigrate: () => groundMigrate.size, liftKnob: () => { if (!liftGrp.visible) return null; const q = liftPick.getWorldPosition(new THREE.Vector3()); return window.__shotref.project(q.x, q.y, q.z); }, attachTo, setMount, writeCam, shownObj: (id, t) => shownObj(getObj(id), t), viewOf: id => { const v = views.get(id); if (!v) return null; v.group.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(v.group), sz = bb.getSize(new THREE.Vector3()); return { p: v.group.position.toArray(), yaw: v.group.rotation.y * R2D, s: v.group.scale.toArray(), size: sz.toArray(), wheels: v.wheels ? v.wheels.list.map(w => ({ spin: w.spin.rotation.x, steer: w.piv.rotation.y, front: w.front })) : null }; }, ringKnob: () => ringGrp.visible ? ringKnob.getWorldPosition(new THREE.Vector3()).toArray() : null, getPref, setPref, showMenu, menuButton, hideMenu, project: (x, y, z) => { const r = canvas.getBoundingClientRect(), R = viewRects(r.width, r.height); let cam = view === 'top' ? topCam : edCam, rr = R.work || { x: 0, y: 0, w: r.width, h: r.height }; if (camPane() && R.frame) { cam = renderCam; rr = R.frame; } const v = new THREE.Vector3(x, y, z).project(cam); return [r.left + rr.x + (v.x * 0.5 + 0.5) * rr.w, r.top + rr.y + (-v.y * 0.5 + 0.5) * rr.h]; }, get view() { return view; }, get placing() { return placing; }, get playing() { return playing; }, get step() { return currentStep(); }, get selected() { return selected; }, get state() { return state; }, get assets() { return assets; }, setT: t => setTime(t, false), applyMove, planMove, peek: () => ({ open: peek.open, src: peek.src, arg: peek.arg, kind: peek.src === 'move' ? peek.arg : null, demo: !!(peek.s && peek.s.demo), frames: peek.frames, endPose: (peek.s && peek.s.endPose) || null, poseRoot: peek.s && peek.s.P ? peek.s.P.pelvis.getWorldPosition(new THREE.Vector3()).toArray() : null }), addObject, select, setView, evalCam, exportVideo, exportPNG, pickCodec, _exportCanvas: () => exRenderer ? exRenderer.domElement : null, changed, writeObj, evalObj, setKey, get T() { return T; },
+  window.__shotref = { toast, basicStops, practice: { enter: () => enterPractice(), enterEarly: () => enterPractice(true), leave: leavePractice, active: () => !!practicing }, practicing: () => !!practicing, stateForSave, docInfo: () => ({ dirty: platform.isDirty(), name: platform.currentName(), path: platform.currentPath(), doc: platform.getDoc() }), tour: { run: runStops, active: tourActive, end: r => tourHandle && tourHandle.end(r), current: () => tourHandle }, startTour, setHandsTour, handsTourOn, setSimple, promptText, ensureDof, get selection() { return selIds; }, layout: () => layout, gizmoNdc: (x, y) => { const q = gizmo._getPointer({ clientX: x, clientY: y, button: 0 }); return { x: q.x, y: q.y }; }, arrowsVisible: () => [...arrows.values()].some(a => a.visible), videoBitrate, snapValue: snapWith, rotSnapDeg: () => pref('rotSnap'), controlSpeeds: () => ({ orbit: edControls.rotateSpeed, zoom: edControls.zoomSpeed, cam: camControls.rotateSpeed }), flySpeedNow, walkSpeedNow: () => pathSpeedOf({ type: 'person', opts: { pose: 'stand' } }), buildAddPanel: () => buildAddPanel(), saveRecentNow, recentFlush, recentStats, recentBusy, selectMany: ids => { selIds = ids.slice(); selected = selIds[selIds.length - 1] || null; updateGizmo(); uiDirty = true; propsDirty = true; requestRender(); }, pickAtScreen: (x, y) => { const rc = rayFromEvent({ clientX: x, clientY: y }); const h = rc && pickAt(rc); return h ? h.id : null; }, settleTime: () => { const t0 = performance.now(); solveGround(); return performance.now() - t0; }, groundMigrate: () => groundMigrate.size, liftKnob: () => { if (!liftGrp.visible) return null; const q = liftPick.getWorldPosition(new THREE.Vector3()); return window.__shotref.project(q.x, q.y, q.z); }, attachTo, setMount, writeCam, shownObj: (id, t) => shownObj(getObj(id), t), viewOf: id => { const v = views.get(id); if (!v) return null; v.group.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(v.group), sz = bb.getSize(new THREE.Vector3()); return { p: v.group.position.toArray(), yaw: v.group.rotation.y * R2D, s: v.group.scale.toArray(), size: sz.toArray(), wheels: v.wheels ? v.wheels.list.map(w => ({ spin: w.spin.rotation.x, steer: w.piv.rotation.y, front: w.front })) : null }; }, ringKnob: () => ringGrp.visible ? ringKnob.getWorldPosition(new THREE.Vector3()).toArray() : null, getPref, setPref, showMenu, menuButton, hideMenu, project: (x, y, z) => { const r = canvas.getBoundingClientRect(), R = viewRects(r.width, r.height); let cam = view === 'top' ? topCam : edCam, rr = R.work || { x: 0, y: 0, w: r.width, h: r.height }; if (camPane() && R.frame) { cam = renderCam; rr = R.frame; } const v = new THREE.Vector3(x, y, z).project(cam); return [r.left + rr.x + (v.x * 0.5 + 0.5) * rr.w, r.top + rr.y + (-v.y * 0.5 + 0.5) * rr.h]; }, get view() { return view; }, get placing() { return placing; }, get playing() { return playing; }, get step() { return currentStep(); }, get selected() { return selected; }, get state() { return state; }, get assets() { return assets; }, setT: t => setTime(t, false), applyMove, planMove, peek: () => ({ open: peek.open, src: peek.src, arg: peek.arg, kind: peek.src === 'move' ? peek.arg : null, demo: !!(peek.s && peek.s.demo), frames: peek.frames, endPose: (peek.s && peek.s.endPose) || null, poseRoot: peek.s && peek.s.P ? peek.s.P.pelvis.getWorldPosition(new THREE.Vector3()).toArray() : null }), addObject, select, setView, evalCam, exportVideo, exportPNG, pickCodec, _exportCanvas: () => exRenderer ? exRenderer.domElement : null, changed, writeObj, evalObj, setKey, get T() { return T; },
     get rebuilds() { return rebuilds; }, urlCacheIds: () => [...urlCache.keys()],
     /* batch H (takes) hooks for the smoke test */
     switchTake, newTake, snapPoolSize: () => snapLive, snapPruned: () => snapPruned,
@@ -6219,6 +6574,8 @@ function boot() {
     sky: () => ({ visible: skyDome.mesh.visible, cover: skyDome.uniforms.uCover.value, time: skyDome.time }),
     get history() { return { at: hi, length: hist.length, bytes: hist[hi].length }; },
     /* batch F (camera UX and light) hooks for the smoke test */
+    midOf: id => { const v = views.get(id); if (!v) return null; v.group.updateMatrixWorld(true); return midPoint(v).toArray(); },
+    frameEditorView, frameStats, newShot, switchShot, loadStarter, setEditCam: (q, tg) => { edCam.position.fromArray(q); if (tg) edControls.target.fromArray(tg); edControls.update(); requestRender(); }, editTarget: () => edControls.target.toArray(), topTarget: () => topControls.target.toArray(), starterPics: () => Object.fromEntries(starterPics),
     editCamPos: () => edCam.position.toArray(), detectMove, describeShot, camToWorld, pointsVisible: () => ckPts.some(m => m.visible),
     sunInfo: () => ({ castShadow: sun.castShadow, radius: sun.shadow.radius, intensity: sun.intensity, color: '#' + sun.color.getHexString(), gizmo: { visible: sunGrp.visible, pos: sunGrp.position.toArray() } }),
     shotPixels: (t, w = 240) => { const hh = Math.max(2, Math.round(w / arOf(state.settings.aspect))), r = getExportRenderer(w, hh); renderExportFrame(r, t, w, hh); const c = document.createElement('canvas'); c.width = w; c.height = hh; const g = c.getContext('2d'); g.drawImage(r.domElement, 0, 0); const d = g.getImageData(0, 0, w, hh).data; applyAll(T); return d; },

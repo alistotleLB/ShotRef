@@ -6,14 +6,14 @@
  * window.shotrefDesktop contract (the Electron preload must provide exactly this; data crosses as string / ArrayBuffer):
  *   version                                  app version string
  *   saveBlob(name, arrayBuffer, filters)     native Save dialog for exports. filters: [{ name, extensions }]
- *                                            -> Promise<{ ok, name?, canceled?, error? }>
+ *                                            -> Promise<{ ok, name?, folder?, canceled?, error? }> (folder: where it was written)
  *   saveProject(text, { saveAs, path, name })  writes the project text. With a path and no saveAs it writes straight to that
  *                                            file, else it shows the Save dialog (name = suggested file name)
  *                                            -> Promise<{ ok, name, path, canceled?, error? }>
  *   openProject()                            native Open dialog -> Promise<{ text, name, path } | null>
  *   pickFile(kind, filters)                  native Open dialog for imports ('import' has its own remembered folder) -> Promise<{ name, type, data: ArrayBuffer } | null>
  *   setTitle(str)                            window title
- *   onMenu(cb)                               cb(cmd) for menu clicks: 'new' | 'open' | 'save' | 'save-as' | 'help' | 'about' | 'tour-basic' | 'tour-hands' | 'close-request'
+ *   onMenu(cb)                               cb(cmd) for menu clicks: 'new' | 'open' | 'save' | 'save-as' | 'recent' | 'export' | 'help' | 'about' | 'tour-basic' | 'tour-hands' | 'close-request'
  *   whatsNew(), checkUpdates()               desktop only: the main process shows What's new / runs a manual update check
  *   onOpenFile(cb)                           cb({ text, name, path }): a file passed on launch, double-clicked or picked from Recent
  *   Notes for the main process: do not give menu items the page's own shortcuts (Ctrl+S, Ctrl+Shift+S, Ctrl+O), or they fire twice
@@ -45,7 +45,7 @@ function updateTitle() {
 }
 const errText = e => (e && (e.message || e.error)) || String(e || 'unknown error');
 
-/* Save a file. Returns { ok, name } | { ok:false, canceled } | { ok:false, error } */
+/* Save a file. Returns { ok, name, folder? (desktop only) } | { ok:false, canceled } | { ok:false, error } */
 async function saveBlob(filename, blob, opts = {}) {
   try {
     if (desk) return (await desk.saveBlob(filename, await blob.arrayBuffer(), opts.filters || [])) || { ok: false, error: 'no answer' };

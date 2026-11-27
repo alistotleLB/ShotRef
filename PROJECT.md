@@ -14,9 +14,15 @@ Builds:  dist/ShotRef.html ~1086 KB; release/ShotRef-Setup-1.7.0.exe (122 MB), S
 Tests:   npm test 377/377 (702 s), test:desktop 28/28, 0 Electron left (2026-11-26, release commit f61b3e1).
 Code:    PUBLIC GitHub main = 1.7.0. claude.ai artifact 6uRy4QMBjvK9Rn5PLedSUq = 1.7.0 (version 12, private, Desert overlook demo kept).
 Known:   walking feet slide slightly at heel strike. Not checked: a real update from an installed copy to 1.7.0.
-Next:    Ali updates the installed app. Then UI phase 4 needs Ali's choices: camera tabs 5->3, one-click moves as 7 paired rows,
-         steps vs Editor/Top/Camera, motion feel off the timeline, Take menu placement.
-Not yet tried by Ali: the 1.7.0 update itself; the quick tour.
+Branch:  ui/audit-fixes (NOT merged, NOT released) = all 18 findings of UI-AUDIT.md, built 2026-11-26/27: grey "chosen" ring (orange kept
+         for main button, camera, keys, selected item), starter sets open on a framed view and have pictures, empty-stage guidance,
+         messages in 3 kinds at the top, one tooltip, drawn symbols, camera tabs Shot/Move/Lens, left panel folds in steps 2-3,
+         "Video saved" finish, Windows app: one File menu, window memory, min 1100x600. Tests there: npm test 431/431 (848 s),
+         test:desktop 38/38, 0 Electron left (2026-11-27, commit 6b3004e). Main task by hand: 9 clicks to a saved MP4.
+         Go back: tag before-ui-audit-fixes (= main 8651127); main is untouched.
+Next:    Ali runs checklist C7 on the branch build. On his yes: merge into main, release as 1.8.0, republish the claude.ai page.
+         Still Ali's call (old phase 4): steps vs Editor/Top/Camera, Take menu placement; the audit's "bolder idea" (each step owns the screen).
+Not yet tried by Ali: the 1.7.0 update itself; the quick tour. (C7, the UI audit fixes: tried 2026-11-27, "all look good".)
 
 ## Ali's goals              (his exact words, dated; never reworded)
 "Act as a principal software engineer leading a review of my application. Inspect the actual code, run the app and safe checks where possible, and give me a prioritized plan covering architecture, bugs and reliability, performance, and UI/UX." - Ali, 2026-11-22
@@ -74,6 +80,9 @@ Archive: closed notes and old log lines live in `PROJECT-archive.md`, word for w
 | Ali's desktop check | checklist C2 | all items OK | Ali | not run |
 | Tours: smoke + desktop | `npm test`, `npm run test:desktop` | all pass | Claude | PASS 2026-11-24 (317/317, 23/23) |
 | Ali's tour check | checklist C4 | all items OK | Ali | not run |
+| UI audit fixes: smoke + desktop | `npm run build && npm test`, `npm run test:desktop` | all pass | Claude | PASS 2026-11-27 (431/431, 38/38) on ui/audit-fixes |
+| Main task by hand, new build | new empty stage, add a man, Frame, Set start/end, Export video | MP4 saved, clear finish | Claude | PASS 2026-11-27 (9 clicks, 1.1 MB MP4, "Video saved") |
+| Ali's UI audit check | checklist C7 | all items OK | Ali | PASS 2026-11-27 ("all look good") |
 
 ### Known failures
 - None (2026-11-23). Parked: storage probe treats a completely full localStorage as "no storage" for that session.
@@ -82,12 +91,13 @@ Archive: closed notes and old log lines live in `PROJECT-archive.md`, word for w
 - none
 
 ### Ali's checklists
-- C1: build dist/ShotRef.html of 2026-11-23. Steps in the Handoff section. Result: (waiting)
+- C1: build dist/ShotRef.html of 2026-11-23. Steps in the Handoff section. Result: 2026-11-27 PASS. "Ok, all look good, I tested the list above." During it he could not find the gear (item 12): the settings button was drawn like a sun; redrawn as a gear the same day (N-021).
 - C2: Windows app 1.1.0. Superseded by C3 (never run).
 - C3: ShotRef 1.2.0 web + Windows. Steps in the Handoff section. Result: (waiting)
 - C5: What's new + ShotRef message boxes, 1.5.0 (after release). Steps in the Handoff section. Result: (waiting)
 - C6: UI refresh, branch ui/refresh (npm run build, open dist/ShotRef.html). Steps in the Handoff section. Result: (waiting)
 - C4: quick tour, ShotRef 1.4.0 (released). Steps in the Handoff section. Result: (waiting). Hands-on items dropped (tour switched off, N-012).
+- C7: UI audit fixes, branch ui/audit-fixes (commit 6b3004e or later). Steps in the Handoff section. Result: (waiting)
 
 ## Ali's notes               (every request/feedback, word for word)
 | Id | Date | Ali's words | Status |
@@ -100,16 +110,23 @@ Archive: closed notes and old log lines live in `PROJECT-archive.md`, word for w
 | N-018 | 2026-11-25 | "Yes, phases 1–3" | done 2026-11-25 on branch ui/refresh (not merged, not released) |
 | N-017 | 2026-11-25 | "In this conversation we'll work on improving the UI and the menu panels. Use all relevant skills, as well as project keeper. Split tasks and orchestrate when needed. Use Sonnet 5.5 and Opus 5.5..." then "commit them, and start executin. The main painpoint is that the interface looks cluttered and intimidating. It's hard to find what I am looking for. There is too much wordiness and unnecesary clitter on some panels. And the colors/shades all seem too monotonous, so it's challenging to see where one section ends and the other begins." | phases 1-3 done 2026-11-25 (branch ui/refresh); phase 4 (structure) waits on Ali's choices |
 | N-007 | 2026-11-23 | "dont forget to orchestrate the tasks across Opus and Sonnet for maximum efficiency" | done (Sonnet built, Opus reviewed, medium effort) |
+| N-019 | 2026-11-26 | "Audit the UI design of this project and recommend changes. Do not change any files until I approve." (full 6-step brief: understand, look at the real thing, audit 18 areas, report as UI-AUDIT.md, stop and wait, then apply approved fixes group by group with before/after screenshots) | done 2026-11-26: UI-AUDIT.md, 18 findings, pictures in docs/ui-audit/ |
+| N-020 | 2026-11-26 | "How about we do everything? But I need you to orchestrate the tasks between Sonnet 5.5 and Opus 5.5 helpers for maximum efficiency and maximum output quality. choose the appropriate model and effort level for each task. You can also create new sessions under this project when needed to split the work efficiently. Use any relevant skills. Always keep in mind: this app is meant to be used by the average person, so it should be clear, helpful, and easily understandable. It should guide the user where guidance is needed. It should not over-complicate things. Clear?" | built 2026-11-27 on branch ui/audit-fixes, awaiting C7 (guessed: "everything" = the 18 findings, not the optional "bolder idea"; finding 6 built as recommended in the report) |
+| N-021 | 2026-11-27 | "for number 12, where is the gear?" then, asked whether to redraw the button as a proper gear: "Yes, redraw it" | done 2026-11-27 (the top-right settings button was drawn like a sun; now a gear) |
+| N-022 | 2026-11-27 | "Ok, all look good, I tested the list above." | done 2026-11-27 (C7 passed) |
 
 ### Approved and locked     (changing these needs Ali's yes)
 - 2026-11-22 "Approve all": every item in the review checklist, including adding playwright-core as a dev-only test tool.
 - 2026-11-24 "Approved, but take these points into consideration": onboarding tour design (docs/superpowers/specs/2026-11-24-onboarding-tour-design.md), including the practice stage and the first-run question.
+- 2026-11-26 "How about we do everything?": all 18 findings of UI-AUDIT.md. This changes the 2026-11-26 "one selected look" from an orange ring to a grey ring (#c3c8cf), still one look everywhere (finding 1 said so and asked for his yes).
 
 ## Lessons
 - The claude.ai artifact was edited in another conversation and drifted far ahead of this folder; the desktop app was built from the old code / cause: two copies of the app with no shared source / rule: this folder (GitHub) is the only source; never publish or edit ShotRef on claude.ai without building it from here, and republish from dist/ after changes.
 - Desktop tests left 72 Electron copies (288 processes) running, slowing every later run 2-3x / cause: killing only the main process on Windows / rule: kill the whole tree (taskkill /T /F); check `tasklist | grep -ci electron` = 0 after test runs.
 - Each review round on file handling found a new way to lose work (open over unsaved, undo past Open, Save as + undo, restored autosave) / cause: file identity and unsaved state interact with undo and autosave / rule: any change to save/open/undo/autosave gets a reviewer and a test per path.
 - Each fix's own review caught real problems the fix itself created (backup of a broken autosave lost on quota; IndexedDB clean-up deleting a broken session's photos; keyboard reaching buttons behind the export window; shortcut letters changing a focused dropdown) / cause: fixes that touch storage or keyboard interact with other features / rule: keep a review after every fix and a test for each review finding.
+- UI audit fixes 2026-11-27: every one of the 5 tasks came back from its helper with a full test run that had 1-2 failures "re-run alone", and 3 of 5 reviews found a real problem the tests missed (hints cut off in a small window; an invisible faded message swallowing clicks; the left panel jumping under the mouse mid-drag). Helpers also changed content nobody asked for twice (starter people turned into women; a starter walker moved) / cause: helpers finish on a targeted re-run, and design briefs leave room for "improvements" / rule: a task is not done until the FINAL code has one clean full run; keep an independent review per task plus one whole-branch review; say "design only, starter content unchanged" in every brief and have the reviewer check it.
+- A helper working in its own copy of the project (worktree) cannot edit the main folder, and needs a link to node_modules / rule: give worktree helpers a task whose files no other helper touches, have them commit there, merge afterwards; remove the node_modules link (cmd //c rmdir node_modules) before the worktree is deleted, or the real node_modules can be deleted with it.
 - Mixed CRLF/LF line endings crept into test/smoke.cjs and made diffs unreadable / cause: different editing tools / rule: keep all files LF (check with `tr -cd '\r' < file | wc -c` = 0).
 
 ## Review 2026-11-22
@@ -128,20 +145,35 @@ Not verified: the real claude.ai frame (downloads, clipboard), a normal non-head
 Proposed order: Step 0 backup + smoke test (needs OK) -> quick wins -> A1, then A2+S2 -> design/measure items -> optional tidy-ups.
 
 ## Handoff                   (replaced each session)
-STATE     UI refresh phases 1-3 done on branch ui/refresh (3 commits on top of c3a52ce). main still = 1.5.0 + sky work. Not merged, not released.
-CHANGED   See Log 2026-11-25. Audit material: scratchpad ui-audit/ (review-visual.md, review-ia.md, review-copy.md, shoot.cjs re-captures 78 screenshots).
-TESTS     npm test 362/362 (678 s), test:desktop 28/28, 0 Electron left. Final screenshots checked by Claude (camera shot tab, person panel).
-OPEN      Phase 4 needs Ali: camera tabs 5->3 (Frame, Move, Lens), one-click moves as 7 paired rows, one navigation system (steps vs Editor/Top/Camera),
-          motion feel off the timeline, outliner grouping, Take menu placement. Copy rows skipped: prompt labels, Help/About long text; cloud chip "Overcast" clashes with the Overcast scene preset.
-          Output tab still repeats Export's aspect/size/style (phase 4, I2). Scene preset chips wrap ("Night" alone on line 2).
-FINDINGS  Surfaces were 1.07-1.09:1 apart; headings were 11px muted under 13px content; 14 orange states on one screen. Tour dim colour follows --bg (test updated).
-NEXT      Ali runs C6 on the web page (npm run build, open dist/ShotRef.html in Chrome/Edge):
-          1. Look at the right panel -> each section is its own card with a clear white heading.
-          2. Select a person -> Pose, Move & face, Eyeline, Appearance, Placement; Attach folded; "Frame with camera..." button picks the camera framing that person.
-          3. Click the sun -> only sun controls (3 in normal mode); "Sky and clouds: Scene panel" goes back to the scene.
-          4. Step 3 Export -> a summary line (size, aspect, style) with Change, then Export video, Frame pack, Prompt.
-          5. Right-click a person -> Aim camera at this, Mount camera on this, Face camera all work.
-          6. Overall: does it still feel cluttered or intimidating anywhere? Name the panel.
+STATE     Branch ui/audit-fixes holds all 18 UI audit findings (UI-AUDIT.md). main = 1.7.0, untouched; tag before-ui-audit-fixes marks it.
+          Not merged, not released, claude.ai page not republished. Version number still 1.7.0.
+CHANGED   See Log 2026-11-27. Plan with exact values: docs/superpowers/plans/2026-11-26-ui-audit-fixes.md. Before/after pictures: docs/ui-audit/ and docs/ui-audit/after/.
+TESTS     npm test 431/431 (848 s), test:desktop 38/38, 0 Electron left, on 6b3004e. Main task by hand on that build: 9 clicks, MP4 saved, "Video saved" window. 13 visual screens OK.
+OPEN      Ali's C7 below. Not checked by anyone: the page inside the real claude.ai frame (does a download land in Downloads, as the finish window says?);
+          window memory on two monitors or a scaled display; a slow PC; a screen reader; a light-mode Windows title bar.
+          Small leftovers (reviewed, left on purpose): in split view at 1100x700 the editor half's hint is cut with "…"; the empty-stage line wraps to two lines at 1100x700;
+          a problem message can sit over the title row of a tall dialog for up to 8 s; Quick start tabs have no arrow-key movement.
+          Choices made for Ali that he can reverse: listed under "Rulings" in the 2026-11-27 log line.
+TRIED     A helper turned the second person in four starter sets into a woman so the name "Woman 1" fitted: reverted (starter content is not a design change).
+          Folding the left panel from the derived step (selection-based): jumped under the mouse mid-drag; replaced by "only on deliberate navigation".
+FINDINGS  A worktree helper cannot edit the main folder (harness rule) and needs a node_modules junction; remove the junction before deleting the worktree.
+          The old flaky check "restoring an autosave at start never moves anything either" raced the page's own start-up autosave (400 ms debounce); its wait is now 1000 ms.
+          Leftover worktree: .claude/worktrees/agent-af48337753a8f8b4b (branch worktree-agent-af48337753a8f8b4b, fully merged, junction already removed). Safe to delete.
+NEXT      Ali runs C7. Build: branch ui/audit-fixes (`npm run build`, open dist/ShotRef.html in Edge or Chrome; Windows app: `npm run desktop`).
+          1. Open the page fresh -> the screen looks calmer: chosen settings have a grey outline, orange is only on the step number, the time counter and main buttons.
+          2. File, New -> seven starter sets, each with a picture; "Empty stage" is last.
+          3. Pick "Walk and talk", then "Street" -> each opens on a clear view of the people, not a black screen.
+          4. Pick "Empty stage" -> a line in the middle says what to do, and "Getting started" is at the top of the right panel. Add a man: both disappear.
+          5. Press 2 Frame -> the left panel folds to a narrow strip and the picture gets bigger; the camera has three tabs (Shot, Move, Lens); "Set start" appears once.
+          6. Click the small "16:9" chip above the picture -> aspect choices. Click the grid button next to it -> guide choices.
+          7. Set start, turn the camera, Set end -> it plays; the message appears at the top and covers no button.
+          8. Press 1 Build, then drag the camera icon in the 3D view -> the left panel stays put while you drag.
+          9. Press 3 Export, Export video -> a small progress window, then "Video saved" with the file name and Done / Copy prompt.
+          10. Hover the timeline buttons -> drawn symbols with an instant tooltip above them.
+          11. Open a file that is not a project (any .json) -> a red-edged message that stays about 8 seconds.
+          12. Gear button (far top right), "Quick start and shortcuts" (Windows app: Help menu, "Quick start") -> seven short steps, Shortcuts on its own tab.
+          13. Windows app (`npm run desktop`): one File menu (the Windows one), thin scroll bars, Settings says "Saved on this computer."; resize, close, reopen -> same size and place.
+          14. Overall: does anything still feel cluttered or unclear? Name the panel.
           Reply with the numbers that didn't work, and what you saw.
 
 ## Log                       (append only, dated, real numbers; always last)
@@ -156,3 +188,5 @@ NEXT      Ali runs C6 on the web page (npm run build, open dist/ShotRef.html in 
 - 2026-11-26 claude.ai artifact 6uRy4QMBjvK9Rn5PLedSUq republished from 1.6.0 (Ali: "Yes, republish"), version 11, Desert overlook embed (key desert-overlook-v2) carried over from the live page. Checked headless first: 23 objects + photo, 10 picture tiles, 0 console errors. Not checked: inside the real claude.ai frame.
 - 2026-11-26 1.7.0 RELEASED (Ali: "publish the new release"): Items list grouped by category (Ali approved a mockup, then asked for bigger category names), double-click rename fixed (the click's redraw wiped the rename box), hover previews. npm test 377/377 (702 s), test:desktop 28/28, 0 Electron. Installers 122/111 MB. Release has 5 assets; latest.yml serves 1.7.0. Not checked: update from an installed copy; claude.ai artifact not republished.
 - 2026-11-26 claude.ai artifact 6uRy4QMBjvK9Rn5PLedSUq republished from 1.7.0 (Ali: "Yes, update it"), version 12, Desert overlook embed (key desert-overlook-v2) carried over from the live page. Checked headless under the claude.ai CSP first: 23 objects + photo, grouped Items list, 0 console errors. Not checked: inside the real claude.ai frame.
+- 2026-11-27 UI audit fixes (N-019, N-020) on branch ui/audit-fixes, 16 commits after the save point tag before-ui-audit-fixes; not merged, not released. Audit 2026-11-26: built app driven in headless Edge at 6 window sizes plus imitated 125%/150% scaling, real Windows app opened once; 18 findings, none Critical (UI-AUDIT.md). Work split by docs/superpowers/plans/2026-11-26-ui-audit-fixes.md into 5 tasks: T1 colour/text/clarity (Sonnet 5.5 medium), T2 Windows app in its own worktree in parallel (Sonnet medium), T3 first-time guidance (Opus 5.5 medium), T4 messages/names/tooltips/symbols (Sonnet medium), T5 camera tabs 5->3, folding left panel, export finish (Opus high). Each task: Opus review, fix round by the same helper, scoped re-review; then one whole-branch Opus review (verdict: ready to merge, 10 small notes) and one fix wave of 12 small items. Reviews caught 3 real problems the tests missed (hints cut off at 1100x700; a faded problem message still swallowing clicks; the left panel folding under the mouse mid-drag). Numbers: 3D view width in steps 2-3 868->1060 px at 1440x900, 708->900 px on a 150% laptop, 528->720 px at 1100x700; main task 10->9 clicks; orange outlines on the opening screen 13->2; checks 377->431. Final: npm test 431/431 (848 s), test:desktop 38/38, 0 Electron left, commit 6b3004e. Behaviour changes beyond pure styling (all in the audit or ruled during the work): editor view framed automatically when a scene loads (50 ms search limit); Street starter walker moved x 3.4->3.8 (stood inside the parked car); "Every shot" export stops at the first failed save; Windows window min height 700->600 and it remembers size/position. Rulings made for Ali (reversible): "everything" = the 18 findings, not the bolder idea; hints kept to 3 short tips (right-click tip only when an item is selected); lock icon and menu tick no longer orange; starter people keep their bodies and are named Man 1 / Man 2; Advanced camera Position/Aims at live on the Shot tab; the left panel folds only on deliberate navigation; aspect ratio is a chip above the picture (also in Export); "Choose photo…" is an ordinary button; Windows File menu items read "Open recent file" and "Browse recent projects…". Not checked: real claude.ai frame, two monitors, scaled display, slow PC, screen reader.
+- 2026-11-27 (later) Ali ran C7: "Ok, all look good, I tested the list above." He could not find the gear ("for number 12, where is the gear?"): the top-right settings button was drawn as a circle with eight rays (a sun), and had been since before the audit (same drawing at tag before-ui-audit-fixes); the audit and the task 4 symbol pass both missed it. Redrawn as an 8-tooth gear on his "Yes, redraw it" (src/index.html, one line). npm test 431/431 (875 s), test:desktop 38/38, 0 Electron left. Checklist line 12 corrected (the item is "Quick start and shortcuts"; on the Windows app it is Help, Quick start).
