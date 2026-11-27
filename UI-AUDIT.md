@@ -1,7 +1,7 @@
 # ShotRef UI audit
 
 Date: 26 November 2026. Version checked: 1.7.0 (built fresh from this folder today).
-Nothing in the app was changed. The only new files are this report and ten screenshots in `docs/ui-audit/`.
+At the time of this report nothing in the app was changed. Update 27 November 2026: all 18 findings were then built on the branch `ui/audit-fixes` (see PROJECT.md); "after" pictures are in `docs/ui-audit/after/`.
 
 ## What ShotRef is, as I understand it
 
