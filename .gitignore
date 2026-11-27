@@ -9,3 +9,4 @@ sandbox/app.html
 Thumbs.db
 reference/
 .claude/settings.local.json
+.claude/worktrees/

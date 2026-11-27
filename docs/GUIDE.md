@@ -56,7 +56,7 @@ The small **split view** button next to them shows the editor on the left and th
 
 **Sky and clouds.** The **Sky** section of the **Scene** panel has cloud buttons from Clear to Overcast. Pick a **Look** (fluffy, wispy or a flat layer) and how fast the clouds **Drift** during the shot (or Still to freeze them). **Shuffle clouds** tries a different arrangement. Clouds also soften the sun, so more cloud means softer shadows, and the sky is named in the prompt. Advanced mode adds exact amount, edge softness and wind direction.
 
-**Location photo.** In **Frame**, open the **Photo** tab to put a photo behind your scene as a location. Useful when you want the AI to match a real place.
+**Location photo.** In **Frame**, press **Location photo** above the picture to put a photo behind your scene as a location. Its settings are on the camera's **Shot** tab. Useful when you want the AI to match a real place.
 
 ## 2. Frame the shot and move the camera
 
@@ -78,9 +78,11 @@ Press `C` for camera view.
 
 Press **Play the move** or `Space` to watch it. Drag the yellow points on the camera path to reshape it. Right-click the path to add a point.
 
-**Camera tabs.** The panel on the right has **Shot**, **Move**, **Lens**, **Photo** and **Output**.
-- **Lens:** focal length in mm, depth of field, and focus. Double-click anything in the picture to focus on it. Double-click something else later, or right-click it and choose **Pull focus here**, to pull focus.
-- **Move:** motion feel (**Constant**, **Gentle**, **Strong**) and handheld shake.
+**Camera tabs.** The panel on the right has **Shot**, **Move** and **Lens**.
+- **Lens:** focal length in mm, handheld shake, depth of field, and focus. Double-click anything in the picture to focus on it. Double-click something else later, or right-click it and choose **Pull focus here**, to pull focus.
+- **Move:** the ready-made camera moves, **Record**, and motion feel (**Constant**, **Gentle**, **Strong**).
+- **Above the picture:** the small **16:9** chip changes the aspect ratio, and the grid button beside it shows framing guides.
+- In **Frame** and **Export** the left panel folds to a thin strip so the picture gets more room. Click the strip, or go back to **Build**, to open it.
 - The camera can also aim at a person (right-click them, **Aim camera at this**) or ride on an object such as a car (**Mount camera on this**, or the **Mount** section, which starts folded).
 - Rarely used sections (Animation, Attach, Save as set, Mount) start folded. Click the heading to open them.
 

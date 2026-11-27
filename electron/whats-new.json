@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.8.0",
+    "items": [
+      "A calmer screen: a chosen option now has a quiet grey outline. Orange is kept for the main button of each step, the camera and the time counter.",
+      "A bigger picture: in the Frame and Export steps the left panel folds to a thin strip. Click the strip, or go back to Build, to open it again.",
+      "The camera panel has three tabs: Shot, Move and Lens. The aspect ratio and the guides now sit above the picture.",
+      "Starter sets show a picture of each set and open on a clear view of the scene. An empty stage tells you how to begin.",
+      "Clearer messages, at the top of the view: a green tick when something finished, a red edge when something needs you. Tooltips appear at once.",
+      "Exporting a video ends on a \"Video saved\" window with the file name and where it was saved.",
+      "One File menu, at the top of the window, with Recent projects and Export. ShotRef remembers the size and place of its window."
+    ]
+  },
+  {
     "version": "1.7.0",
     "items": [
       "See before you click: hover a camera move, a motion feel, a lens, a shot size or a pose, and a small moving preview shows what it will do to your shot.",
