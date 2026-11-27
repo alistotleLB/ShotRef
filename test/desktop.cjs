@@ -30,7 +30,7 @@ async function launch(args = [], opts = {}) {
   return { app, page, errors, userData };
 }
 /* a File menu item as a Windows user uses it: the application menu's item (the page has no File button on the desktop) */
-const FILE_LABELS = { new: 'New', open: 'Open…', save: 'Save', saveas: 'Save as…', recent: 'Recent projects…', export: 'Export…' };
+const FILE_LABELS = { new: 'New', open: 'Open…', save: 'Save', saveas: 'Save as…', recent: 'Browse recent projects…', export: 'Export…' };
 const fileCmd = (app, cmd) => app.evaluate(({ Menu }, l) => { Menu.getApplicationMenu().items.find(i => i.label === 'File').submenu.items.find(i => i.label === l).click(); }, FILE_LABELS[cmd]);
 /* stub the native dialogs: each call takes the next answer from the queue and counts calls */
 async function stubDialogs(app, saveAnswers, openAnswers = []) {
@@ -602,13 +602,17 @@ const ok = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
     const items = await page.$$eval('#ctxMenu button', b => b.map(x => x.textContent.replace(/\s+/g, ' ').trim()));
     ok(items.length === 2 && /^.?\s?Advanced mode/.test(items[0]) && /^Settings/.test(items[1]), 'gear menu: ' + items.join(' | '));
     ok(await page.$$eval('#ctxMenu .head', h => h.length) === 0, 'a heading is left in the gear menu');
+    /* no Help in that menu, so the gear's name, tooltip and tour stop do not say help */
+    const g = await page.evaluate(() => { const b = document.querySelector('#bMenu'), st = window.__shotref.basicStops().find(x => x.id === 'b-gear'); return { label: b.getAttribute('aria-label'), tip: b.getAttribute('data-tip'), title: b.getAttribute('title'), stop: st && st.title }; });
+    ok(g.label === 'Settings and Advanced mode' && g.tip === 'Settings and Advanced mode' && !g.title && g.stop === 'Settings and Advanced mode', 'gear wording: ' + JSON.stringify(g));
     await kill(app);
   });
 
-  await check('the Windows File menu offers Recent projects… and Export…, and each one works', async () => {
+  await check('the Windows File menu offers Open recent file, Browse recent projects… and Export…, and each one works', async () => {
     const { app, page } = await launch();
     const labels = await app.evaluate(({ Menu }) => Menu.getApplicationMenu().items.find(i => i.label === 'File').submenu.items.map(i => i.label));
-    ok(labels.includes('Recent projects…') && labels.includes('Export…'), 'File menu: ' + labels.join(' | '));
+    ok(labels.includes('Open recent file') && labels.includes('Browse recent projects…') && labels.includes('Export…'), 'File menu: ' + labels.join(' | '));
+    ok(!labels.includes('Open recent') && !labels.includes('Recent projects…'), 'the two old look-alike names are back: ' + labels.join(' | '));
     await fileCmd(app, 'recent');
     await page.waitForSelector('#mRecent:not(.hidden)', { timeout: 5000 });
     ok(!/browser/.test(await page.textContent('#recNote')), 'the Recent projects note still says browser');

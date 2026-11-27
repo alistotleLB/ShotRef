@@ -211,8 +211,8 @@ function buildMenu() {
     { label: 'File', submenu: [
       { label: 'New', click: () => send('shotref:menu', 'new') },
       { label: 'Open…', accelerator: 'CmdOrCtrl+O', registerAccelerator: false, click: () => send('shotref:menu', 'open') },
-      { label: 'Open recent', submenu: recent.length ? recent : [{ label: 'No recent projects', enabled: false }] },
-      { label: 'Recent projects…', click: () => send('shotref:menu', 'recent') }, /* the page's own Recent projects window, with pictures */
+      { label: 'Open recent file', submenu: recent.length ? recent : [{ label: 'No recent projects', enabled: false }] },
+      { label: 'Browse recent projects…', click: () => send('shotref:menu', 'recent') }, /* the page's own Recent projects window, with pictures */
       { type: 'separator' },
       { label: 'Save', accelerator: 'CmdOrCtrl+S', registerAccelerator: false, click: () => send('shotref:menu', 'save') },
       { label: 'Save as…', accelerator: 'CmdOrCtrl+Shift+S', registerAccelerator: false, click: () => send('shotref:menu', 'save-as') },

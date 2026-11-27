@@ -3356,7 +3356,7 @@ check('move detection: names static, dolly, orbit, pan, truck, crane, zoom, doll
   await camSet(p, { keys: many, base: many[0] });
   ok((await detect(p)).title.includes('Free / recorded move'), 'more than 8 keys: ' + (await detect(p)).title);
   await camSet(p, { keys: [KEY(0, A, G), KEY(5, [0, 1.6, 5], G)], feel: 'strong' });
-  ok(/strong ease/.test((await detect(p)).sub) && /2 keys/.test((await detect(p)).sub), 'the sub line names the feel and the keys: ' + (await detect(p)).sub);
+  ok(/ · strong · /.test((await detect(p)).sub) && /2 keys/.test((await detect(p)).sub), 'the sub line names the feel and the keys: ' + (await detect(p)).sub);
   noErrors(p);
 });
 
@@ -7271,11 +7271,19 @@ check('messages: loading the Living room starter shows no "Can float" message', 
 check('names: Render style, Constant/Gentle/Strong, Full cover, and people named by what they are', async ({ open }) => {
   const p = await open(); await settle(p, 400);
   const text = () => p.evaluate(() => document.body.innerText);
-  const bad = t => /View style|Gentle ease|Strong ease/.test(t);
+  const bad = t => /View style|gentle ease|strong ease/i.test(t); /* any case: the Move card once said "gentle ease" */
   for (const tab of ['Shot', 'Move', 'Lens']) { await camTab(p, tab); ok(!bad(await text()), 'old name on the ' + tab + ' tab'); }
   await camTab(p, 'Move');
   const feels = await p.evaluate(() => [...document.querySelectorAll('#feelBar button, #props .seg.feel button')].map(b => b.textContent.trim()).join());
   ok(/Constant,Gentle,Strong/.test(feels), 'motion feel names: ' + feels);
+  const subs = [];
+  for (const feel of ['constant', 'gentle', 'strong']) {
+    await camSet(p, { keys: [KEY(0, [0, 1.6, 8], [0, 1.2, 0]), KEY(4, [0, 1.6, 5], [0, 1.2, 0])], feel }); await settle(p, 200);
+    subs.push(await p.evaluate(() => { const e = document.querySelector('#props .mc-sub'); return e ? e.textContent : ''; }));
+    ok(!bad(await text()), 'old feel name on the Move card (' + feel + ')');
+  }
+  const sub = subs.join(' | ');
+  ok(/ · constant · .* · gentle · .* · strong · /.test(sub), 'the Move card does not name the feel as the Feel buttons do: ' + sub);
   await p.evaluate(() => window.__shotref.select('export')); await settle(p, 300); await p.click('#xoChange'); await settle(p, 150); /* task 5: Render style lives in the Export panel */
   ok(/Render style/.test(await text()) && !bad(await text()), 'Render style is missing from the Export panel');
   await p.evaluate(() => window.__shotref.select(null)); await settle(p, 300);
@@ -7315,6 +7323,13 @@ check('tooltips: no button under #app keeps a title, every one has data-tip, and
   await p.mouse.move(5, 300); await settle(p, 100);
   await p.focus('#bStart'); await p.keyboard.press('Shift+Tab'); await p.keyboard.press('Tab'); await settle(p, 150);
   ok(await p.evaluate(() => document.querySelector('#tip').classList.contains('show')), 'no tooltip on keyboard focus');
+  /* the folded strip: the tip opens to the right of each button, level with it, and never covers the other button */
+  await p.click('#stepSeg [data-step="frame"]'); await settle(p, 300);
+  for (const id of ['#stripAdd', '#stripItems']) {
+    await p.hover(id); await settle(p, 150);
+    const t = await p.evaluate(s => { const tip = document.querySelector('#tip').getBoundingClientRect(), b = document.querySelector(s).getBoundingClientRect(), o = document.querySelector(s === '#stripAdd' ? '#stripItems' : '#stripAdd').getBoundingClientRect(); const hit = !(tip.right <= o.left || tip.left >= o.right || tip.bottom <= o.top || tip.top >= o.bottom); return { show: document.querySelector('#tip').classList.contains('show'), dx: tip.left - b.right, dy: Math.abs((tip.top + tip.bottom) / 2 - (b.top + b.bottom) / 2), hit }; }, id);
+    ok(t.show && t.dx >= 0 && t.dx <= 12 && t.dy <= 1.5 && !t.hit, id + ': the strip tip is not to the right of its button: ' + JSON.stringify(t));
+  }
   noErrors(p);
 });
 check('symbols: the transport buttons hold drawings, not text glyphs', async ({ open }) => {
@@ -7565,6 +7580,7 @@ check('export finish: Copy prompt puts the prompt on the clipboard, or shows it 
   const want = await p.evaluate(() => { window.__shotref.select('export'); return new Promise(res => requestAnimationFrame(() => requestAnimationFrame(() => res(document.querySelector('#props .promptbox') ? document.querySelector('#props .promptbox').value : '')))); });
   ok(want.length > 20 && (r.clip === want || r.box === want), 'the prompt was neither copied nor shown: ' + JSON.stringify({ r, want: want.slice(0, 40) }));
   ok(/Prompt copied|Ctrl\+C/.test(r.toast), 'Copy prompt said nothing: ' + r.toast);
+  if (r.clip === want) ok(r.toast === 'Prompt copied. Paste it next to the reference clip.', 'the finished window says other words than the Export panel: ' + r.toast);
   /* the clipboard refused (as in some sandboxes): the prompt shows selected in the window */
   await p.evaluate(() => { navigator.clipboard.writeText = () => Promise.reject(new Error('no')); document.execCommand = () => false; });
   await p.click('#exCopyPrompt'); await settle(p, 300);
@@ -7731,5 +7747,97 @@ check('tabs: the dot that marks a tab in use sits right after its label', async 
   const g = await p.evaluate(() => { const b = [...document.querySelectorAll('#props .tabs button')].find(x => x.querySelector('.tdot')), d = b.querySelector('.tdot').getBoundingClientRect(), r = document.createRange(); r.selectNodeContents(b.firstChild); const t = r.getBoundingClientRect(); return { gap: d.left - t.right, mid: (d.top + d.bottom) / 2, tTop: t.top, tBot: t.bottom }; });
   ok(g.gap >= 3 && g.gap <= 6, 'the dot is ' + g.gap.toFixed(1) + ' px after the label');
   ok(g.mid > g.tTop + 2 && g.mid < g.tBot - 2, 'the dot is not level with the text: ' + JSON.stringify(g));
+  noErrors(p);
+});
+
+/* ---- final fix wave ---- */
+check('framing: a scene loaded in the Export step is framed for the open panel when Build shows the editor', async ({ open }) => {
+  const p = await open(); await p.setViewportSize({ width: 1100, height: 700 }); await settle(p, 400);
+  /* two people far apart across the shot: the width of the view decides the framing */
+  const wide = await p.evaluate(() => {
+    const S = window.__shotref; S.loadStarter('dialogue');
+    const s = JSON.parse(JSON.stringify(S.state)), c = s.camera.base, dx = c.tg[0] - c.p[0], dz = c.tg[2] - c.p[2], L = Math.hypot(dx, dz) || 1;
+    s.objects.filter(o => o.type === 'person').forEach((o, i) => { const k = i % 2 ? -1 : 1; o.base.p = [c.tg[0] - dz / L * 5 * k, o.base.p[1], c.tg[2] + dx / L * 5 * k]; o.keys = []; });
+    return JSON.stringify({ app: 'ShotRef', version: 2, state: s, assets: {} });
+  });
+  for (const kind of ['wide', 'street', 'walktalk', 'dialogue', 'room', 'cafe', 'marks']) {
+    await p.click('#stepSeg [data-step="export"]'); await settle(p, 300);
+    ok(await leftW(p) === 44, kind + ': setup: Export should fold the panel');
+    if (kind === 'wide') await openFile(p, 'wide.shotref', wide); else { await p.evaluate(k => window.__shotref.loadStarter(k), kind); await settle(p, 400); }
+    ok(await p.evaluate(() => window.__shotref.view) === 'camera', kind + ': setup: the scene should load in the camera view');
+    await p.click('#stepSeg [data-step="build"]'); await settle(p, 500);
+    ok(await leftW(p) === 236, kind + ': the panel is ' + await leftW(p) + ' px in Build');
+    const r = await p.evaluate(() => {
+      const S = window.__shotref, vp = document.querySelector('#vp').getBoundingClientRect(), c = S.evalCam(S.T).p;
+      const pts = S.state.objects.filter(o => o.type === 'person' && o.visible !== false).map(o => { const v = S.viewOf(o.id); return { id: o.name, s: S.project(v.p[0], v.p[1] + v.size[1] / 2, v.p[2]) }; });
+      pts.push({ id: 'camera', s: S.project(c[0], c[1], c[2]) });
+      /* framing keeps them inside the middle 80 % of the view; a frame made for a wider view lets them reach past it */
+      const nd = q => [Math.abs(q.s[0] - (vp.left + vp.right) / 2) / (vp.width / 2), Math.abs(q.s[1] - (vp.top + vp.bottom) / 2) / (vp.height / 2)];
+      return { view: S.view, vp: { w: vp.width, h: vp.height }, out: pts.filter(q => nd(q).some(v => v > 0.85)).map(q => ({ id: q.id, nd: nd(q).map(v => +v.toFixed(2)) })), max: Math.max(...pts.map(q => Math.max(...nd(q)))).toFixed(2), n: pts.length };
+    });
+    ok(r.view === 'editor', kind + ': Build did not show the editor: ' + r.view);
+    ok(!r.out.length, kind + ': past the framed middle of the editor view: ' + JSON.stringify(r));
+  }
+  noErrors(p);
+});
+
+check('fold: with focus on a step pill, a held press on the floor keeps the panel still through key 2 until release', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.evaluate(() => { window.__shotref.select(null); window.__shotref.setView('editor'); }); await settle(p, 200);
+  await p.click('#stepSeg [data-step="build"]'); await settle(p, 250);
+  ok(await leftW(p) === 236, 'setup: the panel should be open in Build');
+  const at = await p.evaluate(() => { const r = document.querySelector('#vp').getBoundingClientRect(); for (let y = r.bottom - 40; y > r.top + 40; y -= 20) for (let x = r.left + 40; x < r.right - 40; x += 20) if (window.__shotref.pickAtScreen(x, y) === null) return [x, y]; return null; });
+  ok(at, 'setup: no empty floor on screen');
+  await p.focus('#stepSeg [data-step="build"]');
+  await p.mouse.move(at[0], at[1]); await p.mouse.down();
+  await p.keyboard.press('2');
+  const widths = [];
+  for (let i = 0; i < 4; i++) { await p.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))); widths.push(await leftW(p)); }
+  await p.mouse.up(); await settle(p, 300);
+  ok(widths.every(w => w === 236), 'the panel moved while the button was down: ' + widths.join());
+  ok(await leftW(p) === 44, 'key 2 did not fold the panel after the release: ' + await leftW(p));
+  noErrors(p);
+});
+
+check('fold: the quick tour ended by a scene swap puts the panel back; practice puts back the fold it found', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  await p.click('#stepSeg [data-step="frame"]'); await settle(p, 300);
+  ok(await leftW(p) === 44, 'setup: not folded');
+  ok(await p.evaluate(() => !!window.__shotref.startTour('basic')), 'the tour did not start');
+  for (let n = 0; n < 6; n++) { await settle(p, 300); const g = await p.evaluate(TOUR_TARGET); if (!g || g.id === 'b-add') break; await p.click('#tourNext'); }
+  await settle(p, 300);
+  ok((await p.evaluate(TOUR_TARGET) || {}).id === 'b-add' && await leftW(p) === 236, 'setup: the Add stop did not open the panel');
+  await p.evaluate(() => window.__shotref.loadStarter('dialogue')); await settle(p, 400);
+  ok(!(await p.evaluate(() => window.__shotref.tour.active())), 'the swap did not end the tour');
+  ok(await leftW(p) === 44, 'the panel stayed open after the tour ended: ' + await leftW(p));
+  /* practice: the fold the user had comes back, whatever the practice stage did to it */
+  for (const [pill, other, want] of [['frame', 'build', 44], ['build', 'export', 236]]) {
+    await p.click('#stepSeg [data-step="' + pill + '"]'); await settle(p, 300);
+    ok(await leftW(p) === want, 'setup ' + pill + ': ' + await leftW(p));
+    ok(await p.evaluate(() => window.__shotref.practice.enterEarly()), 'practice did not start');
+    await p.click('#stepSeg [data-step="' + other + '"]'); await settle(p, 300);
+    ok(await leftW(p) !== want, 'setup: the practice navigation did not change the fold');
+    await p.evaluate(() => window.__shotref.practice.leave()); await settle(p, 300);
+    ok(await leftW(p) === want, 'after practice from ' + pill + ': ' + await leftW(p) + ' px, want ' + want);
+  }
+  noErrors(p);
+});
+
+check('final wave: gear wording on the web, one Copy prompt wording, "✓ Start" not orange, the camera bar before its tools, no double error announcement', async ({ open }) => {
+  const p = await open(); await settle(p, 300);
+  const g = await p.evaluate(() => { const b = document.querySelector('#bMenu'), st = window.__shotref.basicStops().find(x => x.id === 'b-gear'); return { label: b.getAttribute('aria-label'), tip: b.dataset.tip, stop: st.title }; });
+  ok(g.label === 'Settings and help' && g.tip === 'Settings, Advanced mode and help' && g.stop === 'Settings and help', 'the web gear wording changed: ' + JSON.stringify(g));
+  await p.evaluate(() => { navigator.clipboard.writeText = () => Promise.resolve(); window.__shotref.select('export'); }); await settle(p, 400);
+  await p.click('#xoCopyPrompt'); await settle(p, 200);
+  const tt = await p.evaluate(() => document.querySelector('#toast').textContent);
+  ok(tt === 'Prompt copied. Paste it next to the reference clip.', 'Export panel Copy prompt: ' + tt);
+  await camTab(p, 'Move');
+  await p.click('#props .movecard button:has-text("Set start")'); await settle(p, 400);
+  const c = await p.evaluate(() => { const s = [...document.querySelectorAll('#props .mthumb.ok span')], ref = document.createElement('span'); ref.style.color = 'var(--ink)'; document.body.append(ref); const ink = getComputedStyle(ref).color; ref.remove(); return { n: s.length, txt: s.map(e => e.textContent), cols: s.map(e => getComputedStyle(e).color), ink }; });
+  ok(c.n >= 1 && c.txt.every(t => t.startsWith('✓ ')) && c.cols.every(x => x === c.ink), '"✓ Start" is not in the ink colour: ' + JSON.stringify(c));
+  const a = await p.evaluate(() => { const bar = document.querySelector('#camBar'), tools = document.querySelector('#camTools'), strip = document.querySelector('#leftStrip'); return { order: !!(bar.compareDocumentPosition(tools) & Node.DOCUMENT_POSITION_FOLLOWING), err: document.querySelector('#exErr').getAttribute('role'), strip: strip.getAttribute('role'), stripLabel: strip.getAttribute('aria-label') }; });
+  ok(a.order, 'Tab reaches the aspect chip and guides before Set start');
+  ok(a.err === null, '#exErr still has role ' + a.err + ' (the live region already announces it)');
+  ok(a.strip === 'group' && !!a.stripLabel, 'the strip role: ' + JSON.stringify(a));
   noErrors(p);
 });

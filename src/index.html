@@ -404,7 +404,7 @@ button.icon{padding:5px 8px;min-width:32px;display:inline-flex;align-items:cente
 .mc-arrow{color:var(--acc);font-size:15px}
 .mthumb{display:flex;flex-direction:column;gap:4px;padding:3px;border-radius:7px;background:var(--card);font-size:12px;color:var(--mute)}
 .mthumb img,.mthumb .noimg{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:5px;display:block;background:var(--bg)}
-.mthumb.ok span{color:var(--acc2)}
+.mthumb.ok span{color:var(--ink)}
 #hud .shotdesc{color:#fff}
 #addArea,#outliner{flex:1;overflow:auto;min-height:0}
 #addArea{padding-bottom:12px}
@@ -478,8 +478,8 @@ button.on,.shotchip.on,button.on:hover{background:var(--sel);box-shadow:var(--ri
 #leftStrip button{width:32px;height:32px;min-width:0;padding:0;background:transparent;color:var(--ink2)}
 #leftStrip button:hover{background:var(--panel2);color:var(--ink)}
 @media (max-width:900px){#app.lfold{grid-template-columns:44px minmax(0,1fr) 250px}}
-/* camera view: the frame shape chip and the guides button in the icon cluster */
 #props .sec{scroll-margin-top:48px}
+/* camera view: the frame shape chip and the guides button in their own cluster (#camTools), top right */
 #camTools{top:10px;right:10px;display:none;flex-direction:row;gap:3px;pointer-events:auto;background:rgba(22,24,28,.78);backdrop-filter:blur(6px);border:1px solid rgba(255,255,255,.08);border-radius:9px;padding:3px}
 #camTools .ib{position:relative;display:inline-flex;align-items:center;justify-content:center;background:transparent;border:0;border-radius:6px;padding:5px 6px;color:var(--ink2)}
 #camTools .ib:hover{background:rgba(255,255,255,.08)}
@@ -521,7 +521,7 @@ button.on,.shotchip.on,button.on:hover{background:var(--sel);box-shadow:var(--ri
 
   <aside id="left">
     <div id="leftHead"><div class="tabs" id="leftTabs" role="tablist"><button data-lt="add" role="tab">Add</button><button data-lt="scene" role="tab">Items <span class="cnt" id="sceneCnt"></span></button></div><button id="bFold" class="icon" aria-label="Fold the panel away" title="Fold this panel away to give the picture more room"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 7l-5 5 5 5M18 7l-5 5 5 5"/></svg></button></div>
-    <div id="leftStrip" role="toolbar" aria-label="Open the left panel" aria-orientation="vertical">
+    <div id="leftStrip" role="group" aria-label="Open the left panel">
       <button id="stripAdd" class="icon" aria-label="Add" title="Add people and props"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
       <button id="stripItems" class="icon" aria-label="Items" title="Items: everything in the scene"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></svg></button>
     </div>
@@ -542,16 +542,16 @@ button.on,.shotchip.on,button.on:hover{background:var(--sel);box-shadow:var(--ri
       <button id="bPip" class="ib" data-tip="Camera preview in the corner" aria-label="Camera preview in the corner"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><rect x="12" y="12" width="7" height="5" rx="1" fill="currentColor"/></svg></button>
       <button id="bCamHere" class="ib" data-tip="Put the shot camera where you are looking now" aria-label="Put the shot camera where you are looking now"><svg viewBox="0 0 24 24"><rect x="3" y="8" width="12" height="9" rx="2"/><path d="M15 11l5-3v9l-5-3M7 4l2 3 2-3"/></svg></button>
     </div>
-    <div id="camTools" class="ov" role="toolbar" aria-label="Framing">
-      <button id="bAspect" class="ib chip" aria-haspopup="menu" title="Aspect: click to change it"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9V6h4M17 6h4v3M21 15v3h-4M7 18H3v-3"/></svg><span id="aspectTxt">16:9</span></button>
-      <button id="bGuides" class="ib" aria-haspopup="menu" aria-label="Framing guides" title="Framing guides over the picture"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M9 5v14M15 5v14M3 9.7h18M3 14.3h18"/></svg></button>
-    </div>
     <div id="camBar" class="ov">
       <button id="cbStart" title="Save this framing as the first frame">Set start</button>
       <button id="cbEnd" title="Save this framing as the last frame">Set end</button>
       <button id="cbRec" class="recbtn" title="Operate the camera live while the shot plays">● Record</button>
       <button id="cbPlate" title="Put a photo of the location behind the scene">Location photo</button>
       <button id="cbCopy" title="Copy this frame to the clipboard (Ctrl+C)">Copy frame</button>
+    </div>
+    <div id="camTools" class="ov" role="toolbar" aria-label="Framing">
+      <button id="bAspect" class="ib chip" aria-haspopup="menu" title="Aspect: click to change it"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9V6h4M17 6h4v3M21 15v3h-4M7 18H3v-3"/></svg><span id="aspectTxt">16:9</span></button>
+      <button id="bGuides" class="ib" aria-haspopup="menu" aria-label="Framing guides" title="Framing guides over the picture"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M9 5v14M15 5v14M3 9.7h18M3 14.3h18"/></svg></button>
     </div>
     <div id="splitLine" class="ov"></div>
     <div id="selBar" class="ov" role="toolbar" aria-label="Selection tools"></div>
@@ -663,7 +663,7 @@ button.on,.shotchip.on,button.on:hover{background:var(--sel);box-shadow:var(--ri
   </div>
   <div id="exFail" hidden>
     <h2 id="exFailT">Video not saved</h2>
-    <p id="exErr" class="exline" role="alert"></p>
+    <p id="exErr" class="exline"></p>
     <div class="btns exbtns"><button id="exClose" class="primary">Close</button></div>
   </div>
 </div></div>

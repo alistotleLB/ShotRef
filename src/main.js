@@ -26,7 +26,7 @@ import { TOUR_COPY } from './tour-copy.js';
  * autosaveReady, autosaveWaiting boot has loaded stored assets / a save is waiting for that: boot, writeAutosave
  * inlineTooBig, saveTimer        autosave fallback state and the debounce timer: writeAutosave, autosave, flushAutosave
  * topInit, skyTex                top view framed once: setView, frameEditorView; flat sky gradient (fog colour and the backdrop where the dome is hidden): applyEnv
- * edFramePending                 frame the editor view on the next drawn frame (boot, replaceProject): frameEditorSoon, frame
+ * edFramePending                 frame the editor view on the next drawn frame that shows the editor (boot, replaceProject): frameEditorSoon, frame
  * starterPicJob                  the Start window's picture run (a newer one stops the old): fillStarterPics (the pictures: the const starterPics)
  *                                (the sky dome, skyDome, is a const: its look follows applyEnv and placeSun, its clock applyAll)
  * camState, pilotActive          shot camera at the playhead: applyAll; user is steering it: fly, camControls, records
@@ -60,6 +60,7 @@ import { TOUR_COPY } from './tour-copy.js';
  * exFrom, exSaved                where a video export started ('panel' or 'options') and the files it saved: exportVideo (shown by exEnd, showExDone)
  * leftFold, vpDown              the left panel should be folded (null until boot decides): foldForStep (goStep, navView), openLeft, foldLeft;
  *                                a pointer is down in the 3D view (the fold waits for its release): wire
+ * foldNavs                       how many deliberate navigations decided the fold (a quick tour ended from outside compares it): foldForStep
  * revealSec                      a panel section to open and scroll to on the next panel build: showPhotoSettings, importPlate (renderProps clears it)
  * modalReturn, cfCb             focus to return to after dialogs: openModal, closeModal; confirm callback: confirmBox
  */
@@ -130,14 +131,9 @@ function toast(msg, ms, kind = 'info') {
   clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), dur);
 }
 /* One tooltip for every button. A button's title is moved to data-tip (and kept as its accessible name), and #tip shows it at once on
-   hover and on keyboard focus: below the button, above it in the bottom 160 px of the window, and never past the left or right edge.
+   hover and on keyboard focus: below the button, above it in the bottom 160 px of the window, to the right of the folded strip's buttons,
+   and never past the left or right edge.
    Inputs, dropdowns and labels keep their native title. */
-function tourText(c) {
-  const desk = platform.kind === 'desktop', solo = !handsTourOn() && c.textSolo;
-  if (desk && c.textDesk) return c.textDesk;
-  const key = solo ? 'textSolo' : 'text';
-  return (!desk && c[key + 'Web']) || c[key];
-}
 let tipFor = null;
 function tipify(el) {
   if (el.tagName !== 'BUTTON' || !el.hasAttribute('title')) return;
@@ -159,6 +155,11 @@ function tipShow(btn) {
   const text = btn.getAttribute('data-tip'), t = $('#tip'); if (!text) { tipHide(); return; }
   tipFor = btn; t.textContent = text; t.classList.remove('show');
   const r = btn.getBoundingClientRect(), w = t.offsetWidth, hh = t.offsetHeight, M = 6;
+  if (btn.closest('#leftStrip')) { /* the folded strip's buttons sit one above the other: the tip goes to the right, so it never covers the next one */
+    t.style.top = Math.max(M, Math.min(r.top + r.height / 2 - hh / 2, window.innerHeight - hh - M)) + 'px';
+    t.style.left = Math.min(r.right + 6, window.innerWidth - w - M) + 'px';
+    t.classList.add('show'); return;
+  }
   const above = r.bottom > window.innerHeight - 160;
   t.style.top = Math.max(M, above ? r.top - 6 - hh : r.bottom + 6) + 'px';
   t.style.left = Math.max(M, Math.min(r.left + r.width / 2 - w / 2, window.innerWidth - w - M)) + 'px';
@@ -1964,7 +1965,7 @@ function frame(now) {
     if ((groundDirty || groundMigrate.size) && !dragActive && !placing && !pathMode && !playing && !gizmo.dragging && !rec) { migrateGround(); if (groundDirty) settleGround(); } /* things come to rest on what is under them once the edit is over */
     if (rec && rec.phase === 'rec') recSample();
     updateHelpers(); updateSelBar();
-    if (edFramePending && vpEl.clientWidth > 0 && vpEl.clientHeight > 0) { edFramePending = false; frameEditorView(); updateHelpers(); } /* a scene just swapped in or restored */
+    if (edFramePending && vpEl.clientWidth > 0 && vpEl.clientHeight > 0 && viewRects(vpEl.clientWidth, vpEl.clientHeight).work) { edFramePending = false; frameEditorView(); updateHelpers(); } /* a scene just swapped in or restored; waits for a frame that shows the editor, so the panel's fold has settled */
     renderer.shadowMap.needsUpdate = true;
     draw();
   }
@@ -2357,7 +2358,8 @@ function syncFold() {
   app.classList.toggle('lfold', leftFold); requestRender();
   if (inLeft && !had.getClientRects().length) (leftFold ? $('#stripAdd') : $('#leftTabs .on') || $('#leftTabs button')).focus(); /* keyboard focus never falls out of the panel */
 }
-const foldForStep = () => { leftFold = currentStep() !== 'build'; syncFold(); };
+let foldNavs = 0; /* counts those deliberate navigations (a tour that ends because of another action checks whether that action navigated) */
+const foldForStep = () => { foldNavs++; leftFold = currentStep() !== 'build'; syncFold(); };
 /* a deliberate view change (View buttons, C, T, Look through camera, Back to editor) */
 function navView(v) { setView(v); foldForStep(); }
 /* the strip's two buttons and « */
@@ -2705,7 +2707,7 @@ function detectMove() {
       if (!parts.length) parts.push('Subtle move');
     }
   }
-  const feel = { constant: 'constant speed', gentle: 'gentle ease', strong: 'strong ease' }[c.feel || 'gentle'];
+  const feel = (FEELS.find(f => f[0] === (c.feel || 'gentle')) || FEELS[1])[1].toLowerCase(); /* the Feel buttons' own words */
   return { title: parts.slice(0, 3).join(' + '), sub: `${state.settings.duration.toFixed(1)} s · ${feel} · ${c.keys.length} key${c.keys.length === 1 ? '' : 's'}` };
 }
 /* the Start and End frames as small JPEG data: URLs (no blob: URLs: the claude.ai sandbox forbids them), cached until the scene or frame changes */
@@ -2880,7 +2882,7 @@ function propsCamera(p) {
         h('p', { class: 'note' }, 'Lower f-numbers and longer lenses give more blur. Not used in the Depth and Normals styles.')) : h('p', { class: 'note' }, 'Simulates a real lens: focal length, f-stop and focus distance.')));
   }
 }
-/* the camera view's aspect chip and guides button (#vpRight): each opens a menu, the current choice ticked */
+/* the camera view's aspect chip and guides button (#camTools): each opens a menu, the current choice ticked */
 const setAspect = v => { state.settings.aspect = v; changed(true, true); syncTopUI(); };
 const aspectMenuItems = () => [{ head: 'Aspect' }, ...ASPECTS.map(a => ({ id: 'aspect-' + a[0], label: a[2], check: state.settings.aspect === a[0], fn: () => setAspect(a[0]) }))];
 const guidesMenuItems = () => [{ head: 'Guides' }, ...GUIDES.map(([k, l]) => ({ id: 'guides-' + k, label: l, check: state.settings.guides === k, fn: () => { state.settings.guides = k; drawGuides(); changed(true); } }))];
@@ -3460,7 +3462,7 @@ function ctxItems(hit, floor) {
   }
   if (hit && hit.id.startsWith('ck:')) {
     const i = +hit.id.slice(3), k = state.camera.keys[i]; select('camera');
-    return k ? [{ head: 'Camera point at ' + k.t.toFixed(2) + ' s' }, { label: 'Go to this moment', fn: () => setTime(k.t) }, { label: 'Look through the camera here', fn: () => { setTime(k.t); setView('camera'); } }, '-',
+    return k ? [{ head: 'Camera point at ' + k.t.toFixed(2) + ' s' }, { label: 'Go to this moment', fn: () => setTime(k.t) }, { label: 'Look through the camera here', fn: () => { setTime(k.t); navView('camera'); } }, '-',
       { label: 'Delete this point', danger: true, disabled: state.camera.keys.length < 2, fn: () => removeKey('camera', i) }] : [];
   }
   if (hit && hit.id === 'cpath') {
@@ -4291,7 +4293,7 @@ function renderStarterPic(kind) {
   }
   return url;
 }
-function showStarterPic(slot, url) { slot.innerHTML = ''; slot.append(h('img', { src: url, alt: '' })); slot.classList.add('ready'); }
+function showStarterPic(slot, url) { slot.innerHTML = ''; slot.append(h('img', { src: url, alt: '' })); }
 /* one picture per frame while the window is open; a picture that failed leaves its plain block */
 function fillStarterPics(slots) {
   const job = ++starterPicJob, todo = slots.filter(([k]) => !starterPics.has(k));
@@ -4855,9 +4857,16 @@ function promptText() {
   return promptCache.text;
 }
 const currentPrompt = () => promptEdit != null ? promptEdit : promptText();
+/* Copy prompt (Export panel and the finished window): the clipboard, else the prompt in `box`, shown and selected, so Ctrl+C copies it */
 async function copyPromptText(text, box) {
-  try { await navigator.clipboard.writeText(text); toast('Prompt copied. Paste it next to the reference clip.', null, 'ok'); return; } catch (e) { }
-  if (box) { box.focus(); box.select(); try { if (document.execCommand('copy')) { toast('Prompt copied', null, 'ok'); return; } } catch (e) { } }
+  const done = () => toast('Prompt copied. Paste it next to the reference clip.', null, 'ok');
+  try { await navigator.clipboard.writeText(text); done(); return; } catch (e) { }
+  if (box) {
+    if (box.value !== text) box.value = text; box.hidden = false; /* the finished window keeps its box hidden until it is needed */
+    box.focus(); box.select();
+    try { if (document.execCommand('copy')) { done(); return; } } catch (e) { }
+    toast('The prompt is selected. Press Ctrl+C to copy it.', 5000, 'bad'); return;
+  }
   toast('Select the text and press Ctrl+C to copy it', 4000, 'bad');
 }
 
@@ -5338,14 +5347,6 @@ function exEnd(outcome, msg, last) {
   }
   showExDone();
 }
-/* Copy prompt in the finished window: the clipboard, else the prompt shown selected in the window so Ctrl+C copies it */
-async function exCopyPrompt() {
-  const text = currentPrompt(), box = $('#exPromptBox');
-  try { await navigator.clipboard.writeText(text); toast('Prompt copied. Paste it next to the video in the AI tool.', null, 'ok'); return; } catch (e) { }
-  box.value = text; box.hidden = false; box.focus(); box.select();
-  try { if (document.execCommand('copy')) { toast('Prompt copied. Paste it next to the video in the AI tool.', null, 'ok'); return; } } catch (e) { }
-  toast('The prompt is selected below. Press Ctrl+C to copy it.', 5000, 'bad');
-}
 async function exportVideo(opts = {}) {
   if (practicing) return endPracticeFirst(() => exportVideo(opts));
   if (exporting) return false;
@@ -5363,7 +5364,7 @@ async function exportVideo(opts = {}) {
   try {
     setPlaying(false); setExportLock(true);
     const { w, h: hh } = exportSize(), fps = state.settings.fps, N = frames();
-    $('#exProg').hidden = false; $('#exCancel').hidden = false; exProgress(0, 'Starting…'); $('#exCancel').focus();
+    $('#exCancel').hidden = false; exProgress(0, 'Starting…'); $('#exCancel').focus();
     const r = getExportRenderer(w, hh);
     const cfg = await pickCodec(w, hh, fps);
     if (cfg) {
@@ -5460,9 +5461,10 @@ function enterPractice(force) {
   if (menuOpen()) hideMenu();
   focusPick = false; canvas.style.cursor = ''; setPlaying(false);
   const lt = $('#leftTabs .on');
+  syncFold(); /* leftFold is set (it starts null): the fold the user had comes back with the scene */
   practicing = {
     state, assets, selected, selIds: selIds.slice(), T, hist: hist.slice(), histDoc: histDoc.slice(), hi, doc: platform.getDoc(),
-    view, lastWorkView, layout, leftTab: lt ? lt.dataset.lt : 'add', promptEdit, shotEditId, snapHold, groundDirty, groundMigrate: [...groundMigrate],
+    view, lastWorkView, layout, leftFold, leftTab: lt ? lt.dataset.lt : 'add', promptEdit, shotEditId, snapHold, groundDirty, groundMigrate: [...groundMigrate],
     ed: { p: edCam.position.clone(), tg: edControls.target.clone() },
     top: { init: topInit, p: topCam.position.clone(), zoom: topCam.zoom, tg: topControls.target.clone() },
   };
@@ -5495,6 +5497,7 @@ function leavePractice() {
   try {
     if (layout !== p.layout) setLayout(p.layout, false);
     setView(p.view); lastWorkView = p.lastWorkView; setLeftTab(p.leftTab, false);
+    leftFold = p.leftFold; syncFold();
     showState();
   } catch (e) { console.error('ShotRef: could not show the real scene again', e); }
   if (snapLive > snapPruneAt) pruneSnapPool();
@@ -5542,9 +5545,16 @@ const BASIC_STOPS = [
    handsTour = true, or HANDS_TOUR_DEFAULT below. While it is off, the copy that talks about two tours uses its one-tour wording (textSolo / bodySolo). */
 const HANDS_TOUR_DEFAULT = false;
 const handsTourOn = () => !!getPref('handsTour', HANDS_TOUR_DEFAULT);
+/* a stop's words for where the app runs: textDesk on Windows, textSolo while the hands-on tour is off, textWeb / textSoloWeb on the web and claude.ai */
+function tourText(c) {
+  const desk = platform.kind === 'desktop', solo = !handsTourOn() && c.textSolo;
+  if (desk && c.textDesk) return c.textDesk;
+  const key = solo ? 'textSolo' : 'text';
+  return (!desk && c[key + 'Web']) || c[key];
+}
 const basicStops = () => BASIC_STOPS.filter(([id]) => !(id === 'b-file' && platform.kind === 'desktop')).map(([id, target, before]) => {
   const c = TOUR_COPY.basic[id];
-  return { id, target, before, title: c.title, text: tourText(c) };
+  return { id, target, before, title: (platform.kind === 'desktop' && c.titleDesk) || c.title, text: tourText(c) };
 });
 /* The hands-on tour: each "try" stop waits for a change made through the real UI, on the practice stage (enterPractice). snap() records what its waitFor
    compares against when the stop begins, so something already true never skips a stop. before() puts the screen where the stop needs it (these view, step
@@ -5602,12 +5612,12 @@ function startTour(kind, opts = {}) {
     return handle;
   }
   const tab = $('#leftTabs .on') ? $('#leftTabs .on').dataset.lt : 'add';
-  syncFold(); const foldWas = leftFold; /* the Add stop may open the folded panel: put it back as it was */
+  syncFold(); const foldWas = leftFold, navsWas = foldNavs; /* the Add stop may open the folded panel: put it back as it was */
   const handle = runStops(basicStops(), {
     ui: TOUR_COPY.ui,
     onEnd: reason => {
       setLeftTab(tab, false);
-      if (reason !== 'external') { leftFold = foldWas; syncFold(); }
+      if (reason !== 'external' || foldNavs === navsWas) { leftFold = foldWas; syncFold(); } /* an outside action that navigated decides the fold itself */
       setPref('tourBasicDone', true);
       if (reason === 'external') return; /* another tour took over, or Open / New / a file from Windows swapped the project: no picker */
       if (firstRun) openStarters(true);
@@ -6037,10 +6047,14 @@ function wire() {
   $('#stripAdd').onclick = () => openLeft('add'); $('#stripItems').onclick = () => openLeft('scene'); $('#bFold').onclick = foldLeft;
   /* a press in the 3D view holds the left panel's fold where it is until the button comes up (syncFold) */
   vpEl.addEventListener('pointerdown', () => { vpDown = true; }, true);
-  for (const ev of ['pointerup', 'pointercancel', 'blur']) window.addEventListener(ev, () => { if (vpDown) { vpDown = false; requestRender(); } }, true);
+  /* 'blur' on window only: the capture listener also hears an element losing focus (canvas.focus() in the press itself) */
+  for (const ev of ['pointerup', 'pointercancel', 'blur']) window.addEventListener(ev, e => { if (ev === 'blur' && e.target !== window) return; if (vpDown) { vpDown = false; requestRender(); } }, true);
   menuButton($('#bAspect'), aspectMenuItems); menuButton($('#bGuides'), guidesMenuItems);
   $$('#stepSeg button').forEach(b => b.onclick = () => goStep(b.dataset.step));
-  if (platform.kind === 'desktop') $('#bFile').style.display = 'none'; /* the Windows File menu does this job */
+  if (platform.kind === 'desktop') { /* the Windows File menu does this job, and Help lives in the Windows menu bar */
+    $('#bFile').style.display = 'none';
+    $('#bMenu').setAttribute('aria-label', 'Settings and Advanced mode'); $('#bMenu').setAttribute('title', 'Settings and Advanced mode');
+  }
   $$('[data-where]').forEach(e => { e.textContent = whereSaved(); });
   menuButton($('#bFile'), fileMenuItems); menuButton($('#bMenu'), gearMenuItems); wireTakes();
   $('#bTracks').onclick = () => { tracksMode = tracksOpen() ? 'closed' : 'open'; syncTracks(); uiDirty = true; requestRender(); };
@@ -6121,7 +6135,7 @@ function wire() {
   $('#exGrid').onchange = e => { state.settings.exportGrid = e.target.checked; changed(true); };
   $('#exVideo').onclick = () => exportVideo();
   $('#exDoneBtn').onclick = () => closeModal($('#exDoneBtn')); $('#exClose').onclick = () => closeModal($('#exClose'));
-  $('#exCopyPrompt').onclick = exCopyPrompt;
+  $('#exCopyPrompt').onclick = () => copyPromptText(currentPrompt(), $('#exPromptBox'));
   $('#exFrame').onclick = () => exportPNG(T);
   $('#exEnds').onclick = exportFramePack;
   $('#sheetSave').onclick = () => { if (sheetBlob) saveFile(nameFrom(['contact-sheet']) + '.png', sheetBlob); };
